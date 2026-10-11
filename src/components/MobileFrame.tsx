@@ -2,22 +2,29 @@ import React, { ReactNode } from 'react';
 import {
   Smartphone,
   Maximize2,
-  Minimize2,
   Lock,
   Wifi,
   WifiOff,
   Battery,
   Mic,
+  Download,
+  LogOut,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface MobileFrameProps {
   children: ReactNode;
   onOpenVoice: () => void;
+  onOpenInstallerHub: () => void;
 }
 
-export const MobileFrame: React.FC<MobileFrameProps> = ({ children, onOpenVoice }) => {
-  const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, user } = useApp();
+export const MobileFrame: React.FC<MobileFrameProps> = ({
+  children,
+  onOpenVoice,
+  onOpenInstallerHub,
+}) => {
+  const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, signOutGoogle } = useApp();
 
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -32,6 +39,9 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({ children, onOpenVoice 
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Install Android APK Button */}
+          <PWAInstallButton onOpenInstallerHub={onOpenInstallerHub} />
+
           {/* Toggle Device Frame */}
           <button
             onClick={toggleMobileFrame}
@@ -49,6 +59,15 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({ children, onOpenVoice 
             title="Lock with Biometrics"
           >
             <Lock className="w-3.5 h-3.5 text-emerald-400" />
+          </button>
+
+          {/* Google Sign Out */}
+          <button
+            onClick={signOutGoogle}
+            className="p-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/60 text-slate-300 hover:text-rose-400 border border-slate-800 hover:border-rose-500/40 transition-colors"
+            title="Sign Out of Google SSO"
+          >
+            <LogOut className="w-3.5 h-3.5" />
           </button>
         </div>
       </header>

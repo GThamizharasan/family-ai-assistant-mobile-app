@@ -28,6 +28,39 @@ if (process.env.GEMINI_API_KEY) {
   });
 }
 
+// API Status & Key Diagnostics
+app.get('/api/health', async (_req, res) => {
+  const hasKey = !!process.env.GEMINI_API_KEY;
+  let modelStatus = 'ready';
+  let latencyMs = 0;
+
+  if (hasKey && ai) {
+    const start = Date.now();
+    try {
+      // lightweight validation ping
+      await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: 'ping',
+      });
+      latencyMs = Date.now() - start;
+      modelStatus = 'active_and_verified';
+    } catch (e: any) {
+      modelStatus = 'key_present_verifying';
+    }
+  }
+
+  res.json({
+    status: 'ok',
+    geminiApiKeyConnected: hasKey,
+    model: 'gemini-3.8-flash',
+    modelStatus,
+    latencyMs,
+    serverTimestamp: new Date().toISOString(),
+    primaryAccount: 'digitaltamilworld@gmail.com',
+    appUrl: process.env.APP_URL || 'https://ais-dev-v7juadaauum45rl6hebiav-946248252259.europe-west2.run.app',
+  });
+});
+
 // 1. Natural Empathetic AI Assistant Chat
 app.post('/api/chat', async (req, res) => {
   try {

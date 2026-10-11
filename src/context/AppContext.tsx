@@ -17,6 +17,13 @@ import {
 import { encryptText, decryptText } from '../services/crypto';
 
 interface AppContextType {
+  // Google Single Sign-On (SSO) & Session
+  isAuthenticated: boolean;
+  loginWithGoogle: (email?: string, name?: string, role?: UserRole) => void;
+  loginWithActivationCode: (code: string) => { success: boolean; message: string };
+  signOutGoogle: () => void;
+  requireGoogleAuthOnReload: boolean;
+  setRequireGoogleAuthOnReload: (val: boolean) => void;
   user: UserProfile;
   role: UserRole;
   isLocked: boolean;
@@ -398,6 +405,28 @@ const INITIAL_MOODS: MoodJournalEntry[] = [
 ];
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  // Option: Require Google SSO on every reload (defaults to true as requested)
+  const [requireGoogleAuthOnReload, setRequireGoogleAuthOnReloadState] = useState<boolean>(() => {
+    const saved = localStorage.getItem('aura_require_google_auth_reload');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  // Track authentication state: if requireGoogleAuthOnReload is true, rely on sessionStorage so page reload prompts Google SSO!
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const savedRequire = localStorage.getItem('aura_require_google_auth_reload');
+    const mustRequire = savedRequire !== null ? savedRequire === 'true' : true;
+    if (mustRequire) {
+      // In require-on-reload mode, we require active authentication per page session
+      return sessionStorage.getItem('aura_google_auth_session') === 'true';
+    }
+    return localStorage.getItem('aura_google_auth_persisted') === 'true';
+  });
+
+  const setRequireGoogleAuthOnReload = (val: boolean) => {
+    setRequireGoogleAuthOnReloadState(val);
+    localStorage.setItem('aura_require_google_auth_reload', String(val));
+  };
+
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('aura_user');
     return saved ? JSON.parse(saved) : INITIAL_USER;
@@ -576,6 +605,69 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setRole = (newRole: UserRole) => {
     setRoleState(newRole);
     setUser((prev) => ({ ...prev, role: newRole }));
+  };
+
+  // Google Single Sign-On (SSO) login handler
+  const loginWithGoogle = (email = 'digitaltamilworld@gmail.com', name?: string, newRole?: UserRole) => {
+    sessionStorage.setItem('aura_google_auth_session', 'true');
+    localStorage.setItem('aura_google_auth_persisted', 'true');
+
+    const matched = familyMembers.find((m) => m.email.toLowerCase() === email.toLowerCase());
+    const finalRole: UserRole =
+      newRole ||
+      (matched
+        ? matched.role
+        : email.toLowerCase().includes('digitaltamilworld')
+        ? 'primary'
+        : 'secondary');
+
+    const finalName =
+      name ||
+      (matched
+        ? matched.name
+        : email.toLowerCase().includes('digitaltamilworld')
+        ? 'Karthik Raja'
+        : email.split('@')[0]);
+
+    const finalAvatar = matched ? matched.avatar : user.avatar;
+
+    setUser((prev) => ({
+      ...prev,
+      email,
+      name: finalName,
+      role: finalRole,
+      avatar: finalAvatar,
+    }));
+    setRoleState(finalRole);
+    setIsAuthenticated(true);
+  };
+
+  // Login via 16-digit activation code
+  const loginWithActivationCode = (code: string) => {
+    const cleanCode = code.trim();
+    const found = activationCodes.find((c) => c.code === cleanCode);
+    if (!found) {
+      return { success: false, message: 'Invalid or expired 16-digit activation code.' };
+    }
+    sessionStorage.setItem('aura_google_auth_session', 'true');
+    localStorage.setItem('aura_google_auth_persisted', 'true');
+    const memberName = found.redeemedBy || 'Secondary Member';
+    setUser((prev) => ({
+      ...prev,
+      name: memberName,
+      email: `${memberName.toLowerCase().replace(/\s+/g, '')}@family.aura`,
+      role: 'secondary',
+    }));
+    setRoleState('secondary');
+    setIsAuthenticated(true);
+    return { success: true, message: 'Authenticated successfully via 16-digit Family Code.' };
+  };
+
+  // Sign out Google session (clears session and returns to Google SSO)
+  const signOutGoogle = () => {
+    sessionStorage.removeItem('aura_google_auth_session');
+    localStorage.removeItem('aura_google_auth_persisted');
+    setIsAuthenticated(false);
   };
 
   // 16-digit activation code generation: format XXXX-XXXX-XXXX-XXXX
@@ -794,6 +886,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <AppContext.Provider
       value={{
+        isAuthenticated,
+        loginWithGoogle,
+        loginWithActivationCode,
+        signOutGoogle,
+        requireGoogleAuthOnReload,
+        setRequireGoogleAuthOnReload,
         user,
         role,
         isLocked,

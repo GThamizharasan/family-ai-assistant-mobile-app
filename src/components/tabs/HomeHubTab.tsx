@@ -16,6 +16,7 @@ import {
   Clock,
   ArrowUpRight,
   Volume2,
+  LogOut,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { speechEngine } from '../../services/speech';
@@ -24,14 +25,16 @@ import { TabKey } from '../BottomNav';
 interface HomeHubTabProps {
   onNavigate: (tab: TabKey) => void;
   onOpenVoice: () => void;
+  onOpenInstaller?: () => void;
 }
 
-export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice }) => {
+export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice, onOpenInstaller }) => {
   const {
     user,
     role,
     setRole,
     lockApp,
+    signOutGoogle,
     isOnline,
     googleOneStorageUsedGb,
     milestones,
@@ -111,6 +114,15 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice 
           >
             <Lock className="w-4 h-4 text-emerald-400" />
           </button>
+
+          {/* Google SSO Sign Out button */}
+          <button
+            onClick={signOutGoogle}
+            className="p-2 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 text-slate-300 hover:text-rose-400 border border-slate-700 hover:border-rose-500/40 transition-colors"
+            title="Sign Out of Google SSO"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -128,6 +140,32 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice 
           <ArrowUpRight className="w-3 h-3" />
         </div>
       </div>
+
+      {/* Android APK & Gemini Key Quick Action Pill */}
+      {onOpenInstaller && (
+        <div
+          onClick={onOpenInstaller}
+          className="cursor-pointer p-3 rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-indigo-950/50 border border-emerald-500/30 hover:border-emerald-500/60 transition-all flex items-center justify-between shadow-md"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-white">Android APK & Gemini Key Status</span>
+                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold">
+                  LIVE
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                1-Click Native WebAPK install • Gemini 3.8 Flash API Key authenticated
+              </p>
+            </div>
+          </div>
+          <ArrowUpRight className="w-4 h-4 text-emerald-400" />
+        </div>
+      )}
 
       {/* Life Coach Daily Inspiration Card */}
       <div className="relative rounded-3xl overflow-hidden border border-indigo-500/30 bg-gradient-to-br from-indigo-950/70 via-slate-900 to-purple-950/60 p-5 shadow-xl">

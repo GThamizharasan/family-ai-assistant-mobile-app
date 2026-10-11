@@ -11,12 +11,13 @@ import {
   RefreshCw,
   Folder,
   ExternalLink,
+  LogOut,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { searchGoogleOneApi } from '../../services/api';
 
 export const GoogleOneTab: React.FC = () => {
-  const { user, role, googleOneStorageUsedGb, syncStatus, syncWithGoogleOne, chatHistory } = useApp();
+  const { user, role, googleOneStorageUsedGb, syncStatus, syncWithGoogleOne, chatHistory, signOutGoogle } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -92,13 +93,24 @@ export const GoogleOneTab: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={syncWithGoogleOne}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin text-blue-400' : ''}`} />
-            <span>{syncStatus === 'syncing' ? 'Syncing...' : 'Sync All Accounts'}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={syncWithGoogleOne}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin text-blue-400' : ''}`} />
+              <span>{syncStatus === 'syncing' ? 'Syncing...' : 'Sync All Accounts'}</span>
+            </button>
+
+            <button
+              onClick={signOutGoogle}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-rose-950/60 text-xs font-semibold text-slate-200 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 transition-colors"
+              title="Sign Out of Google Account"
+            >
+              <LogOut className="w-3.5 h-3.5 text-rose-400" />
+              <span>Sign Out</span>
+            </button>
+          </div>
         </div>
 
         {/* Storage Bar Breakdown */}
