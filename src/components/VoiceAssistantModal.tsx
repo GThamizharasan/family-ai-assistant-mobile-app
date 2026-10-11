@@ -12,6 +12,9 @@ import {
   Compass,
   DollarSign,
   Users,
+  HelpCircle,
+  AlertCircle,
+  CheckCircle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine } from '../services/speech';
@@ -31,15 +34,33 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [textInput, setTextInput] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState('warm & empathetic');
+  const [micStatusMessage, setMicStatusMessage] = useState<string | null>(null);
+  const [showMicHelp, setShowMicHelp] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    speechEngine.onListeningChange = (listening) => setIsListening(listening);
+    speechEngine.onListeningChange = (listening) => {
+      setIsListening(listening);
+      if (listening) {
+        setMicStatusMessage(null);
+      }
+    };
     speechEngine.onSpeakingChange = (speaking) => setIsSpeaking(speaking);
     speechEngine.onTranscriptCallback = (transcript, isFinal) => {
       setLiveTranscript(transcript);
       if (isFinal && transcript.trim()) {
         handleUserSpeech(transcript.trim());
+      }
+    };
+    speechEngine.onErrorCallback = (error) => {
+      if (error === 'not-allowed' || error === 'permission-denied') {
+        setMicStatusMessage('Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.');
+      } else if (error === 'no-speech') {
+        // Silent timeout
+      } else if (error === 'audio-capture') {
+        setMicStatusMessage('No microphone detected. Please connect or enable your microphone.');
+      } else {
+        setMicStatusMessage(`Microphone status: ${error}. You can also type your message below.`);
       }
     };
   }, []);
@@ -50,6 +71,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     } else {
       speechEngine.stopListening();
       speechEngine.stopSpeaking();
+      setMicStatusMessage(null);
+      setShowMicHelp(false);
     }
   }, [isOpen, chatHistory]);
 
@@ -126,15 +149,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     }
   };
 
-  const toggleMic = () => {
+  const toggleMic = async () => {
     if (isListening) {
       speechEngine.stopListening();
     } else {
+      setMicStatusMessage(null);
       speechEngine.stopSpeaking();
+      const hasPermission = await speechEngine.requestMicPermission();
+      if (!hasPermission) {
+        setMicStatusMessage('Microphone access blocked. Click the lock 🔒 or site permissions icon in the address bar to set Microphone to "Allow".');
+        return;
+      }
       const started = speechEngine.startListening();
       if (!started) {
-        // Fallback simulate speech prompt if microphone permission is not granted
-        setLiveTranscript('Listening... Speak now');
+        setMicStatusMessage('Speech recognition could not be started in this browser. Please use Chrome, Edge, or Safari, or type below.');
       }
     }
   };
@@ -182,6 +210,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
 
           <div className="flex items-center gap-1.5">
             <button
+              onClick={() => setShowMicHelp(!showMicHelp)}
+              className={`p-2 rounded-xl transition-colors ${
+                showMicHelp
+                  ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+              }`}
+              title="Microphone Activation Guide"
+            >
+              <HelpCircle className="w-4 h-4" />
+            </button>
+            <button
               onClick={() => {
                 if (isSpeaking) speechEngine.stopSpeaking();
                 setIsMuted(!isMuted);
@@ -199,6 +238,71 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             </button>
           </div>
         </div>
+
+        {/* Microphone Help & Permission Guide Dropdown */}
+        {showMicHelp && (
+          <div className="p-4 bg-slate-900 border-b border-indigo-500/30 text-xs text-slate-300 space-y-2.5 animate-fade-in">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <Mic className="w-4 h-4 text-indigo-400" />
+                <span>How to Activate & Allow Microphone in Your Browser</span>
+              </div>
+              <button
+                onClick={() => setShowMicHelp(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <ol className="list-decimal list-inside space-y-1 text-slate-300 text-[11px] leading-relaxed">
+              <li>
+                <strong className="text-white">Tap the big Mic button</strong> below or the floating mic button in the bottom navigation.
+              </li>
+              <li>
+                When your browser shows the popup <strong className="text-indigo-300">"ais-dev-... wants to use your microphone"</strong>, click <strong className="text-emerald-400">"Allow"</strong>.
+              </li>
+              <li>
+                <strong className="text-white">If permission was blocked:</strong> Click the <strong className="text-indigo-300">🔒 lock or 🎛️ tune icon</strong> on the left side of the browser URL bar, toggle <strong className="text-emerald-400">Microphone to Allow</strong>, and reload.
+              </li>
+              <li>
+                <strong className="text-white">On Mobile / Android:</strong> Tap Chrome's ⋮ menu &rarr; Settings &rarr; Site settings &rarr; Microphone &rarr; toggle on.
+              </li>
+            </ol>
+            <div className="pt-1 flex items-center gap-2">
+              <button
+                onClick={async () => {
+                  setMicStatusMessage(null);
+                  const ok = await speechEngine.requestMicPermission();
+                  if (ok) {
+                    setMicStatusMessage('Microphone access granted! Tap the mic button to start speaking.');
+                  } else {
+                    setMicStatusMessage('Microphone access blocked. Please check site permissions in your browser URL bar.');
+                  }
+                }}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] flex items-center gap-1.5 transition-colors"
+              >
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span>Test & Request Microphone Access</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Inline Mic Status or Warning Alert */}
+        {micStatusMessage && (
+          <div className="px-4 py-2.5 bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-xs flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{micStatusMessage}</span>
+            </div>
+            <button
+              onClick={() => setMicStatusMessage(null)}
+              className="text-amber-400/80 hover:text-amber-200 shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {/* Dynamic Waveform Visualizer & Persona Sphere */}
         <div className="py-5 px-6 bg-gradient-to-b from-slate-950/60 to-transparent flex flex-col items-center justify-center relative border-b border-slate-800/40">

@@ -2,6 +2,92 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Safe WebSocket mock and error suppression for Vite HMR in cloud preview environments where WebSocket is disabled
+      (function() {
+        if (typeof window !== 'undefined' && window.WebSocket) {
+          const NativeWebSocket = window.WebSocket;
+          class ViteSafeWebSocket extends EventTarget {
+            constructor(url, protocols) {
+              super();
+              const isVite = protocols === 'vite-hmr' || protocols === 'vite-ping' || 
+                (typeof url === 'string' && (url.includes('vite-hmr') || url.includes('/@vite/client')));
+              if (!isVite) {
+                return new NativeWebSocket(url, protocols);
+              }
+              this.url = String(url || '');
+              this.protocols = protocols;
+              this.readyState = 1; // WebSocket.OPEN
+              this.bufferedAmount = 0;
+              this.extensions = '';
+              this.protocol = typeof protocols === 'string' ? protocols : (Array.isArray(protocols) ? protocols[0] : '');
+              this.binaryType = 'blob';
+
+              setTimeout(() => {
+                const openEv = new Event('open');
+                if (typeof this.onopen === 'function') {
+                  this.onopen(openEv);
+                }
+                this.dispatchEvent(openEv);
+              }, 0);
+            }
+
+            send(data) {}
+
+            close(code, reason) {
+              this.readyState = 3;
+              setTimeout(() => {
+                const closeEv = typeof CloseEvent !== 'undefined' 
+                  ? new CloseEvent('close', { wasClean: true, code: code || 1000, reason: reason || '' })
+                  : new Event('close');
+                if (typeof this.onclose === 'function') {
+                  this.onclose(closeEv);
+                }
+                this.dispatchEvent(closeEv);
+              }, 0);
+            }
+          }
+
+          ViteSafeWebSocket.CONNECTING = 0;
+          ViteSafeWebSocket.OPEN = 1;
+          ViteSafeWebSocket.CLOSING = 2;
+          ViteSafeWebSocket.CLOSED = 3;
+
+          try {
+            Object.defineProperty(ViteSafeWebSocket, Symbol.hasInstance, {
+              value: (instance) => instance instanceof NativeWebSocket || instance instanceof ViteSafeWebSocket || instance instanceof EventTarget
+            });
+          } catch (e) {}
+
+          window.WebSocket = ViteSafeWebSocket;
+        }
+
+        // Gracefully ignore WebSocket HMR notifications when HMR is disabled in AI Studio preview
+        const _origError = console.error;
+        console.error = function(...args) {
+          const isViteWs = args.some(arg => {
+            const str = String(arg || '');
+            return str.includes('WebSocket closed without opened') || 
+                   (str.includes('[vite]') && str.includes('WebSocket')) ||
+                   (arg instanceof Error && (arg.message?.includes('WebSocket') || arg.stack?.includes('@vite/client')));
+          });
+          if (isViteWs) return;
+          _origError.apply(console, args);
+        };
+        window.addEventListener('error', function(e) {
+          if (e && (e.message?.includes('WebSocket') || e.filename?.includes('@vite/client') || (e.error && String(e.error).includes('WebSocket')))) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          if (e && (String(e.reason).includes('WebSocket') || (e.reason && e.reason.stack && String(e.reason.stack).includes('@vite/client')))) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>AuraFamily AI - Family Personal Assistant & Life OS</title>
     <meta name="description" content="Comprehensive Family Personal AI Assistant with real-time voice recognition, encrypted life vault, billionaire milestone roadmap, family geofencing & tracking, financial command center, and health & wellness hub." />
@@ -21,34 +107,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <script>
-      // Gracefully ignore WebSocket HMR notifications when HMR is disabled in AI Studio preview
-      (function() {
-        const _origError = console.error;
-        console.error = function(...args) {
-          const isViteWs = args.some(arg => {
-            const str = String(arg || '');
-            return str.includes('WebSocket closed without opened') || 
-                   (str.includes('[vite]') && str.includes('WebSocket')) ||
-                   (arg instanceof Error && (arg.message?.includes('WebSocket') || arg.stack?.includes('@vite/client')));
-          });
-          if (isViteWs) return;
-          _origError.apply(console, args);
-        };
-        window.addEventListener('error', function(e) {
-          if (e && (e.message?.includes('WebSocket') || e.filename?.includes('@vite/client') || (e.error && String(e.error).includes('WebSocket')))) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-          }
-        }, true);
-        window.addEventListener('unhandledrejection', function(e) {
-          if (e && String(e.reason).includes('WebSocket')) {
-            e.preventDefault();
-            e.stopImmediatePropagation();
-          }
-        }, true);
-      })();
-    </script>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden">
     <div id="root"></div>

@@ -24,6 +24,19 @@ export interface SmartWatchDevice {
   lastSyncTime: string;
 }
 
+export interface TapoSdRecording {
+  id: string;
+  cameraId: string;
+  startTime: string; // e.g. "14:15"
+  endTime: string;   // e.g. "14:20"
+  durationSeconds: number;
+  dateStr: string;   // e.g. "Today" or "2026-10-11"
+  eventType: 'continuous' | 'person' | 'vehicle' | 'motion' | 'sound';
+  eventTitle: string;
+  fileSizeBytes: number; // e.g. 35 MB
+  thumbnailUrl: string;
+}
+
 export interface TapoCameraDevice {
   id: string;
   name: string;
@@ -42,6 +55,13 @@ export interface TapoCameraDevice {
   twoWayAudioActive: boolean;
   sirenAlarmActive: boolean;
   sdCardStorageGb: { total: number; used: number; free: number };
+  sdCardHealth?: 'Healthy (Good)' | 'Needs Formatting' | 'Error';
+  sdCardRecordings?: TapoSdRecording[];
+  localIp?: string;
+  cameraAccountUser?: string;
+  rtspStreamUrl?: string;
+  webrtcBridgeUrl?: string;
+  onvifPort?: number;
   cloudArchiveDays: number;
   panTiltAngle: { pan: number; tilt: number };
   lastMotionEvent?: {
@@ -162,6 +182,12 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
     twoWayAudioActive: false,
     sirenAlarmActive: false,
     sdCardStorageGb: { total: 128, used: 24, free: 104 },
+    sdCardHealth: 'Healthy (Good)',
+    localIp: '192.168.1.120',
+    cameraAccountUser: 'thamiz_admin',
+    rtspStreamUrl: 'rtsp://thamiz_admin:••••••••@192.168.1.120:554/stream1',
+    webrtcBridgeUrl: 'ws://192.168.1.120:1984/api/ws?src=living_room_c210',
+    onvifPort: 2020,
     cloudArchiveDays: 30,
     panTiltAngle: { pan: 0, tilt: 15 },
     lastMotionEvent: {
@@ -171,6 +197,56 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
       description: 'Family member passed by foyer.',
     },
     mockFeedImage: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=600&auto=format&fit=crop&q=80',
+    sdCardRecordings: [
+      {
+        id: 'rec-01',
+        cameraId: 'cam-01',
+        startTime: '15:28',
+        endTime: '15:33',
+        durationSeconds: 300,
+        dateStr: 'Today',
+        eventType: 'person',
+        eventTitle: 'Person Motion in Foyer',
+        fileSizeBytes: 42 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=300&auto=format&fit=crop&q=80',
+      },
+      {
+        id: 'rec-02',
+        cameraId: 'cam-01',
+        startTime: '14:10',
+        endTime: '14:15',
+        durationSeconds: 300,
+        dateStr: 'Today',
+        eventType: 'motion',
+        eventTitle: 'Living Room Movement',
+        fileSizeBytes: 38 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=300&auto=format&fit=crop&q=80',
+      },
+      {
+        id: 'rec-03',
+        cameraId: 'cam-01',
+        startTime: '12:00',
+        endTime: '13:00',
+        durationSeconds: 3600,
+        dateStr: 'Today',
+        eventType: 'continuous',
+        eventTitle: 'Midday Continuous Recording',
+        fileSizeBytes: 240 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=300&auto=format&fit=crop&q=80',
+      },
+      {
+        id: 'rec-04',
+        cameraId: 'cam-01',
+        startTime: '08:45',
+        endTime: '08:52',
+        durationSeconds: 420,
+        dateStr: 'Today',
+        eventType: 'sound',
+        eventTitle: 'Acoustic / Voice Spike Detected',
+        fileSizeBytes: 52 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=300&auto=format&fit=crop&q=80',
+      },
+    ],
   },
   {
     id: 'cam-02',
@@ -190,6 +266,12 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
     twoWayAudioActive: false,
     sirenAlarmActive: false,
     sdCardStorageGb: { total: 256, used: 48, free: 208 },
+    sdCardHealth: 'Healthy (Good)',
+    localIp: '192.168.1.121',
+    cameraAccountUser: 'thamiz_admin',
+    rtspStreamUrl: 'rtsp://thamiz_admin:••••••••@192.168.1.121:554/stream1',
+    webrtcBridgeUrl: 'ws://192.168.1.121:1984/api/ws?src=driveway_c310',
+    onvifPort: 2020,
     cloudArchiveDays: 30,
     panTiltAngle: { pan: -30, tilt: 5 },
     lastMotionEvent: {
@@ -199,6 +281,32 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
       description: 'Vehicle parked at front perimeter.',
     },
     mockFeedImage: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=600&auto=format&fit=crop&q=80',
+    sdCardRecordings: [
+      {
+        id: 'rec-05',
+        cameraId: 'cam-02',
+        startTime: '15:39',
+        endTime: '15:43',
+        durationSeconds: 240,
+        dateStr: 'Today',
+        eventType: 'vehicle',
+        eventTitle: 'Vehicle Arrival at Gate',
+        fileSizeBytes: 45 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=300&auto=format&fit=crop&q=80',
+      },
+      {
+        id: 'rec-06',
+        cameraId: 'cam-02',
+        startTime: '13:15',
+        endTime: '13:20',
+        durationSeconds: 300,
+        dateStr: 'Today',
+        eventType: 'person',
+        eventTitle: 'Courier Delivery at Gate',
+        fileSizeBytes: 41 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=300&auto=format&fit=crop&q=80',
+      },
+    ],
   },
   {
     id: 'cam-03',
@@ -218,6 +326,12 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
     twoWayAudioActive: false,
     sirenAlarmActive: false,
     sdCardStorageGb: { total: 64, used: 18, free: 46 },
+    sdCardHealth: 'Healthy (Good)',
+    localIp: '192.168.1.122',
+    cameraAccountUser: 'thamiz_admin',
+    rtspStreamUrl: 'rtsp://thamiz_admin:••••••••@192.168.1.122:554/stream1',
+    webrtcBridgeUrl: 'ws://192.168.1.122:1984/api/ws?src=study_c200',
+    onvifPort: 2020,
     cloudArchiveDays: 30,
     panTiltAngle: { pan: 10, tilt: 0 },
     lastMotionEvent: {
@@ -227,6 +341,20 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
       description: 'Study session movement detected.',
     },
     mockFeedImage: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=600&auto=format&fit=crop&q=80',
+    sdCardRecordings: [
+      {
+        id: 'rec-07',
+        cameraId: 'cam-03',
+        startTime: '15:10',
+        endTime: '15:15',
+        durationSeconds: 300,
+        dateStr: 'Today',
+        eventType: 'person',
+        eventTitle: 'Maaran entered Study Desk',
+        fileSizeBytes: 32 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1513694203232-719a280e022f?w=300&auto=format&fit=crop&q=80',
+      },
+    ],
   },
   {
     id: 'cam-04',
@@ -246,6 +374,12 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
     twoWayAudioActive: false,
     sirenAlarmActive: false,
     sdCardStorageGb: { total: 128, used: 35, free: 93 },
+    sdCardHealth: 'Healthy (Good)',
+    localIp: '192.168.1.123',
+    cameraAccountUser: 'thamiz_admin',
+    rtspStreamUrl: 'rtsp://thamiz_admin:••••••••@192.168.1.123:554/stream1',
+    webrtcBridgeUrl: 'ws://192.168.1.123:1984/api/ws?src=garden_c500',
+    onvifPort: 2020,
     cloudArchiveDays: 30,
     panTiltAngle: { pan: 45, tilt: -10 },
     lastMotionEvent: {
@@ -255,5 +389,19 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
       description: 'Perimeter clear. Natural motion detected.',
     },
     mockFeedImage: 'https://images.unsplash.com/photo-1558036117-15d82a90b9b1?w=600&auto=format&fit=crop&q=80',
+    sdCardRecordings: [
+      {
+        id: 'rec-08',
+        cameraId: 'cam-04',
+        startTime: '14:40',
+        endTime: '14:45',
+        durationSeconds: 300,
+        dateStr: 'Today',
+        eventType: 'motion',
+        eventTitle: 'Garden Motion Detected',
+        fileSizeBytes: 39 * 1024 * 1024,
+        thumbnailUrl: 'https://images.unsplash.com/photo-1558036117-15d82a90b9b1?w=300&auto=format&fit=crop&q=80',
+      },
+    ],
   },
 ];

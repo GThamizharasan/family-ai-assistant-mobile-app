@@ -15,6 +15,7 @@ export class VoiceAssistantEngine {
   public onTranscriptCallback?: (transcript: string, isFinal: boolean) => void;
   public onSpeakingChange?: (isSpeaking: boolean) => void;
   public onListeningChange?: (isListening: boolean) => void;
+  public onErrorCallback?: (error: string) => void;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -53,6 +54,7 @@ export class VoiceAssistantEngine {
           console.warn('Speech recognition status:', event.error);
           this.isListening = false;
           this.onListeningChange?.(false);
+          this.onErrorCallback?.(event.error);
         };
 
         this.recognition.onend = () => {
@@ -69,6 +71,20 @@ export class VoiceAssistantEngine {
 
   public isSupported(): boolean {
     return !!(this.recognition || ('speechSynthesis' in window));
+  }
+
+  public async requestMicPermission(): Promise<boolean> {
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+        return true;
+      } catch (err) {
+        console.warn('Microphone permission request failed or rejected:', err);
+        return false;
+      }
+    }
+    return true;
   }
 
   public startListening() {
