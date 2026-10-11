@@ -14,8 +14,11 @@ import {
   Heart,
   Send,
   Sparkles,
+  Map as MapIcon,
+  Radio,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { FamilyGoogleMap } from '../maps/FamilyGoogleMap';
 
 export const FamilyTrackerTab: React.FC = () => {
   const {
@@ -30,6 +33,7 @@ export const FamilyTrackerTab: React.FC = () => {
     updateMemberAllowance,
   } = useApp();
 
+  const [mapMode, setMapMode] = useState<'google' | 'radar'>('google');
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [generatedCode, setGeneratedCode] = useState('');
@@ -130,88 +134,127 @@ export const FamilyTrackerTab: React.FC = () => {
         </div>
       )}
 
-      {/* Interactive Family Radar & Map Simulation */}
-      <div className="rounded-3xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-xl">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
+      {/* Interactive Family Map & Radar HUD */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Live Real-Time Radar Telemetry (Chennai Metro & Global Hub)
-            </h3>
+            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              Real-Time Location & Geofencing
+            </span>
+            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+              Live GPS Sync (25s)
+            </span>
           </div>
-          <span className="text-[11px] font-mono text-slate-400">GPS Interval: 25s auto-sync</span>
+
+          {/* Toggle between Google Maps & Radar HUD */}
+          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              onClick={() => setMapMode('google')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition-all ${
+                mapMode === 'google'
+                  ? 'bg-blue-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MapIcon className="w-3.5 h-3.5" />
+              <span>Google Maps</span>
+            </button>
+            <button
+              onClick={() => setMapMode('radar')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition-all ${
+                mapMode === 'radar'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Radio className="w-3.5 h-3.5" />
+              <span>Tactical Radar</span>
+            </button>
+          </div>
         </div>
 
-        {/* Visual Map Canvas / Radar HUD */}
-        <div className="relative h-64 sm:h-72 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/80 p-4 flex items-center justify-center overflow-hidden">
-          {/* Radar concentric circles */}
-          <div className="absolute w-80 h-80 rounded-full border border-indigo-500/20" />
-          <div className="absolute w-60 h-60 rounded-full border border-indigo-500/25" />
-          <div className="absolute w-40 h-40 rounded-full border border-indigo-500/30" />
-          <div className="absolute w-20 h-20 rounded-full border border-indigo-500/40" />
-          <div className="absolute inset-0 bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:24px_24px] opacity-20" />
+        {mapMode === 'google' ? (
+          <FamilyGoogleMap
+            familyMembers={familyMembers}
+            onTriggerSos={triggerEmergencySos}
+            onClearSos={clearEmergencySos}
+          />
+        ) : (
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/90 overflow-hidden shadow-xl">
+            <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/40">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+                  Tactical Radar HUD Telemetry
+                </h3>
+              </div>
+              <span className="text-[11px] font-mono text-slate-400">GPS Interval: 25s auto-sync</span>
+            </div>
 
-          {/* Radar Sweep Line */}
-          <div className="absolute w-80 h-80 rounded-full border-r border-indigo-500/40 animate-spin [animation-duration:8s] pointer-events-none" />
+            {/* Visual Map Canvas / Radar HUD */}
+            <div className="relative h-64 sm:h-72 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950/80 p-4 flex items-center justify-center overflow-hidden">
+              <div className="absolute w-80 h-80 rounded-full border border-indigo-500/20" />
+              <div className="absolute w-60 h-60 rounded-full border border-indigo-500/25" />
+              <div className="absolute w-40 h-40 rounded-full border border-indigo-500/30" />
+              <div className="absolute w-20 h-20 rounded-full border border-indigo-500/40" />
+              <div className="absolute inset-0 bg-[radial-gradient(#6366f1_1px,transparent_1px)] [background-size:24px_24px] opacity-20" />
 
-          {/* Member Pins on Map */}
-          <div className="relative w-full h-full max-w-md">
-            {familyMembers.map((member, idx) => {
-              // Position member markers across simulated radar coordinates
-              const positions = [
-                { top: '35%', left: '46%' },
-                { top: '65%', left: '68%' },
-                { top: '22%', left: '25%' },
-                { top: '70%', left: '30%' },
-              ];
-              const pos = positions[idx % positions.length];
+              <div className="absolute w-80 h-80 rounded-full border-r border-indigo-500/40 animate-spin [animation-duration:8s] pointer-events-none" />
 
-              return (
-                <div
-                  key={member.id}
-                  className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer"
-                  style={{ top: pos.top, left: pos.left }}
-                >
-                  <div className="relative flex flex-col items-center">
-                    {/* Ping ring */}
-                    <span
-                      className={`absolute w-12 h-12 rounded-full -top-1 animate-ping ${
-                        member.emergencySosActive
-                          ? 'bg-rose-500/50'
-                          : 'bg-indigo-500/20'
-                      }`}
-                    />
+              <div className="relative w-full h-full max-w-md">
+                {familyMembers.map((member, idx) => {
+                  const positions = [
+                    { top: '35%', left: '46%' },
+                    { top: '65%', left: '68%' },
+                    { top: '22%', left: '25%' },
+                    { top: '70%', left: '30%' },
+                  ];
+                  const pos = positions[idx % positions.length];
 
-                    {/* Member Avatar */}
+                  return (
                     <div
-                      className={`relative w-10 h-10 rounded-full border-2 overflow-hidden shadow-lg transition-transform group-hover:scale-110 ${
-                        member.emergencySosActive
-                          ? 'border-rose-500 ring-4 ring-rose-500/30'
-                          : 'border-indigo-400 ring-2 ring-indigo-500/20'
-                      }`}
+                      key={member.id}
+                      className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer"
+                      style={{ top: pos.top, left: pos.left }}
                     >
-                      <img
-                        src={member.avatar}
-                        alt={member.name}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
+                      <div className="relative flex flex-col items-center">
+                        <span
+                          className={`absolute w-12 h-12 rounded-full -top-1 animate-ping ${
+                            member.emergencySosActive
+                              ? 'bg-rose-500/50'
+                              : 'bg-indigo-500/20'
+                          }`}
+                        />
 
-                    {/* Badge Label */}
-                    <div className="mt-1.5 px-2 py-0.5 rounded-md bg-slate-950/90 border border-slate-700/80 text-[10px] font-semibold text-slate-200 whitespace-nowrap shadow-md">
-                      {member.name.split(' ')[0]} ({member.liveLocation.batteryLevel}%)
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                        <div
+                          className={`relative w-10 h-10 rounded-full border-2 overflow-hidden shadow-lg transition-transform group-hover:scale-110 ${
+                            member.emergencySosActive
+                              ? 'border-rose-500 ring-4 ring-rose-500/30'
+                              : 'border-indigo-400 ring-2 ring-indigo-500/20'
+                          }`}
+                        >
+                          <img
+                            src={member.avatar}
+                            alt={member.name}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
 
-          {/* Quick HUD legend */}
-          <div className="absolute bottom-2 left-3 text-[10px] text-slate-400 bg-slate-950/80 px-2 py-1 rounded-md border border-slate-800">
-            Geofence Zones: Home • School • Work • Transit
+                        <div className="mt-1.5 px-2 py-0.5 rounded-md bg-slate-950/90 border border-slate-700/80 text-[10px] font-semibold text-slate-200 whitespace-nowrap shadow-md">
+                          {member.name.split(' ')[0]} ({member.liveLocation.batteryLevel}%)
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="absolute bottom-2 left-3 text-[10px] text-slate-400 bg-slate-950/80 px-2 py-1 rounded-md border border-slate-800">
+                Geofence Zones: Home • School • Work • Transit
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Family Members Activity & Safety Cards */}

@@ -17,6 +17,8 @@ import {
   ArrowUpRight,
   Volume2,
   LogOut,
+  Cctv,
+  MapPin,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { speechEngine } from '../../services/speech';
@@ -51,7 +53,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
   const urgentTasks = tasks.filter((t) => t.quadrant === 'urgent-important');
   const familySafeCount = familyMembers.filter((m) => !m.emergencySosActive).length;
 
-  const dailyMotivation = `“Karthik, real wealth is not merely accumulated capital—it is sovereign time, cognitive freedom, and deep harmony across your family lineage. Build your enterprise with relentless precision today, but stay rooted in what truly endures.”`;
+  const dailyMotivation = `“Thamiz, real wealth is not merely accumulated capital—it is sovereign time, cognitive freedom, and deep harmony across your family lineage. Build your enterprise with relentless precision today, but stay rooted in what truly endures.”`;
 
   const speakMotivation = () => {
     setDailyQuoteSpoken(true);
@@ -138,6 +140,84 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
         >
           <span>{(googleOneStorageUsedGb / 1024).toFixed(1)} TB of 2 TB used</span>
           <ArrowUpRight className="w-3 h-3" />
+        </div>
+      </div>
+
+      {/* Connected Google Workspace Card */}
+      <div
+        onClick={() => onNavigate('google')}
+        className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/40 via-slate-900 to-indigo-950/40 border border-blue-500/30 hover:border-blue-500/60 transition-all flex items-center justify-between shadow-md"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+            <svg viewBox="0 0 24 24" className="w-4 h-4">
+              <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z" />
+              <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.26 21.36 7.33 24 12 24z" />
+              <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.94 0 12s.46 3.84 1.26 5.42l4.02-3.15z" />
+              <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+            </svg>
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-white">Google Workspace & 2 TB Quota</span>
+              <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[9px] font-mono font-bold">
+                Gmail • Drive • Cal
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Live storage quota & sync with {user.email}
+            </p>
+          </div>
+        </div>
+        <ArrowUpRight className="w-4 h-4 text-blue-400 shrink-0" />
+      </div>
+
+      {/* Grid: Smart Devices / Tapo CCTV & Family Google Maps */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Tapo CCTV & Smart Watches Card */}
+        <div
+          onClick={() => onNavigate('devices')}
+          className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-purple-950/40 border border-indigo-500/30 hover:border-indigo-500/60 transition-all flex items-center justify-between shadow-md"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0">
+              <Cctv className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white">Tapo CCTV & Watches</span>
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                4 Tapo Cams Live • 3 Smartwatches (Heart, Sleep, Fall SOS)
+              </p>
+            </div>
+          </div>
+          <ArrowUpRight className="w-4 h-4 text-indigo-400 shrink-0" />
+        </div>
+
+        {/* Family Circle Google Maps Live Card */}
+        <div
+          onClick={() => onNavigate('family')}
+          className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-blue-950/40 border border-emerald-500/30 hover:border-emerald-500/60 transition-all flex items-center justify-between shadow-md"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <MapPin className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white">Google Maps Family GPS</span>
+                <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-mono font-bold">
+                  25s Live
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Exact Chennai GPS coords, battery & geofence zones
+              </p>
+            </div>
+          </div>
+          <ArrowUpRight className="w-4 h-4 text-emerald-400 shrink-0" />
         </div>
       </div>
 

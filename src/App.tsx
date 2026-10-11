@@ -18,6 +18,7 @@ import { MoodJournalTab } from './components/tabs/MoodJournalTab';
 import { WritingCoachTab } from './components/tabs/WritingCoachTab';
 import { MemoryVaultTab } from './components/tabs/MemoryVaultTab';
 import { GoogleOneTab } from './components/tabs/GoogleOneTab';
+import { SmartDevicesTab } from './components/tabs/SmartDevicesTab';
 import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
 
 const AppContent: React.FC = () => {
@@ -59,6 +60,8 @@ const AppContent: React.FC = () => {
         return <MemoryVaultTab />;
       case 'google':
         return <GoogleOneTab />;
+      case 'devices':
+        return <SmartDevicesTab />;
       case 'docs':
         return <DocsAndDemoTab onOpenInstaller={() => setIsInstallerOpen(true)} />;
       default:

@@ -95,3 +95,23 @@ export async function searchGoogleOneApi(query: string) {
   if (!res.ok) throw new Error('Google One search error');
   return res.json();
 }
+
+export async function summarizeEmailsApi(emails: any[]) {
+  const res = await fetch('/api/summarize-emails', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emails }),
+  });
+  if (!res.ok) throw new Error('Email summarization error');
+  return res.json();
+}
+
+export async function summarizeCalendarEventsApi(events: any[]) {
+  const res = await fetch('/api/summarize-calendar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events }),
+  });
+  if (!res.ok) throw new Error('Calendar briefing error');
+  return res.json();
+}

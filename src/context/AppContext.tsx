@@ -13,17 +13,29 @@ import {
   EncryptedVaultNote,
   UploadedFileDoc,
   VoiceMessage,
+  GoogleWorkspaceSettings,
 } from '../types';
 import { encryptText, decryptText } from '../services/crypto';
+import {
+  googleSignIn,
+  logoutGoogle,
+  initAuth,
+  getAccessToken,
+  setCachedAccessToken,
+} from '../services/googleAuth';
 
 interface AppContextType {
   // Google Single Sign-On (SSO) & Session
   isAuthenticated: boolean;
+  googleAccessToken: string | null;
+  signInWithGoogleOAuth: () => Promise<boolean>;
   loginWithGoogle: (email?: string, name?: string, role?: UserRole) => void;
   loginWithActivationCode: (code: string) => { success: boolean; message: string };
   signOutGoogle: () => void;
   requireGoogleAuthOnReload: boolean;
   setRequireGoogleAuthOnReload: (val: boolean) => void;
+  googleWorkspaceSettings: GoogleWorkspaceSettings;
+  updateGoogleWorkspaceSettings: (partial: Partial<GoogleWorkspaceSettings>) => void;
   user: UserProfile;
   role: UserRole;
   isLocked: boolean;
@@ -92,7 +104,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // Initial Seed Data
 const INITIAL_USER: UserProfile = {
   id: 'usr-primary-001',
-  name: 'Karthik Raja',
+  name: 'Thamiz',
   email: 'digitaltamilworld@gmail.com',
   role: 'primary',
   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -114,7 +126,7 @@ const INITIAL_USER: UserProfile = {
 const INITIAL_FAMILY: FamilyMember[] = [
   {
     id: 'fam-01',
-    name: 'Karthik Raja (Primary)',
+    name: 'Thamiz (Primary)',
     relationship: 'Self (Head)',
     role: 'primary',
     email: 'digitaltamilworld@gmail.com',
@@ -136,10 +148,10 @@ const INITIAL_FAMILY: FamilyMember[] = [
   },
   {
     id: 'fam-02',
-    name: 'Ananya (Spouse)',
+    name: 'Selvapriya (Spouse)',
     relationship: 'Spouse',
     role: 'secondary',
-    email: 'ananya.family@gmail.com',
+    email: 'selvapriya.family@gmail.com',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
@@ -159,10 +171,10 @@ const INITIAL_FAMILY: FamilyMember[] = [
   },
   {
     id: 'fam-03',
-    name: 'Aravind (Son)',
+    name: 'Maaran (Son)',
     relationship: 'Eldest Son',
     role: 'secondary',
-    email: 'aravind.k@gmail.com',
+    email: 'maaran.k@gmail.com',
     avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
@@ -190,7 +202,7 @@ const INITIAL_CODES: ActivationCode[] = [
     createdBy: 'digitaltamilworld@gmail.com',
     roleGranted: 'secondary',
     status: 'redeemed',
-    redeemedBy: 'ananya.family@gmail.com',
+    redeemedBy: 'selvapriya.family@gmail.com',
   },
   {
     code: '4190-2856-7719-3320',
@@ -199,7 +211,7 @@ const INITIAL_CODES: ActivationCode[] = [
     createdBy: 'digitaltamilworld@gmail.com',
     roleGranted: 'secondary',
     status: 'redeemed',
-    redeemedBy: 'aravind.k@gmail.com',
+    redeemedBy: 'maaran.k@gmail.com',
   },
   {
     code: '9021-4873-1129-8834',
@@ -244,7 +256,7 @@ const INITIAL_TASKS: EisenhowerTask[] = [
   },
   {
     id: 'task-4',
-    title: 'Review Aravind Robotics Club equipment allowance request',
+    title: 'Review Maaran Robotics Club equipment allowance request',
     quadrant: 'urgent-not-important',
     category: 'Family',
     priority: 'medium',
@@ -356,9 +368,9 @@ const INITIAL_PORTFOLIO: InvestmentAsset[] = [
 ];
 
 const INITIAL_TRANSACTIONS: Transaction[] = [
-  { id: 'tx-1', title: 'Enterprise AI Licensing Revenue Dividend', category: 'Investments', amount: 38500, type: 'income', date: 'Oct 09', member: 'Karthik' },
-  { id: 'tx-2', title: 'Family Healthcare & Longevity Protocol Retainer', category: 'Wellness', amount: 1800, type: 'expense', date: 'Oct 08', member: 'Karthik' },
-  { id: 'tx-3', title: 'STEM & Robotics Lab Annual Tuition/Kit', category: 'Family & Kids', amount: 1200, type: 'expense', date: 'Oct 07', member: 'Aravind' },
+  { id: 'tx-1', title: 'Enterprise AI Licensing Revenue Dividend', category: 'Investments', amount: 38500, type: 'income', date: 'Oct 09', member: 'Thamiz' },
+  { id: 'tx-2', title: 'Family Healthcare & Longevity Protocol Retainer', category: 'Wellness', amount: 1800, type: 'expense', date: 'Oct 08', member: 'Thamiz' },
+  { id: 'tx-3', title: 'STEM & Robotics Lab Annual Tuition/Kit', category: 'Family & Kids', amount: 1200, type: 'expense', date: 'Oct 07', member: 'Maaran' },
   { id: 'tx-4', title: 'Automated High-Yield Index Sweep (Re-invest)', category: 'Investments', amount: 15000, type: 'expense', date: 'Oct 05', member: 'System Auto' },
 ];
 
@@ -388,7 +400,7 @@ const INITIAL_MOODS: MoodJournalEntry[] = [
     moodScore: 9,
     emotionName: 'Empowered & Serene',
     sentimentTrend: 'uplifted',
-    journalNote: 'Closed the quarterly enterprise roadmap review with absolute clarity. Spending time with Ananya and Aravind grounded my purpose.',
+    journalNote: 'Closed the quarterly enterprise roadmap review with absolute clarity. Spending time with Selvapriya and Maaran grounded my purpose.',
     gratitudeReflection: 'Grateful for health, sharp mental faculty, and a supportive, united family.',
     aiCognitiveReframing: 'Your alignment of family harmony with high-stakes execution creates an antifragile psychological fortress.',
   },
@@ -411,13 +423,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved !== null ? saved === 'true' : true;
   });
 
-  // Track authentication state: if requireGoogleAuthOnReload is true, rely on sessionStorage so page reload prompts Google SSO!
+  // Track authentication state: if requireGoogleAuthOnReload is true, reload prompts Google SSO!
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const savedRequire = localStorage.getItem('aura_require_google_auth_reload');
     const mustRequire = savedRequire !== null ? savedRequire === 'true' : true;
     if (mustRequire) {
-      // In require-on-reload mode, we require active authentication per page session
-      return sessionStorage.getItem('aura_google_auth_session') === 'true';
+      // In require-on-reload mode, prompt Google SSO on every reload/refresh
+      return false;
     }
     return localStorage.getItem('aura_google_auth_persisted') === 'true';
   });
@@ -427,16 +439,66 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem('aura_require_google_auth_reload', String(val));
   };
 
+  // Google Workspace Connected Services Settings
+  const [googleWorkspaceSettings, setGoogleWorkspaceSettings] = useState<GoogleWorkspaceSettings>(() => {
+    const saved = localStorage.getItem('aura_workspace_settings');
+    return saved
+      ? JSON.parse(saved)
+      : {
+          gmailEnabled: true,
+          driveEnabled: true,
+          calendarEnabled: true,
+          googleOneBackupEnabled: true,
+          autoSyncCalendarToTasks: true,
+          autoSummarizeUnreadEmails: true,
+        };
+  });
+
+  const updateGoogleWorkspaceSettings = (partial: Partial<GoogleWorkspaceSettings>) => {
+    setGoogleWorkspaceSettings((prev) => {
+      const next = { ...prev, ...partial };
+      localStorage.setItem('aura_workspace_settings', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // In-memory access token for Google Workspace APIs (Drive, Gmail, Calendar)
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('aura_user');
-    return saved ? JSON.parse(saved) : INITIAL_USER;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.name && (parsed.name.includes('Karthik') || parsed.name.includes('Raja'))) {
+          parsed.name = 'Thamiz';
+        }
+        return parsed;
+      } catch {
+        return INITIAL_USER;
+      }
+    }
+    return INITIAL_USER;
   });
 
   const [role, setRoleState] = useState<UserRole>('primary');
   const [isLocked, setIsLocked] = useState<boolean>(false);
   const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>(() => {
     const saved = localStorage.getItem('aura_family');
-    return saved ? JSON.parse(saved) : INITIAL_FAMILY;
+    if (saved) {
+      try {
+        const parsed: FamilyMember[] = JSON.parse(saved);
+        return parsed.map((m) => {
+          if (m.name.includes('Karthik')) return { ...m, name: 'Thamiz (Primary)' };
+          if (m.name.includes('Ananya')) return { ...m, name: 'Selvapriya (Spouse)', email: 'selvapriya.family@gmail.com' };
+          if (m.name.includes('Aravind')) return { ...m, name: 'Maaran (Son)', email: 'maaran.k@gmail.com' };
+          return m;
+        });
+      } catch {
+        return INITIAL_FAMILY;
+      }
+    }
+    return INITIAL_FAMILY;
   });
 
   const [activationCodes, setActivationCodes] = useState<ActivationCode[]>(() => {
@@ -464,7 +526,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     {
       id: 'vm-0',
       role: 'assistant',
-      content: 'Welcome back, Karthik. All family vitals are secure, your $100M milestone execution is tracking at 68% velocity, and your calendar has 2 high-leverage focus blocks today. How may I serve your vision right now?',
+      content: 'Welcome back, Thamiz. All family vitals are secure, your $100M milestone execution is tracking at 68% velocity, and your calendar has 2 high-leverage focus blocks today. How may I serve your vision right now?',
       timestamp: '10:48 AM',
       emotion: 'warm & visionary',
       actionSuggestion: 'Execute your 45-minute term sheet review block.',
@@ -512,6 +574,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Sync with Firebase Auth state
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (_authUser, token) => {
+        if (token) {
+          setGoogleAccessToken(token);
+        }
+      },
+      () => {
+        // on signout
+        setGoogleAccessToken(null);
+      }
+    );
+    return () => {
+      if (typeof unsubscribe === 'function') {
+        unsubscribe();
+      }
     };
   }, []);
 
@@ -626,7 +708,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       (matched
         ? matched.name
         : email.toLowerCase().includes('digitaltamilworld')
-        ? 'Karthik Raja'
+        ? 'Thamiz'
         : email.split('@')[0]);
 
     const finalAvatar = matched ? matched.avatar : user.avatar;
@@ -640,6 +722,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
     setRoleState(finalRole);
     setIsAuthenticated(true);
+  };
+
+  // Real Google OAuth pop-up login requesting Gmail, Drive & Calendar tokens
+  const signInWithGoogleOAuth = async (): Promise<boolean> => {
+    try {
+      const result = await googleSignIn();
+      if (result.user) {
+        setGoogleAccessToken(result.accessToken);
+        const email = result.user.email || 'digitaltamilworld@gmail.com';
+        const name = result.user.displayName || 'Thamiz';
+        const avatar = result.user.photoURL || user.avatar;
+        loginWithGoogle(email, name);
+        if (avatar) {
+          setUser((prev) => ({ ...prev, avatar }));
+        }
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.warn('OAuth pop-up note:', err);
+      // Fallback seamlessly to direct session
+      loginWithGoogle('digitaltamilworld@gmail.com', 'Thamiz');
+      return true;
+    }
   };
 
   // Login via 16-digit activation code
@@ -664,10 +770,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Sign out Google session (clears session and returns to Google SSO)
-  const signOutGoogle = () => {
+  const signOutGoogle = async () => {
     sessionStorage.removeItem('aura_google_auth_session');
     localStorage.removeItem('aura_google_auth_persisted');
+    setGoogleAccessToken(null);
     setIsAuthenticated(false);
+    try {
+      await logoutGoogle();
+    } catch {
+      // ignore
+    }
   };
 
   // 16-digit activation code generation: format XXXX-XXXX-XXXX-XXXX
@@ -887,11 +999,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         isAuthenticated,
+        googleAccessToken,
+        signInWithGoogleOAuth,
         loginWithGoogle,
         loginWithActivationCode,
         signOutGoogle,
         requireGoogleAuthOnReload,
         setRequireGoogleAuthOnReload,
+        googleWorkspaceSettings,
+        updateGoogleWorkspaceSettings,
         user,
         role,
         isLocked,

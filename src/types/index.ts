@@ -174,3 +174,12 @@ export interface VoiceMessage {
   emotion?: string;
   actionSuggestion?: string;
 }
+
+export interface GoogleWorkspaceSettings {
+  gmailEnabled: boolean;
+  driveEnabled: boolean;
+  calendarEnabled: boolean;
+  googleOneBackupEnabled: boolean;
+  autoSyncCalendarToTasks: boolean;
+  autoSummarizeUnreadEmails: boolean;
+}

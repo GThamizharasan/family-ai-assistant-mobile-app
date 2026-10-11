@@ -30,7 +30,7 @@ export const FinanceHubTab: React.FC = () => {
   const [txAmount, setTxAmount] = useState('');
   const [txCategory, setTxCategory] = useState<any>('Investments');
   const [txType, setTxType] = useState<'income' | 'expense'>('expense');
-  const [txMember, setTxMember] = useState('Karthik');
+  const [txMember, setTxMember] = useState('Thamiz');
 
   const [aiInsightLoading, setAiInsightLoading] = useState(false);
   const [aiInsights, setAiInsights] = useState<any>(null);

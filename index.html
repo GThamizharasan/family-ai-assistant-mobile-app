@@ -21,6 +21,34 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // Gracefully ignore WebSocket HMR notifications when HMR is disabled in AI Studio preview
+      (function() {
+        const _origError = console.error;
+        console.error = function(...args) {
+          const isViteWs = args.some(arg => {
+            const str = String(arg || '');
+            return str.includes('WebSocket closed without opened') || 
+                   (str.includes('[vite]') && str.includes('WebSocket')) ||
+                   (arg instanceof Error && (arg.message?.includes('WebSocket') || arg.stack?.includes('@vite/client')));
+          });
+          if (isViteWs) return;
+          _origError.apply(console, args);
+        };
+        window.addEventListener('error', function(e) {
+          if (e && (e.message?.includes('WebSocket') || e.filename?.includes('@vite/client') || (e.error && String(e.error).includes('WebSocket')))) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          if (e && String(e.reason).includes('WebSocket')) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden">
     <div id="root"></div>

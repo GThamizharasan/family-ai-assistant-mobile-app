@@ -9,6 +9,8 @@ import {
   Lock,
   FileText,
   Mic,
+  CloudCheck,
+  Cctv,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -23,6 +25,7 @@ export type TabKey =
   | 'writing'
   | 'vault'
   | 'google'
+  | 'devices'
   | 'docs';
 
 interface BottomNavProps {
@@ -40,12 +43,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
   const mainTabs: { key: TabKey; label: string; icon: React.FC<{ className?: string }>; badge?: number }[] = [
     { key: 'home', label: 'Hub', icon: Home },
     { key: 'family', label: 'Family', icon: Users, badge: emergencyAlertCount },
-    { key: 'billionaire', label: 'Billionaire', icon: TrendingUp },
+    { key: 'devices', label: 'IoT & CCTV', icon: Cctv },
+    { key: 'google', label: 'Google', icon: CloudCheck },
     { key: 'finance', label: 'Wealth', icon: Wallet },
     { key: 'productivity', label: 'Tasks', icon: CheckSquare, badge: pendingTasksCount },
+    { key: 'billionaire', label: 'Billionaire', icon: TrendingUp },
     { key: 'wellness', label: 'Health', icon: HeartPulse },
-    { key: 'vault', label: 'Vault', icon: Lock },
-    { key: 'docs', label: 'PRD & Tour', icon: FileText },
   ];
 
   return (

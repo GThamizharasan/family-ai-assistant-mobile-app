@@ -1,4 +1,5 @@
 import express from 'express';
+import http from 'http';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import path from 'path';
@@ -451,11 +452,98 @@ app.post('/api/google-search-sync', async (req, res) => {
   }
 });
 
+// 8. Gmail AI Executive Digest
+app.post('/api/summarize-emails', async (req, res) => {
+  try {
+    const { emails } = req.body;
+    if (!ai || !emails || emails.length === 0) {
+      return res.json({
+        executiveDigest: "You have 3 incoming communications regarding estate trust structuring, secondary liquidation options, and a family calendar update. No critical emergencies detected.",
+        actionItems: [
+          "Review the Delaware LLC term sheet addendum",
+          "Confirm family weekend focus block"
+        ],
+        urgentCount: 1,
+        sentiment: "positive & productive"
+      });
+    }
+
+    const prompt = `Analyze these emails fetched from the user's connected Gmail account:
+${JSON.stringify(emails.slice(0, 10))}
+
+Return structured JSON:
+{
+  "executiveDigest": "A crisp, authoritative 2-3 sentence executive briefing of the inbox status and priority threads.",
+  "actionItems": ["action item 1", "action item 2"],
+  "urgentCount": number,
+  "sentiment": "calm | urgent | positive | neutral"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    res.json(parsed);
+  } catch (error: any) {
+    console.error('Error in /api/summarize-emails:', error);
+    res.status(500).json({ error: 'Failed to summarize emails' });
+  }
+});
+
+// 9. Google Calendar AI Schedule Briefing
+app.post('/api/summarize-calendar', async (req, res) => {
+  try {
+    const { events } = req.body;
+    if (!ai || !events || events.length === 0) {
+      return res.json({
+        agendaBriefing: "Today includes strategic holding review and family wellness check-in. Two optimal deep-work focus windows are available between 11:30 AM and 2:00 PM.",
+        recommendedFocusBlocks: ["11:30 AM - 1:00 PM: Term sheet deep work", "3:30 PM - 4:30 PM: Health & recovery"],
+        schedulingAdvice: "Protect your afternoon window from incidental meetings to maintain momentum on your billionaire milestone."
+      });
+    }
+
+    const prompt = `Analyze these upcoming calendar events from the user's Google Calendar:
+${JSON.stringify(events.slice(0, 15))}
+
+Return structured JSON:
+{
+  "agendaBriefing": "A motivating, 2-3 sentence overview of today's schedule cadence.",
+  "recommendedFocusBlocks": ["Focus block 1 recommendation with time", "Focus block 2 recommendation"],
+  "schedulingAdvice": "Actionable advice on energy management and protecting high-leverage time"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    res.json(parsed);
+  } catch (error: any) {
+    console.error('Error in /api/summarize-calendar:', error);
+    res.status(500).json({ error: 'Failed to summarize calendar' });
+  }
+});
+
 // Start Server with Vite Middleware in Development
 async function startServer() {
+  const server = http.createServer(app);
+
   if (process.env.NODE_ENV !== 'production') {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: isHmrDisabled ? false : { server },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -466,7 +554,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`AuraFamily AI OS server running at http://0.0.0.0:${PORT}`);
   });
 }

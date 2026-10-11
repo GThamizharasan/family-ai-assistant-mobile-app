@@ -113,7 +113,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       }
     } catch (err) {
       setIsThinking(false);
-      const fallbackReply = "I hear you, Karthik. I've noted that into your encrypted local memory vault.";
+      const fallbackReply = "I hear you, Thamiz. I've noted that into your encrypted local memory vault.";
       addVoiceMessage({
         role: 'assistant',
         content: fallbackReply,
