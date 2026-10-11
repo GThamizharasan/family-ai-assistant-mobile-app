@@ -1,0 +1,6 @@
+{
+  "name": "AuraFamily AI - Family Personal Assistant & Life OS",
+  "description": "Comprehensive Family Personal AI Assistant with real-time voice recognition, encrypted life vault, billionaire milestone roadmap, family geofencing & tracking, financial command center, and health & wellness hub.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
