@@ -16,6 +16,8 @@ import {
   Sparkles,
   Map as MapIcon,
   Radio,
+  Phone,
+  PhoneCall,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { FamilyGoogleMap } from '../maps/FamilyGoogleMap';
@@ -31,6 +33,7 @@ export const FamilyTrackerTab: React.FC = () => {
     triggerEmergencySos,
     clearEmergencySos,
     updateMemberAllowance,
+    startCall,
   } = useApp();
 
   const [mapMode, setMapMode] = useState<'google' | 'radar'>('google');
@@ -328,14 +331,36 @@ export const FamilyTrackerTab: React.FC = () => {
                   <span className="text-slate-500">(${member.monthlySpent} spent)</span>
                 </div>
 
-                {/* SOS Trigger / Clear for Demo & Real Testing */}
-                <div className="flex items-center gap-2 mt-1">
+                {/* Calling & SOS Trigger */}
+                <div className="flex items-center gap-1.5 mt-1">
+                  <button
+                    onClick={() => {
+                      const phone = member.relationship.includes('Spouse')
+                        ? '+91 98401 54321'
+                        : '+91 98401 87654';
+                      startCall({ name: member.name, phone, avatar: member.avatar, relationship: member.relationship }, false);
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
+                    title={`Call ${member.name} directly`}
+                  >
+                    <PhoneCall className="w-3 h-3" />
+                    <span>Call</span>
+                  </button>
+
+                  <a
+                    href={`tel:${member.relationship.includes('Spouse') ? '+919840154321' : '+919840187654'}`}
+                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 hover:text-white transition-colors border border-slate-700"
+                    title="Direct cellular call"
+                  >
+                    <Phone className="w-3.5 h-3.5" />
+                  </a>
+
                   {member.emergencySosActive ? (
                     <button
                       onClick={() => clearEmergencySos(member.id)}
                       className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors"
                     >
-                      Clear Emergency SOS
+                      Clear SOS
                     </button>
                   ) : (
                     <button

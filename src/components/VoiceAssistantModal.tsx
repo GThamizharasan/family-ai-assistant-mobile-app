@@ -15,6 +15,8 @@ import {
   HelpCircle,
   AlertCircle,
   CheckCircle,
+  MessageSquare,
+  PhoneCall,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine } from '../services/speech';
@@ -26,7 +28,23 @@ interface VoiceAssistantModalProps {
 }
 
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen, onClose }) => {
-  const { user, chatHistory, addVoiceMessage, tasks, netWorth, familyMembers } = useApp();
+  const {
+    user,
+    chatHistory,
+    addVoiceMessage,
+    tasks,
+    netWorth,
+    familyMembers,
+    whatsAppMessages,
+    whatsAppContacts,
+    sendWhatsAppMessage,
+    markWhatsAppAsRead,
+    phoneContacts,
+    startCall,
+    gcpBillingConfig,
+    updateGcpBudgetLimit,
+    toggleGcpControlGuardrail,
+  } = useApp();
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
@@ -90,6 +108,178 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     };
     addVoiceMessage(userMsg);
 
+    // Direct Voice-to-Call intent detection
+    const lower = spokenText.toLowerCase();
+    if (lower.startsWith('call ') || lower.includes('place a call to ') || lower.includes('make a call to ') || lower.startsWith('dial ')) {
+      const targetContact = phoneContacts.find((c) =>
+        lower.includes(c.name.toLowerCase().split(' ')[0]) ||
+        lower.includes(c.relationship?.toLowerCase() || '___')
+      );
+      if (targetContact) {
+        setIsThinking(false);
+        speechEngine.speak(`Calling ${targetContact.name} on sovereign line now.`);
+        onClose();
+        startCall(targetContact, false);
+        return;
+      }
+    }
+
+    // Direct WhatsApp message check / read out intent
+    if (
+      lower.includes('whatsapp') &&
+      (lower.includes('read') ||
+        lower.includes('check') ||
+        lower.includes('latest') ||
+        lower.includes('message') ||
+        lower.includes('list') ||
+        lower.includes('recent') ||
+        lower.includes('new'))
+    ) {
+      setIsThinking(false);
+      const incomingMsgs = (whatsAppMessages || []).filter((m) => !m.isOutgoing);
+      const latestMsg = incomingMsgs[incomingMsgs.length - 1];
+      if (latestMsg) {
+        const topReply = (latestMsg.suggestedReplies && latestMsg.suggestedReplies[0]) || 'Understood, on it!';
+        const readout = `Your latest WhatsApp message is from ${latestMsg.contactName} (${latestMsg.relationship || 'Contact'}), received at ${latestMsg.timestamp}: "${latestMsg.text}". Auro's suggested reply is: "${topReply}". Say "Send reply" or tap below to send immediately.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: readout,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'helpful & attentive',
+          actionSuggestion: `Reply to ${latestMsg.contactName}: "${topReply}"`,
+        });
+        if (!isMuted) {
+          speechEngine.speak(readout, {
+            pitch: user.preferences.voicePitch,
+            rate: user.preferences.voiceRate,
+          });
+        }
+        return;
+      }
+    }
+
+    // Direct WhatsApp reply intent via Auro
+    if (
+      lower.startsWith('reply to ') ||
+      lower.startsWith('reply on whatsapp') ||
+      lower.startsWith('send whatsapp to') ||
+      lower.startsWith('whatsapp ') ||
+      lower.startsWith('send reply ') ||
+      lower === 'send reply' ||
+      lower.includes('reply via auro')
+    ) {
+      setIsThinking(false);
+      const incomingMsgs = (whatsAppMessages || []).filter((m) => !m.isOutgoing);
+      const latestMsg = incomingMsgs[incomingMsgs.length - 1];
+
+      let targetContact = whatsAppContacts.find((c) =>
+        lower.includes(c.name.toLowerCase().split(' ')[0]) ||
+        lower.includes(c.relationship?.toLowerCase() || '___')
+      );
+
+      if (!targetContact && latestMsg) {
+        targetContact = whatsAppContacts.find((c) => c.id === latestMsg.contactId);
+      }
+
+      if (targetContact) {
+        let replyText = '';
+        const hasSuggested = Boolean(latestMsg?.suggestedReplies && latestMsg.suggestedReplies.length > 0);
+        if (lower === 'send reply' && hasSuggested && latestMsg?.suggestedReplies?.[0]) {
+          replyText = latestMsg.suggestedReplies[0];
+        } else {
+          const colonIdx = spokenText.indexOf(':');
+          if (colonIdx !== -1) {
+            replyText = spokenText.slice(colonIdx + 1).trim();
+          } else {
+            replyText = spokenText
+              .replace(/^(reply to|send whatsapp to|whatsapp|reply via auro|send reply)\s+/i, '')
+              .replace(new RegExp(`^(on whatsapp to|to)?\\s*${targetContact.name}\\s*`, 'i'), '')
+              .replace(/^on whatsapp\s+/i, '')
+              .trim();
+          }
+        }
+
+        if (!replyText && hasSuggested && latestMsg?.suggestedReplies?.[0]) {
+          replyText = latestMsg.suggestedReplies[0];
+        }
+
+        if (replyText) {
+          sendWhatsAppMessage(targetContact.id, replyText);
+          markWhatsAppAsRead(targetContact.id);
+          const confirmText = `Sent your WhatsApp reply to ${targetContact.name}: "${replyText}". Delivery confirmed via Auro bridge.`;
+          addVoiceMessage({
+            role: 'assistant',
+            content: confirmText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'efficient & protective',
+            actionSuggestion: `Chat open with ${targetContact.name}`,
+          });
+          if (!isMuted) {
+            speechEngine.speak(confirmText, {
+              pitch: user.preferences.voicePitch,
+              rate: user.preferences.voiceRate,
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    // Direct Google Cloud usage & billing query / control intent
+    if (
+      lower.includes('google cloud') ||
+      lower.includes('gcp') ||
+      lower.includes('cloud billing') ||
+      lower.includes('cloud spend') ||
+      lower.includes('cloud usage') ||
+      lower.includes('cloud budget') ||
+      (lower.includes('billing') && !lower.includes('billionaire'))
+    ) {
+      // Check if user is asking to SET or UPDATE budget
+      const budgetMatch = spokenText.match(/(?:set|change|update|make|adjust)\s+(?:the\s+)?(?:gcp\s+|google\s+cloud\s+|cloud\s+)?budget\s+(?:to\s+)?\$?(\d+(?:\.\d+)?)/i);
+      if (budgetMatch) {
+        const newBudget = parseFloat(budgetMatch[1]);
+        if (!isNaN(newBudget) && newBudget > 0) {
+          setIsThinking(false);
+          updateGcpBudgetLimit(newBudget);
+          const confirmBudget = `I have updated your Google Cloud monthly budget ceiling to $${newBudget.toFixed(2)} USD. Active FinOps alert thresholds and auto scale-down guardrails are now synced with this limit.`;
+          addVoiceMessage({
+            role: 'assistant',
+            content: confirmBudget,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'authoritative & disciplined',
+            actionSuggestion: `Budget set to $${newBudget.toFixed(2)} USD`,
+          });
+          if (!isMuted) {
+            speechEngine.speak(confirmBudget, {
+              pitch: user.preferences.voicePitch,
+              rate: user.preferences.voiceRate,
+            });
+          }
+          return;
+        }
+      }
+
+      // Readout current usage & billing
+      setIsThinking(false);
+      const usedPct = Math.round((gcpBillingConfig.currentMtdSpend / gcpBillingConfig.monthlyBudgetLimit) * 100);
+      const billingReport = `Your Google Cloud account (${gcpBillingConfig.projectId}) has spent $${gcpBillingConfig.currentMtdSpend.toFixed(2)} MTD out of your $${gcpBillingConfig.monthlyBudgetLimit.toFixed(2)} monthly ceiling, which is ${usedPct}% utilized. Active guardrails: Auto Scale-Down on 100% budget cap is ${gcpBillingConfig.controlGuardrails.autoScaleDownOnCap ? 'Active' : 'Disabled'}, and AI Model Throttling at 90% is ${gcpBillingConfig.controlGuardrails.throttleAiModelsAt90 ? 'Active' : 'Disabled'}. Your workloads are operating safely.`;
+      addVoiceMessage({
+        role: 'assistant',
+        content: billingReport,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'analytical & vigilant',
+        actionSuggestion: 'Review GCP services breakdown',
+      });
+      if (!isMuted) {
+        speechEngine.speak(billingReport, {
+          pitch: user.preferences.voicePitch,
+          rate: user.preferences.voiceRate,
+        });
+      }
+      return;
+    }
+
     setIsThinking(true);
     try {
       const historyPayload = chatHistory.slice(-6).map((m) => ({
@@ -103,6 +293,25 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         familyCount: familyMembers.length,
         userEmail: user.email,
         primaryRole: user.role,
+        phoneContactsSummary: (phoneContacts || []).map((c) => ({
+          name: c.name,
+          phone: c.phone,
+          relationship: c.relationship,
+        })),
+        latestWhatsAppMessages: (whatsAppMessages || []).slice(-5).map((m) => ({
+          from: m.contactName,
+          relationship: m.relationship,
+          text: m.text,
+          time: m.timestamp,
+          isOutgoing: m.isOutgoing,
+          suggestedReplies: m.suggestedReplies,
+        })),
+        gcpBillingSummary: {
+          currentMtdSpend: gcpBillingConfig.currentMtdSpend,
+          monthlyBudgetLimit: gcpBillingConfig.monthlyBudgetLimit,
+          projectId: gcpBillingConfig.projectId,
+          autoScaleDownEnabled: gcpBillingConfig.controlGuardrails.autoScaleDownOnCap,
+        },
       };
 
       const result = await sendChatMessage({
@@ -176,10 +385,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   };
 
   const quickPrompts = [
-    { label: 'Check Family Status', text: 'Where are all my family members right now and are they safe?' },
-    { label: 'Billionaire Advisory', text: 'What is my highest leverage action today for my $100M milestone?' },
-    { label: 'Daily Priority Coaching', text: 'Prioritize my Eisenhower urgent tasks for this morning.' },
-    { label: 'Writing Tone Check', text: 'Help me polish my tone for an upcoming executive negotiation.' },
+    { label: 'Check WhatsApp', text: 'Read out my latest WhatsApp messages.' },
+    { label: 'Reply via Auro', text: 'Send reply' },
+    { label: 'Call Selvapriya', text: 'Call Selvapriya.' },
+    { label: 'Cloud Spend & Billing', text: 'Check my Google Cloud usage and billing spend.' },
+    { label: 'Set GCP Budget $250', text: 'Set Google Cloud budget to 250.' },
+    { label: 'Import Phone Contacts', text: 'Show me my synced phone contacts and how to import more from my phone.' },
   ];
 
   return (
@@ -427,6 +638,49 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           )}
 
           <div ref={chatEndRef} />
+        </div>
+
+        {/* Live Auro Intelligence Quick Bar: WhatsApp Latest & GCP Live Spend */}
+        <div className="px-4 py-2 bg-slate-950/80 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
+          {(() => {
+            const incomingMsgs = (whatsAppMessages || []).filter((m) => !m.isOutgoing);
+            const latest = incomingMsgs[incomingMsgs.length - 1];
+            if (!latest) return null;
+            return (
+              <div className="w-full sm:w-auto flex items-center justify-between sm:justify-start gap-2 bg-emerald-950/40 border border-emerald-500/30 px-2.5 py-1.5 rounded-xl text-emerald-300">
+                <div className="flex items-center gap-1.5 truncate max-w-[220px]">
+                  <MessageSquare className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span className="font-semibold">{latest.contactName}:</span>
+                  <span className="text-[11px] truncate text-slate-300">"{latest.text}"</span>
+                </div>
+                {Boolean(latest.suggestedReplies && latest.suggestedReplies.length > 0 && latest.suggestedReplies[0]) && (
+                  <button
+                    onClick={() => handleUserSpeech(`Reply to ${latest.contactName} on WhatsApp: ${latest.suggestedReplies?.[0] || ''}`)}
+                    className="shrink-0 px-2 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] shadow transition-colors flex items-center gap-1"
+                    title={`Send Auro suggested reply to ${latest.contactName}`}
+                  >
+                    <span>Reply</span>
+                    <Sparkles className="w-2.5 h-2.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
+          <div className="w-full sm:w-auto flex items-center justify-between sm:justify-start gap-2 bg-indigo-950/40 border border-indigo-500/30 px-2.5 py-1.5 rounded-xl text-indigo-300">
+            <div className="flex items-center gap-1.5">
+              <DollarSign className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span className="font-semibold">GCP Spend:</span>
+              <span className="font-mono text-white">${gcpBillingConfig.currentMtdSpend.toFixed(2)}</span>
+              <span className="text-[10px] text-slate-400 font-mono">/ ${gcpBillingConfig.monthlyBudgetLimit.toFixed(2)}</span>
+            </div>
+            <button
+              onClick={() => handleUserSpeech('Check my Google Cloud usage and billing spend.')}
+              className="shrink-0 px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] shadow transition-colors"
+            >
+              Audit
+            </button>
+          </div>
         </div>
 
         {/* Quick Prompts Suggestions */}

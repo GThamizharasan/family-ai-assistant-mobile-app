@@ -20,11 +20,18 @@ import { MemoryVaultTab } from './components/tabs/MemoryVaultTab';
 import { GoogleOneTab } from './components/tabs/GoogleOneTab';
 import { SmartDevicesTab } from './components/tabs/SmartDevicesTab';
 import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
+import { WhatsAppTab } from './components/tabs/WhatsAppTab';
+import { PhoneDialerTab } from './components/tabs/PhoneDialerTab';
+import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
+import { ActiveCallModal } from './components/ActiveCallModal';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
   const [currentTab, setCurrentTab] = useState<TabKey>('home');
-  const [googleSubTab, setGoogleSubTab] = useState<'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'settings'>('overview');
+  const [googleSubTab, setGoogleSubTab] = useState<
+    'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'gcp-billing' | 'settings'
+  >('overview');
+  const [activeWhatsAppContactId, setActiveWhatsAppContactId] = useState<string | undefined>(undefined);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
 
@@ -35,10 +42,14 @@ const AppContent: React.FC = () => {
 
   const handleNavigate = (
     tab: TabKey,
-    subTab?: 'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'settings'
+    subTab?: 'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'gcp-billing' | 'settings',
+    contactId?: string
   ) => {
     if (subTab) {
       setGoogleSubTab(subTab);
+    }
+    if (contactId) {
+      setActiveWhatsAppContactId(contactId);
     }
     setCurrentTab(tab);
   };
@@ -55,6 +66,15 @@ const AppContent: React.FC = () => {
         );
       case 'family':
         return <FamilyTrackerTab />;
+      case 'phone':
+        return <PhoneDialerTab />;
+      case 'whatsapp':
+        return (
+          <WhatsAppTab
+            initialContactId={activeWhatsAppContactId}
+            onOpenVoice={() => setIsVoiceOpen(true)}
+          />
+        );
       case 'billionaire':
         return <BillionaireBlueprintTab />;
       case 'finance':
@@ -78,6 +98,8 @@ const AppContent: React.FC = () => {
         );
       case 'devices':
         return <SmartDevicesTab />;
+      case 'billing':
+        return <GcpBillingDashboard />;
       case 'docs':
         return <DocsAndDemoTab onOpenInstaller={() => setIsInstallerOpen(true)} />;
       default:
@@ -113,6 +135,8 @@ const AppContent: React.FC = () => {
         isOpen={isInstallerOpen}
         onClose={() => setIsInstallerOpen(false)}
       />
+
+      <ActiveCallModal />
 
       <BiometricLock />
     </MobileFrame>

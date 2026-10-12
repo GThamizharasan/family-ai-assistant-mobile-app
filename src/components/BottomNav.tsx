@@ -11,11 +11,14 @@ import {
   Mic,
   Mail,
   Cctv,
+  MessageSquare,
+  Phone,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export type TabKey =
   | 'home'
+  | 'phone'
   | 'family'
   | 'billionaire'
   | 'finance'
@@ -26,6 +29,8 @@ export type TabKey =
   | 'vault'
   | 'google'
   | 'devices'
+  | 'whatsapp'
+  | 'billing'
   | 'docs';
 
 interface BottomNavProps {
@@ -35,20 +40,21 @@ interface BottomNavProps {
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, onOpenVoice }) => {
-  const { tasks, familyMembers } = useApp();
+  const { tasks, familyMembers, whatsAppContacts } = useApp();
 
   const emergencyAlertCount = familyMembers.filter((m) => m.emergencySosActive).length;
   const pendingTasksCount = tasks.filter((t) => !t.completed).length;
+  const totalUnreadWhatsApp = (whatsAppContacts || []).reduce((sum, c) => sum + c.unreadCount, 0);
 
   const mainTabs: { key: TabKey; label: string; icon: React.FC<{ className?: string }>; badge?: number }[] = [
     { key: 'home', label: 'Hub', icon: Home },
+    { key: 'phone', label: 'Phone', icon: Phone },
+    { key: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'family', label: 'Family', icon: Users, badge: emergencyAlertCount },
-    { key: 'devices', label: 'IoT & CCTV', icon: Cctv },
-    { key: 'google', label: 'Google & Mail', icon: Mail, badge: 3 },
+    { key: 'google', label: 'Google', icon: Mail, badge: 3 },
     { key: 'finance', label: 'Wealth', icon: Wallet },
     { key: 'productivity', label: 'Tasks', icon: CheckSquare, badge: pendingTasksCount },
     { key: 'billionaire', label: 'Billionaire', icon: TrendingUp },
-    { key: 'wellness', label: 'Health', icon: HeartPulse },
   ];
 
   return (

@@ -115,3 +115,55 @@ export async function summarizeCalendarEventsApi(events: any[]) {
   if (!res.ok) throw new Error('Calendar briefing error');
   return res.json();
 }
+
+export async function getWhatsAppReplyApi(payload: {
+  senderName: string;
+  senderRelationship?: string;
+  messageText: string;
+  userName?: string;
+  userEmail?: string;
+  tone?: string;
+}) {
+  const res = await fetch('/api/whatsapp-reply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('WhatsApp AI reply error');
+  return res.json();
+}
+
+export async function summarizeCallApi(payload: {
+  contactName: string;
+  contactPhone: string;
+  durationSeconds: number;
+  callNotes?: string;
+  relationship?: string;
+  userName?: string;
+}) {
+  const res = await fetch('/api/summarize-call', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Call summarization error');
+  return res.json();
+}
+
+export async function getGcpBillingOptimizationApi(payload: {
+  projectId: string;
+  currentSpend: number;
+  budgetLimit: number;
+  services?: any[];
+  userEmail?: string;
+}) {
+  const res = await fetch('/api/gcp-billing-optimize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('GCP billing optimization error');
+  return res.json();
+}
+
+

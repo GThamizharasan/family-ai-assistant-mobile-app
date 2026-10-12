@@ -24,6 +24,7 @@ import {
   ArrowRight,
   Check,
   X,
+  DollarSign,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { searchGoogleOneApi, summarizeEmailsApi, summarizeCalendarEventsApi, summarizeDocumentApi } from '../../services/api';
@@ -43,8 +44,9 @@ import {
   FALLBACK_CALENDAR_EVENTS,
 } from '../../services/googleWorkspace';
 import { WORKSPACE_SCOPES } from '../../services/googleAuth';
+import { GcpBillingDashboard } from './GcpBillingDashboard';
 
-export type ActiveServiceTab = 'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'settings';
+export type ActiveServiceTab = 'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'gcp-billing' | 'settings';
 
 export interface GoogleOneTabProps {
   initialSubTab?: ActiveServiceTab;
@@ -583,6 +585,15 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
           >
             <CloudCheck className="w-3.5 h-3.5" />
             <span>Cloud Storage (2 TB)</span>
+          </button>
+          <button
+            onClick={() => handleTabChange('gcp-billing')}
+            className={`pb-2 px-3 transition-colors border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+              activeTab === 'gcp-billing' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <DollarSign className="w-3.5 h-3.5" />
+            <span>GCP Usage & Billing</span>
           </button>
           <button
             onClick={() => handleTabChange('settings')}
@@ -1364,7 +1375,12 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
         </div>
       )}
 
-      {/* TAB 6: SETTINGS & SCOPES MANAGER */}
+      {/* TAB 6: GOOGLE CLOUD PLATFORM USAGE & BILLING DASHBOARD */}
+      {activeTab === 'gcp-billing' && (
+        <GcpBillingDashboard />
+      )}
+
+      {/* TAB 7: SETTINGS & SCOPES MANAGER */}
       {activeTab === 'settings' && (
         <div className="space-y-4">
           {/* Active OAuth Scopes Card */}

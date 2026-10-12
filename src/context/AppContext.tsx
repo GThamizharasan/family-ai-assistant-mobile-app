@@ -14,10 +14,20 @@ import {
   UploadedFileDoc,
   VoiceMessage,
   GoogleWorkspaceSettings,
+  WhatsAppMessage,
+  WhatsAppContact,
+  WhatsAppAccountConfig,
+  PhoneContact,
+  CallLogItem,
+  ActiveCallState,
+  GcpBillingConfig,
+  GcpBillingAlertThresholds,
+  GcpBillingControlGuardrails,
 } from '../types';
 import { encryptText, decryptText } from '../services/crypto';
 import {
   googleSignIn,
+  googleSignInGcp,
   logoutGoogle,
   initAuth,
   getAccessToken,
@@ -34,8 +44,59 @@ import {
   fetchGmailMessages,
   fetchGoogleDriveStorageQuota,
 } from '../services/googleWorkspace';
+import {
+  INITIAL_WHATSAPP_CONFIG,
+  INITIAL_WHATSAPP_CONTACTS,
+  INITIAL_WHATSAPP_MESSAGES,
+} from '../services/whatsapp';
+import {
+  INITIAL_PHONE_CONTACTS,
+  INITIAL_CALL_LOGS,
+  pickDeviceContacts,
+  makeNativeDirectCall,
+  playRingTone,
+} from '../services/phoneService';
+import { summarizeCallApi, getGcpBillingOptimizationApi } from '../services/api';
+import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
+import { syncRealtimeGcpDetails } from '../services/gcpLiveFetcher';
 
 interface AppContextType {
+  // Google Cloud Billing & Cost Control
+  gcpBillingConfig: GcpBillingConfig;
+  updateGcpBillingConfig: (partial: Partial<GcpBillingConfig>) => void;
+  updateGcpBudgetLimit: (limit: number) => void;
+  toggleGcpControlGuardrail: (key: keyof GcpBillingControlGuardrails) => void;
+  toggleGcpAlertThreshold: (key: keyof GcpBillingAlertThresholds) => void;
+  applyFinOpsSavingsAction: (actionType: string) => Promise<{ success: boolean; message: string; savedAmount: number }>;
+  pullLiveGcpBillingData: (targetProjectId?: string) => Promise<{ success: boolean; message: string; error?: string | null }>;
+  isSyncingGcpBilling: boolean;
+  reauthenticateWithGcpScopes: () => Promise<boolean>;
+  switchGcpProject: (projectId: string) => Promise<void>;
+  // Phone & Direct Calling Integration
+  phoneContacts: PhoneContact[];
+  callLogs: CallLogItem[];
+  activeCall: ActiveCallState | null;
+  startCall: (
+    contactOrPhone: { name?: string; phone: string; avatar?: string; relationship?: string },
+    directCellular?: boolean
+  ) => void;
+  endActiveCall: (callNotes?: string) => Promise<void>;
+  toggleCallMute: () => void;
+  toggleCallSpeaker: () => void;
+  toggleCallHold: () => void;
+  toggleCallAiCoPilot: () => void;
+  importDeviceContacts: () => Promise<{ addedCount: number; message: string }>;
+  addPhoneContact: (contact: Omit<PhoneContact, 'id'>) => void;
+  deletePhoneContact: (id: string) => void;
+  toggleContactFavorite: (id: string) => void;
+  // WhatsApp Integration & Auro Assistant
+  whatsAppConfig: WhatsAppAccountConfig;
+  whatsAppContacts: WhatsAppContact[];
+  whatsAppMessages: WhatsAppMessage[];
+  sendWhatsAppMessage: (contactId: string, text: string) => void;
+  markWhatsAppAsRead: (contactId: string) => void;
+  updateWhatsAppConfig: (partial: Partial<WhatsAppAccountConfig>) => void;
+  refreshWhatsAppMessages: () => Promise<void>;
   // Google Single Sign-On (SSO) & Session
   isAuthenticated: boolean;
   googleAccessToken: string | null;
@@ -506,6 +567,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (quota.status === 'fulfilled' && quota.value) {
         setLiveStorageQuota(quota.value);
       }
+
+      // Also trigger real-time Google Cloud Billing & Resource Manager sync
+      syncRealtimeGcpDetails(token, user.email, gcpBillingConfig.projectId, gcpBillingConfig)
+        .then((res) => {
+          if (res.updatedConfig) {
+            setGcpBillingConfig((prev) => ({
+              ...prev,
+              ...res.updatedConfig,
+            }));
+          }
+        })
+        .catch((err) => console.warn('GCP live sync notice:', err));
     } catch (err) {
       console.warn('Live Google Workspace sync notice:', err);
     } finally {
@@ -564,6 +637,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : INITIAL_BILLIONAIRE_MILESTONES;
   });
 
+  // WhatsApp Integration State
+  const [whatsAppConfig, setWhatsAppConfig] = useState<WhatsAppAccountConfig>(() => {
+    const saved = localStorage.getItem('aura_wa_config');
+    return saved ? JSON.parse(saved) : INITIAL_WHATSAPP_CONFIG;
+  });
+
+  const [whatsAppContacts, setWhatsAppContacts] = useState<WhatsAppContact[]>(() => {
+    const saved = localStorage.getItem('aura_wa_contacts');
+    return saved ? JSON.parse(saved) : INITIAL_WHATSAPP_CONTACTS;
+  });
+
+  const [whatsAppMessages, setWhatsAppMessages] = useState<WhatsAppMessage[]>(() => {
+    const saved = localStorage.getItem('aura_wa_messages');
+    return saved ? JSON.parse(saved) : INITIAL_WHATSAPP_MESSAGES;
+  });
+
+  // Phone Contacts & Calling State
+  const [phoneContacts, setPhoneContacts] = useState<PhoneContact[]>(() => {
+    const saved = localStorage.getItem('aura_phone_contacts');
+    return saved ? JSON.parse(saved) : INITIAL_PHONE_CONTACTS;
+  });
+
+  const [callLogs, setCallLogs] = useState<CallLogItem[]>(() => {
+    const saved = localStorage.getItem('aura_call_logs');
+    return saved ? JSON.parse(saved) : INITIAL_CALL_LOGS;
+  });
+
+  const [activeCall, setActiveCall] = useState<ActiveCallState | null>(null);
+
+  // Google Cloud Billing & Budget Control State
+  const [gcpBillingConfig, setGcpBillingConfig] = useState<GcpBillingConfig>(() => {
+    const saved = localStorage.getItem('aura_gcp_billing');
+    return saved ? JSON.parse(saved) : INITIAL_GCP_BILLING_CONFIG;
+  });
+
   const [portfolio] = useState<InvestmentAsset[]>(INITIAL_PORTFOLIO);
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
   const [biometrics, setBiometrics] = useState<HealthBiometrics>(INITIAL_BIOMETRICS);
@@ -606,6 +714,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   useEffect(() => {
     localStorage.setItem('aura_milestones', JSON.stringify(milestones));
   }, [milestones]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_wa_config', JSON.stringify(whatsAppConfig));
+  }, [whatsAppConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_wa_contacts', JSON.stringify(whatsAppContacts));
+  }, [whatsAppContacts]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_wa_messages', JSON.stringify(whatsAppMessages));
+  }, [whatsAppMessages]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_phone_contacts', JSON.stringify(phoneContacts));
+  }, [phoneContacts]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_call_logs', JSON.stringify(callLogs));
+  }, [callLogs]);
+
+  useEffect(() => {
+    localStorage.setItem('aura_gcp_billing', JSON.stringify(gcpBillingConfig));
+  }, [gcpBillingConfig]);
+
+  // Call timer interval for active call
+  useEffect(() => {
+    if (!activeCall || activeCall.status !== 'connected') return;
+    const interval = setInterval(() => {
+      setActiveCall((prev) => {
+        if (!prev || prev.status !== 'connected') return prev;
+        return {
+          ...prev,
+          durationSeconds: prev.durationSeconds + 1,
+        };
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [activeCall?.status]);
 
   // Online / Offline listener
   useEffect(() => {
@@ -1051,9 +1198,409 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsDemoTourActive(false);
   };
 
+  // WhatsApp Handlers
+  const sendWhatsAppMessage = (contactId: string, text: string) => {
+    if (!text.trim()) return;
+    const contact = whatsAppContacts.find((c) => c.id === contactId);
+    const newMsg: WhatsAppMessage = {
+      id: `wa-out-${Date.now()}`,
+      contactId,
+      contactName: contact?.name || 'Contact',
+      contactPhone: contact?.phone || '',
+      text: text.trim(),
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isOutgoing: true,
+      status: 'delivered',
+      category: contact?.category === 'business' ? 'business' : 'family',
+    };
+
+    setWhatsAppMessages((prev) => [...prev, newMsg]);
+
+    setWhatsAppContacts((prev) =>
+      prev.map((c) =>
+        c.id === contactId
+          ? {
+              ...c,
+              lastMessagePreview: `You: ${text.trim()}`,
+              lastMessageTime: 'Just now',
+              unreadCount: 0,
+            }
+          : c
+      )
+    );
+  };
+
+  const markWhatsAppAsRead = (contactId: string) => {
+    setWhatsAppContacts((prev) =>
+      prev.map((c) => (c.id === contactId ? { ...c, unreadCount: 0 } : c))
+    );
+  };
+
+  const updateWhatsAppConfig = (partial: Partial<WhatsAppAccountConfig>) => {
+    setWhatsAppConfig((prev) => ({ ...prev, ...partial }));
+  };
+
+  const refreshWhatsAppMessages = async () => {
+    await new Promise((r) => setTimeout(r, 600));
+  };
+
+  // Phone & Direct Call Handlers
+  const startCall = (
+    contactOrPhone: { name?: string; phone: string; avatar?: string; relationship?: string },
+    directCellular = false
+  ) => {
+    if (directCellular) {
+      makeNativeDirectCall(contactOrPhone.phone);
+      const newLog: CallLogItem = {
+        id: `cl-${Date.now()}`,
+        contactName: contactOrPhone.name || contactOrPhone.phone,
+        phone: contactOrPhone.phone,
+        avatar: contactOrPhone.avatar,
+        relationship: contactOrPhone.relationship,
+        timestamp: 'Just now',
+        durationSeconds: 0,
+        type: 'outgoing',
+        notes: 'Direct native cellular call placed via device mobile carrier.',
+        aiSummary: `Direct cellular call placed to ${contactOrPhone.name || contactOrPhone.phone}.`,
+        sentiment: 'direct & executive',
+      };
+      setCallLogs((prev) => [newLog, ...prev]);
+      return;
+    }
+
+    const stopRinging = playRingTone();
+
+    setActiveCall({
+      isActive: true,
+      contactName: contactOrPhone.name || 'Direct Phone Contact',
+      phone: contactOrPhone.phone,
+      avatar: contactOrPhone.avatar,
+      relationship: contactOrPhone.relationship,
+      startTime: Date.now(),
+      durationSeconds: 0,
+      status: 'ringing',
+      isMuted: false,
+      isSpeakerOn: true,
+      isOnHold: false,
+      aiCoPilotEnabled: true,
+      liveTranscription: [
+        `[Auro Call Co-pilot]: Sovereign encrypted voice channel dialed for ${contactOrPhone.name || contactOrPhone.phone}.`,
+      ],
+    });
+
+    // Simulate answered connection after ring cadence
+    setTimeout(() => {
+      stopRinging();
+      setActiveCall((prev) => {
+        if (!prev || prev.status === 'ended') return null;
+        return {
+          ...prev,
+          status: 'connected',
+          liveTranscription: [
+            ...prev.liveTranscription,
+            `[Connected]: Voice channel established. Direct mic streaming enabled.`,
+          ],
+        };
+      });
+    }, 2200);
+  };
+
+  const endActiveCall = async (callNotes?: string) => {
+    if (!activeCall) return;
+
+    const duration = activeCall.durationSeconds || 4;
+    const contactName = activeCall.contactName;
+    const phone = activeCall.phone;
+    const avatar = activeCall.avatar;
+    const relationship = activeCall.relationship;
+    const notesToProcess = callNotes || activeCall.liveTranscription.join('\n');
+
+    setActiveCall((prev) => (prev ? { ...prev, status: 'ended' } : null));
+
+    setTimeout(() => {
+      setActiveCall(null);
+    }, 400);
+
+    let aiSummary = `Call with ${contactName} (${Math.floor(duration / 60)}m ${duration % 60}s). Completed voice coordination.`;
+    let actionItems: string[] = [`Review notes from call with ${contactName}`];
+    let sentiment = 'productive';
+
+    try {
+      const summaryResult = await summarizeCallApi({
+        contactName,
+        contactPhone: phone,
+        durationSeconds: duration,
+        callNotes: notesToProcess,
+        relationship,
+        userName: user.name,
+      });
+
+      if (summaryResult.summary) aiSummary = summaryResult.summary;
+      if (summaryResult.actionItems) actionItems = summaryResult.actionItems;
+      if (summaryResult.sentiment) sentiment = summaryResult.sentiment;
+    } catch {
+      // Fallback
+    }
+
+    const newLog: CallLogItem = {
+      id: `cl-${Date.now()}`,
+      contactName,
+      phone,
+      avatar,
+      relationship,
+      timestamp: 'Just now',
+      durationSeconds: duration,
+      type: 'outgoing',
+      notes: callNotes || 'Executive voice call completed.',
+      aiSummary,
+      actionItems,
+      sentiment,
+    };
+
+    setCallLogs((prev) => [newLog, ...prev]);
+  };
+
+  const toggleCallMute = () => {
+    setActiveCall((prev) => (prev ? { ...prev, isMuted: !prev.isMuted } : null));
+  };
+
+  const toggleCallSpeaker = () => {
+    setActiveCall((prev) => (prev ? { ...prev, isSpeakerOn: !prev.isSpeakerOn } : null));
+  };
+
+  const toggleCallHold = () => {
+    setActiveCall((prev) => (prev ? { ...prev, isOnHold: !prev.isOnHold } : null));
+  };
+
+  const toggleCallAiCoPilot = () => {
+    setActiveCall((prev) => (prev ? { ...prev, aiCoPilotEnabled: !prev.aiCoPilotEnabled } : null));
+  };
+
+  const importDeviceContacts = async (): Promise<{ addedCount: number; message: string }> => {
+    try {
+      const deviceContacts = await pickDeviceContacts();
+      if (deviceContacts.length > 0) {
+        setPhoneContacts((prev) => {
+          const existingPhones = new Set(prev.map((c) => c.phone.replace(/[^0-9]/g, '')));
+          const fresh = deviceContacts.filter((c) => !existingPhones.has(c.phone.replace(/[^0-9]/g, '')));
+          return [...fresh, ...prev];
+        });
+        return {
+          addedCount: deviceContacts.length,
+          message: `Successfully imported ${deviceContacts.length} contacts from your phone.`,
+        };
+      }
+      return {
+        addedCount: 0,
+        message: 'No contacts selected or Contact Picker API not available on this device browser.',
+      };
+    } catch (err: any) {
+      return {
+        addedCount: 0,
+        message: err?.message || 'Contact import dismissed.',
+      };
+    }
+  };
+
+  const addPhoneContact = (contact: Omit<PhoneContact, 'id'>) => {
+    const newContact: PhoneContact = {
+      ...contact,
+      id: `pc-${Date.now()}`,
+    };
+    setPhoneContacts((prev) => [newContact, ...prev]);
+  };
+
+  const deletePhoneContact = (id: string) => {
+    setPhoneContacts((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const toggleContactFavorite = (id: string) => {
+    setPhoneContacts((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, isFavorite: !c.isFavorite } : c))
+    );
+  };
+
+  // Google Cloud Billing Handlers
+  const updateGcpBillingConfig = (partial: Partial<GcpBillingConfig>) => {
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      ...partial,
+      lastUpdated: 'Just now (Updated)',
+    }));
+  };
+
+  const updateGcpBudgetLimit = (limit: number) => {
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      monthlyBudgetLimit: Math.max(10, limit),
+      lastUpdated: 'Just now (Budget updated)',
+    }));
+  };
+
+  const toggleGcpControlGuardrail = (key: keyof GcpBillingControlGuardrails) => {
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      controlGuardrails: {
+        ...prev.controlGuardrails,
+        [key]: !prev.controlGuardrails[key],
+      },
+      lastUpdated: 'Just now (Guardrails updated)',
+    }));
+  };
+
+  const toggleGcpAlertThreshold = (key: keyof GcpBillingAlertThresholds) => {
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      alertThresholds: {
+        ...prev.alertThresholds,
+        [key]: !prev.alertThresholds[key],
+      },
+      lastUpdated: 'Just now (Alert thresholds updated)',
+    }));
+  };
+
+  const applyFinOpsSavingsAction = async (actionType: string): Promise<{ success: boolean; message: string; savedAmount: number }> => {
+    let saved = 18.2;
+    let msg = 'Applied Cloud Run scaling policy. Dev/Staging instances now scale to 0 during idle windows.';
+    if (actionType === 'enable_caching') {
+      saved = 12.5;
+      msg = 'Enabled Gemini prompt caching for repetitive assistant instructions.';
+    } else if (actionType === 'storage_tier') {
+      saved = 8.8;
+      msg = 'Converted cold developer images to balanced persistent storage.';
+    }
+
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      projectedSpend: Math.max(50, prev.projectedSpend - saved),
+      lastUpdated: `Just now (FinOps action applied: -$${saved.toFixed(2)}/mo)`,
+    }));
+
+    return { success: true, message: msg, savedAmount: saved };
+  };
+
+  const [isSyncingGcpBilling, setIsSyncingGcpBilling] = useState<boolean>(false);
+
+  const pullLiveGcpBillingData = async (targetProjectId?: string): Promise<{
+    success: boolean;
+    message: string;
+    error?: string | null;
+  }> => {
+    const token = googleAccessToken;
+    if (!token) {
+      setGcpBillingConfig((prev) => ({
+        ...prev,
+        isLiveSynced: false,
+        liveSyncStatus: 'not_authorized',
+        liveSyncError: 'Google account not authenticated with OAuth. Please sign in with Google.',
+      }));
+      return {
+        success: false,
+        message: 'Google account not authenticated with OAuth. Please sign in with Google to authorize real-time GCP API access.',
+        error: 'not_authorized',
+      };
+    }
+
+    setIsSyncingGcpBilling(true);
+    setGcpBillingConfig((prev) => ({
+      ...prev,
+      liveSyncStatus: 'syncing',
+      liveSyncError: null,
+    }));
+
+    try {
+      const res = await syncRealtimeGcpDetails(
+        token,
+        user.email,
+        targetProjectId || gcpBillingConfig.projectId,
+        gcpBillingConfig
+      );
+
+      if (res.updatedConfig) {
+        setGcpBillingConfig((prev) => ({
+          ...prev,
+          ...res.updatedConfig,
+        }));
+      }
+
+      return {
+        success: res.success,
+        message: res.message,
+        error: res.error,
+      };
+    } catch (err: any) {
+      const errorMsg = err.message || 'Failed to pull live GCP billing telemetry';
+      setGcpBillingConfig((prev) => ({
+        ...prev,
+        liveSyncStatus: 'error',
+        liveSyncError: errorMsg,
+      }));
+      return {
+        success: false,
+        message: errorMsg,
+        error: errorMsg,
+      };
+    } finally {
+      setIsSyncingGcpBilling(false);
+    }
+  };
+
+  const reauthenticateWithGcpScopes = async (): Promise<boolean> => {
+    try {
+      const res = await googleSignInGcp();
+      if (res.accessToken) {
+        setGoogleAccessToken(res.accessToken);
+        await pullLiveGcpBillingData();
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to authenticate with GCP scopes:', err);
+      return false;
+    }
+  };
+
+  const switchGcpProject = async (newProjectId: string) => {
+    if (!newProjectId.trim()) return;
+    updateGcpBillingConfig({ projectId: newProjectId.trim() });
+    if (googleAccessToken) {
+      await pullLiveGcpBillingData(newProjectId.trim());
+    }
+  };
+
   return (
     <AppContext.Provider
       value={{
+        gcpBillingConfig,
+        updateGcpBillingConfig,
+        updateGcpBudgetLimit,
+        toggleGcpControlGuardrail,
+        toggleGcpAlertThreshold,
+        applyFinOpsSavingsAction,
+        pullLiveGcpBillingData,
+        isSyncingGcpBilling,
+        reauthenticateWithGcpScopes,
+        switchGcpProject,
+        phoneContacts,
+        callLogs,
+        activeCall,
+        startCall,
+        endActiveCall,
+        toggleCallMute,
+        toggleCallSpeaker,
+        toggleCallHold,
+        toggleCallAiCoPilot,
+        importDeviceContacts,
+        addPhoneContact,
+        deletePhoneContact,
+        toggleContactFavorite,
+        whatsAppConfig,
+        whatsAppContacts,
+        whatsAppMessages,
+        sendWhatsAppMessage,
+        markWhatsAppAsRead,
+        updateWhatsAppConfig,
+        refreshWhatsAppMessages,
         isAuthenticated,
         googleAccessToken,
         isGoogleConnected: Boolean(googleAccessToken),

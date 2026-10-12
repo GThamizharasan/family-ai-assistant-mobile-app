@@ -183,3 +183,165 @@ export interface GoogleWorkspaceSettings {
   autoSyncCalendarToTasks: boolean;
   autoSummarizeUnreadEmails: boolean;
 }
+
+export interface WhatsAppMessage {
+  id: string;
+  contactId: string;
+  contactName: string;
+  contactPhone: string;
+  contactAvatar?: string;
+  relationship?: string;
+  text: string;
+  timestamp: string;
+  isOutgoing: boolean;
+  status: 'sent' | 'delivered' | 'read';
+  suggestedReplies?: string[];
+  urgency?: 'urgent' | 'normal' | 'info';
+  category?: 'family' | 'business' | 'groups' | 'urgent';
+}
+
+export interface WhatsAppContact {
+  id: string;
+  name: string;
+  phone: string;
+  avatar: string;
+  relationship: string;
+  lastMessageTime: string;
+  unreadCount: number;
+  isOnline: boolean;
+  category: 'family' | 'business' | 'groups';
+  lastMessagePreview?: string;
+}
+
+export interface WhatsAppAccountConfig {
+  isConnected: boolean;
+  linkedPhone: string;
+  accountName: string;
+  pairedAt: string;
+  autoDraftWithAura: boolean;
+  autoVoiceRead: boolean;
+  pairingCode: string;
+}
+
+export interface PhoneContact {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  avatar?: string;
+  relationship?: string;
+  category: 'family' | 'business' | 'medical' | 'security' | 'personal';
+  source: 'device' | 'google' | 'manual';
+  isFavorite?: boolean;
+  notes?: string;
+}
+
+export interface CallLogItem {
+  id: string;
+  contactName: string;
+  phone: string;
+  avatar?: string;
+  relationship?: string;
+  timestamp: string;
+  durationSeconds: number;
+  type: 'outgoing' | 'incoming' | 'missed';
+  notes?: string;
+  aiSummary?: string;
+  actionItems?: string[];
+  sentiment?: string;
+}
+
+export interface ActiveCallState {
+  isActive: boolean;
+  contactName: string;
+  phone: string;
+  avatar?: string;
+  relationship?: string;
+  startTime: number;
+  durationSeconds: number;
+  status: 'dialing' | 'ringing' | 'connected' | 'ended';
+  isMuted: boolean;
+  isSpeakerOn: boolean;
+  isOnHold: boolean;
+  aiCoPilotEnabled: boolean;
+  liveTranscription: string[];
+}
+
+export interface GcpServiceCost {
+  serviceId: string;
+  name: string;
+  category: 'compute' | 'ai' | 'database' | 'storage' | 'network';
+  currentSpend: number;
+  projectedSpend: number;
+  percentage: number;
+  usageMetric: string;
+  changePercent: number;
+  color: string;
+}
+
+export interface GcpBillingInvoice {
+  invoiceId: string;
+  period: string;
+  amount: number;
+  status: 'paid' | 'open' | 'processing';
+  pdfUrl?: string;
+  paymentMethod: string;
+}
+
+export interface GcpBillingAlertThresholds {
+  at50Percent: boolean;
+  at80Percent: boolean;
+  at90Percent: boolean;
+  at100Percent: boolean;
+  notifyEmail: boolean;
+  notifyWhatsApp: boolean;
+  notifyPush: boolean;
+}
+
+export interface GcpBillingControlGuardrails {
+  autoScaleDownOnCap: boolean;
+  throttleAiModelsAt90: boolean;
+  pauseIdleDevEnvironments: boolean;
+  maxCloudRunInstances: number;
+  apiRateLimitPerMinute: number;
+  hardSpendCapEnforced: boolean;
+}
+
+export interface GcpBillingConfig {
+  projectId: string;
+  projectNumber: string;
+  billingAccountId: string;
+  billingAccountName: string;
+  currency: string;
+  monthlyBudgetLimit: number;
+  currentMtdSpend: number;
+  projectedSpend: number;
+  lastUpdated: string;
+  paymentMethod: {
+    type: string;
+    last4: string;
+    expiry: string;
+    status: string;
+  };
+  alertThresholds: GcpBillingAlertThresholds;
+  controlGuardrails: GcpBillingControlGuardrails;
+  services: GcpServiceCost[];
+  invoices: GcpBillingInvoice[];
+  isLiveSynced?: boolean;
+  liveSyncStatus?: 'idle' | 'syncing' | 'synced' | 'error' | 'not_authorized';
+  liveSyncError?: string | null;
+  detectedLiveProjects?: {
+    projectId: string;
+    projectNumber: string;
+    name: string;
+    lifecycleState: string;
+  }[];
+  detectedLiveBillingAccounts?: {
+    name: string;
+    displayName: string;
+    open: boolean;
+  }[];
+  authenticatedGoogleEmail?: string;
+  billingEnabled?: boolean;
+}
+
