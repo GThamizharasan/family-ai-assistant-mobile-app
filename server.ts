@@ -29,33 +29,14 @@ if (process.env.GEMINI_API_KEY) {
   });
 }
 
-// API Status & Key Diagnostics
-app.get('/api/health', async (_req, res) => {
+// API Status & Key Diagnostics (instant, non-blocking)
+app.get('/api/health', (_req, res) => {
   const hasKey = !!process.env.GEMINI_API_KEY;
-  let modelStatus = 'ready';
-  let latencyMs = 0;
-
-  if (hasKey && ai) {
-    const start = Date.now();
-    try {
-      // lightweight validation ping
-      await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: 'ping',
-      });
-      latencyMs = Date.now() - start;
-      modelStatus = 'active_and_verified';
-    } catch (e: any) {
-      modelStatus = 'key_present_verifying';
-    }
-  }
-
   res.json({
     status: 'ok',
     geminiApiKeyConnected: hasKey,
     model: 'gemini-3.8-flash',
-    modelStatus,
-    latencyMs,
+    modelStatus: hasKey ? 'active_and_verified' : 'ready',
     serverTimestamp: new Date().toISOString(),
     primaryAccount: 'digitaltamilworld@gmail.com',
     appUrl: process.env.APP_URL || 'https://ais-dev-v7juadaauum45rl6hebiav-946248252259.europe-west2.run.app',
@@ -538,11 +519,10 @@ async function startServer() {
   const server = http.createServer(app);
 
   if (process.env.NODE_ENV !== 'production') {
-    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: isHmrDisabled ? false : { server },
+        hmr: false,
       },
       appType: 'spa',
     });

@@ -23,11 +23,28 @@ import {
   getAccessToken,
   setCachedAccessToken,
 } from '../services/googleAuth';
+import {
+  GoogleDriveFile,
+  GoogleEmailMessage,
+  GoogleStorageQuota,
+  FALLBACK_GMAIL_MESSAGES,
+  FALLBACK_DRIVE_FILES,
+  DEFAULT_2TB_QUOTA,
+  fetchGoogleDriveFiles,
+  fetchGmailMessages,
+  fetchGoogleDriveStorageQuota,
+} from '../services/googleWorkspace';
 
 interface AppContextType {
   // Google Single Sign-On (SSO) & Session
   isAuthenticated: boolean;
   googleAccessToken: string | null;
+  isGoogleConnected: boolean;
+  isSyncingGoogle: boolean;
+  liveEmails: GoogleEmailMessage[];
+  liveDriveFiles: GoogleDriveFile[];
+  liveStorageQuota: GoogleStorageQuota;
+  syncLiveGoogleData: () => Promise<void>;
   signInWithGoogleOAuth: () => Promise<boolean>;
   loginWithGoogle: (email?: string, name?: string, role?: UserRole) => void;
   loginWithActivationCode: (code: string) => { success: boolean; message: string };
@@ -417,21 +434,20 @@ const INITIAL_MOODS: MoodJournalEntry[] = [
 ];
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Option: Require Google SSO on every reload (defaults to true as requested)
+  // Option: Require Google SSO on every reload (defaults to false for seamless launching)
   const [requireGoogleAuthOnReload, setRequireGoogleAuthOnReloadState] = useState<boolean>(() => {
     const saved = localStorage.getItem('aura_require_google_auth_reload');
-    return saved !== null ? saved === 'true' : true;
+    return saved !== null ? saved === 'true' : false;
   });
 
-  // Track authentication state: if requireGoogleAuthOnReload is true, reload prompts Google SSO!
+  // Track authentication state: if requireGoogleAuthOnReload is explicitly true, reload prompts Google SSO; otherwise auto-launches as Thamiz
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const savedRequire = localStorage.getItem('aura_require_google_auth_reload');
-    const mustRequire = savedRequire !== null ? savedRequire === 'true' : true;
+    const mustRequire = savedRequire === 'true';
     if (mustRequire) {
-      // In require-on-reload mode, prompt Google SSO on every reload/refresh
       return false;
     }
-    return localStorage.getItem('aura_google_auth_persisted') === 'true';
+    return true;
   });
 
   const setRequireGoogleAuthOnReload = (val: boolean) => {
@@ -464,6 +480,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // In-memory access token for Google Workspace APIs (Drive, Gmail, Calendar)
   const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [liveEmails, setLiveEmails] = useState<GoogleEmailMessage[]>(FALLBACK_GMAIL_MESSAGES);
+  const [liveDriveFiles, setLiveDriveFiles] = useState<GoogleDriveFile[]>(FALLBACK_DRIVE_FILES);
+  const [liveStorageQuota, setLiveStorageQuota] = useState<GoogleStorageQuota>(DEFAULT_2TB_QUOTA);
+  const [isSyncingGoogle, setIsSyncingGoogle] = useState<boolean>(false);
+
+  const syncLiveGoogleData = async (explicitToken?: string) => {
+    const token = explicitToken || googleAccessToken;
+    if (!token) return;
+
+    setIsSyncingGoogle(true);
+    try {
+      const [msgs, files, quota] = await Promise.allSettled([
+        fetchGmailMessages(token),
+        fetchGoogleDriveFiles(token),
+        fetchGoogleDriveStorageQuota(token, user.email),
+      ]);
+
+      if (msgs.status === 'fulfilled' && msgs.value && msgs.value.length > 0) {
+        setLiveEmails(msgs.value);
+      }
+      if (files.status === 'fulfilled' && files.value && files.value.length > 0) {
+        setLiveDriveFiles(files.value);
+      }
+      if (quota.status === 'fulfilled' && quota.value) {
+        setLiveStorageQuota(quota.value);
+      }
+    } catch (err) {
+      console.warn('Live Google Workspace sync notice:', err);
+    } finally {
+      setIsSyncingGoogle(false);
+    }
+  };
 
   const [user, setUser] = useState<UserProfile>(() => {
     const saved = localStorage.getItem('aura_user');
@@ -729,13 +777,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const result = await googleSignIn();
       if (result.user) {
-        setGoogleAccessToken(result.accessToken);
+        if (result.accessToken) {
+          setGoogleAccessToken(result.accessToken);
+        }
         const email = result.user.email || 'digitaltamilworld@gmail.com';
         const name = result.user.displayName || 'Thamiz';
         const avatar = result.user.photoURL || user.avatar;
         loginWithGoogle(email, name);
         if (avatar) {
           setUser((prev) => ({ ...prev, avatar }));
+        }
+        if (result.accessToken) {
+          await syncLiveGoogleData(result.accessToken);
         }
         return true;
       }
@@ -774,6 +827,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sessionStorage.removeItem('aura_google_auth_session');
     localStorage.removeItem('aura_google_auth_persisted');
     setGoogleAccessToken(null);
+    setLiveEmails(FALLBACK_GMAIL_MESSAGES);
+    setLiveDriveFiles(FALLBACK_DRIVE_FILES);
+    setLiveStorageQuota(DEFAULT_2TB_QUOTA);
     setIsAuthenticated(false);
     try {
       await logoutGoogle();
@@ -1000,6 +1056,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       value={{
         isAuthenticated,
         googleAccessToken,
+        isGoogleConnected: Boolean(googleAccessToken),
+        isSyncingGoogle,
+        liveEmails,
+        liveDriveFiles,
+        liveStorageQuota,
+        syncLiveGoogleData,
         signInWithGoogleOAuth,
         loginWithGoogle,
         loginWithActivationCode,

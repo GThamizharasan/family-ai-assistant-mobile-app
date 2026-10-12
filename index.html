@@ -62,6 +62,15 @@
           window.WebSocket = ViteSafeWebSocket;
         }
 
+        // Unregister stale service workers that may intercept requests with corrupted dev caches
+        if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(registrations) {
+            for (var i = 0; i < registrations.length; i++) {
+              registrations[i].unregister();
+            }
+          }).catch(function() {});
+        }
+
         // Gracefully ignore WebSocket HMR notifications when HMR is disabled in AI Studio preview
         const _origError = console.error;
         console.error = function(...args) {

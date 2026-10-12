@@ -9,11 +9,10 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Defined Google Workspace Scopes
+// Standard Google Workspace Scopes configured via set_up_oauth
 export const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/drive.readonly',
-  'https://www.googleapis.com/auth/calendar.events',
 ];
 
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);

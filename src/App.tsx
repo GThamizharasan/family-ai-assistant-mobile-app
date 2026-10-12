@@ -24,6 +24,7 @@ import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
   const [currentTab, setCurrentTab] = useState<TabKey>('home');
+  const [googleSubTab, setGoogleSubTab] = useState<'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'settings'>('overview');
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
 
@@ -32,12 +33,22 @@ const AppContent: React.FC = () => {
     return <GoogleSSOScreen />;
   }
 
+  const handleNavigate = (
+    tab: TabKey,
+    subTab?: 'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'settings'
+  ) => {
+    if (subTab) {
+      setGoogleSubTab(subTab);
+    }
+    setCurrentTab(tab);
+  };
+
   const renderActiveTab = () => {
     switch (currentTab) {
       case 'home':
         return (
           <HomeHubTab
-            onNavigate={(tab) => setCurrentTab(tab)}
+            onNavigate={handleNavigate}
             onOpenVoice={() => setIsVoiceOpen(true)}
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
@@ -59,7 +70,12 @@ const AppContent: React.FC = () => {
       case 'vault':
         return <MemoryVaultTab />;
       case 'google':
-        return <GoogleOneTab />;
+        return (
+          <GoogleOneTab
+            initialSubTab={googleSubTab}
+            onSelectSubTab={(st) => setGoogleSubTab(st)}
+          />
+        );
       case 'devices':
         return <SmartDevicesTab />;
       case 'docs':
@@ -67,7 +83,7 @@ const AppContent: React.FC = () => {
       default:
         return (
           <HomeHubTab
-            onNavigate={(tab) => setCurrentTab(tab)}
+            onNavigate={handleNavigate}
             onOpenVoice={() => setIsVoiceOpen(true)}
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />

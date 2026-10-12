@@ -9,7 +9,7 @@ import {
   Lock,
   FileText,
   Mic,
-  CloudCheck,
+  Mail,
   Cctv,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -44,7 +44,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
     { key: 'home', label: 'Hub', icon: Home },
     { key: 'family', label: 'Family', icon: Users, badge: emergencyAlertCount },
     { key: 'devices', label: 'IoT & CCTV', icon: Cctv },
-    { key: 'google', label: 'Google', icon: CloudCheck },
+    { key: 'google', label: 'Google & Mail', icon: Mail, badge: 3 },
     { key: 'finance', label: 'Wealth', icon: Wallet },
     { key: 'productivity', label: 'Tasks', icon: CheckSquare, badge: pendingTasksCount },
     { key: 'billionaire', label: 'Billionaire', icon: TrendingUp },
