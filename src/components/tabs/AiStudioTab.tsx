@@ -487,13 +487,18 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   const handleSendLiveVoiceTurn = async (customPrompt?: string) => {
     const p = customPrompt || liveVoiceInput.trim();
     if (!p) return;
+    speechEngine.unlockAudio();
     setIsLiveVoiceLoading(true);
     try {
       const res = await converseLiveTurn(undefined, p);
       setLiveVoiceReply(res);
       if (res.audioUrl) {
         const audio = new Audio(res.audioUrl);
-        audio.play().catch(() => {});
+        audio.play().catch(() => {
+          if (res.text) {
+            speechEngine.speak(res.text, { emotion: 'encouraging' });
+          }
+        });
       } else if (res.text) {
         speechEngine.speak(res.text, { emotion: 'encouraging' });
       }

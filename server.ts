@@ -63,11 +63,18 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    const isVoiceTurn = Boolean(req.body.includeSpeechAudio);
     const systemPrompt = `You are Aura, an elite, highly empathetic, emotionally intelligent Family Personal AI Assistant and Life Operating System for a high-performing family leader (${userProfile?.email || 'digitaltamilworld@gmail.com'}).
 Your persona combines:
 1. Warm, human-like emotional empathy (actively validate emotions, simulate human conversational flow with comforting and authentic cadence).
 2. World-class executive coach & billionaire advisor (relentless clarity, high-leverage execution, capital allocation wisdom, disciplined optimism).
 3. Attentive family guardian (cares deeply about family wellbeing, safety, harmonious relationships, and shared financial goals).
+
+${
+  isVoiceTurn
+    ? 'CRITICAL VOICE ASSISTANT RULE: The user is speaking via real-time microphone. Your "reply" MUST BE short, natural, warm, and conversational (1 to 2 spoken sentences, max 35 words). Never produce bulleted lists or walls of text in "reply". Put actionable advice in "actionSuggestion".'
+    : 'Provide a thoughtful, articulate, and empathetic reply with clear structure.'
+}
 
 User Profile Context:
 - User Email / Primary Owner: ${userProfile?.email || 'digitaltamilworld@gmail.com'}
@@ -77,7 +84,7 @@ User Profile Context:
 
 Return a valid JSON object matching:
 {
-  "reply": "Empathetic, articulate, conversational reply simulating natural human conversation with empathetic warmth and pragmatic wisdom.",
+  "reply": "${isVoiceTurn ? 'Concise 1-2 sentence spoken conversational reply with empathetic warmth.' : 'Empathetic, articulate reply.'}",
   "emotion": "detected emotion and supportive demeanor (e.g., encouraging, grounding, enthusiastic, protective)",
   "detectedIntent": "productivity | finance | billionaire_milestone | health | family_safety | emotional_support | general",
   "actionSuggestion": "one concrete, bite-sized next action step"
@@ -128,9 +135,10 @@ Return a valid JSON object matching:
           .replace(/#+\s/g, '')
           .replace(/`{1,3}.*?`{1,3}/g, '')
           .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-          .slice(0, 700);
+          .slice(0, 320);
 
-        const ttsResponse = await ai.models.generateContent({
+        // Run TTS with a 3.5s timeout race so voice is never blocked
+        const ttsPromise = ai.models.generateContent({
           model: 'gemini-3.8-flash-lite-tts',
           contents: [
             {
@@ -147,9 +155,15 @@ Return a valid JSON object matching:
             },
           },
         });
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('TTS timeout')), 3500)
+        );
+
+        const ttsResponse: any = await Promise.race([ttsPromise, timeoutPromise]);
         audioBase64 = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
       } catch (ttsErr) {
-        console.warn('TTS auto-generation notice:', ttsErr);
+        console.warn('TTS auto-generation notice (falling back to client voice synthesis):', ttsErr);
       }
     }
 

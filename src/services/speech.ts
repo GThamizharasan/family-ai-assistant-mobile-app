@@ -1,10 +1,11 @@
-// Real-time Voice Recognition (STT), Natural Empathetic Speech Synthesis (TTS), and Gemini Cloud Voice Fallback
+// Real-time Voice Recognition (STT), Web Audio Engine & Natural Empathetic Speech Synthesis (TTS)
 import { transcribeAudioApi } from './api';
 
 declare global {
   interface Window {
     webkitSpeechRecognition: any;
     SpeechRecognition: any;
+    __activeAuroUtterance?: SpeechSynthesisUtterance | null;
   }
 }
 
@@ -40,18 +41,23 @@ export class VoiceAssistantEngine {
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private currentAudioElement: HTMLAudioElement | null = null;
+  private currentBufferSource: AudioBufferSourceNode | null = null;
+  private cachedVoices: SpeechSynthesisVoice[] = [];
 
   // Real-time silence debounce for hands-free natural speaking
   private silenceTimer: any = null;
   private latestTranscript: string = '';
   private isCommitted: boolean = false;
 
+  // Web Audio Context for low-latency decoded playback and visualizer
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private isAudioUnlocked: boolean = false;
+
   // MediaRecorder microphone fallback for iframes/browsers where Web Speech API is blocked
   private mediaStream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
-  private audioContext: AudioContext | null = null;
-  private analyser: AnalyserNode | null = null;
   private vadInterval: any = null;
   private speechDetectedDuringRecord: boolean = false;
   private recordSilenceTimer: any = null;
@@ -70,22 +76,61 @@ export class VoiceAssistantEngine {
 
       if ('speechSynthesis' in window) {
         this.synth = window.speechSynthesis;
+        this.loadVoices();
+        if (window.speechSynthesis.onvoiceschanged !== undefined) {
+          window.speechSynthesis.onvoiceschanged = () => {
+            this.loadVoices();
+          };
+        }
       }
 
-      // Audio unlocker on user interaction
+      // Proactively unlock audio on user interactions
       const unlockAudio = () => {
-        try {
-          if (this.synth) {
-            this.synth.resume();
-          }
-          if (this.audioContext && this.audioContext.state === 'suspended') {
-            this.audioContext.resume();
-          }
-        } catch (e) {}
+        this.unlockAudio();
       };
-      window.addEventListener('touchstart', unlockAudio, { passive: true, once: true });
-      window.addEventListener('click', unlockAudio, { passive: true, once: true });
+      window.addEventListener('touchstart', unlockAudio, { passive: true });
+      window.addEventListener('click', unlockAudio, { passive: true });
+      window.addEventListener('keydown', unlockAudio, { passive: true });
     }
+  }
+
+  private loadVoices() {
+    if (this.synth) {
+      try {
+        const v = this.synth.getVoices();
+        if (v && v.length > 0) {
+          this.cachedVoices = v;
+        }
+      } catch (e) {}
+    }
+  }
+
+  /**
+   * Unlocks both AudioContext and SpeechSynthesis on user gesture
+   */
+  public async unlockAudio() {
+    if (typeof window === 'undefined') return;
+
+    try {
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          this.audioContext = new AudioCtx();
+        }
+      }
+      if (this.audioContext && this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      this.isAudioUnlocked = true;
+    } catch (e) {
+      console.warn('AudioContext unlock notice:', e);
+    }
+
+    try {
+      if (this.synth) {
+        this.synth.resume();
+      }
+    } catch (e) {}
   }
 
   private initWebSpeechRecognition() {
@@ -123,21 +168,31 @@ export class VoiceAssistantEngine {
           this.latestTranscript = combined;
           this.onTranscriptCallback?.(combined, false);
 
-          // Real-time automatic answer trigger:
-          // If the user speaks and then pauses for 1200ms, automatically commit and trigger AURO's answer!
           clearTimeout(this.silenceTimer);
-          this.silenceTimer = setTimeout(() => {
-            if (!this.isCommitted && this.latestTranscript.trim().length > 1) {
-              this.commitCurrentSpeech();
-            }
-          }, 1200);
+
+          // If Web Speech already produced final finalized sentence segments:
+          if (finalTranscript.trim().length > 0 && interimTranscript.trim().length === 0) {
+            // User finished this sentence: commit after short natural pause (400ms)
+            this.silenceTimer = setTimeout(() => {
+              if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
+                this.commitCurrentSpeech();
+              }
+            }, 400);
+          } else {
+            // Interim continuous speech: auto-commit after 850ms of quiet pause
+            this.silenceTimer = setTimeout(() => {
+              if (!this.isCommitted && this.latestTranscript.trim().length > 1) {
+                this.commitCurrentSpeech();
+              }
+            }, 850);
+          }
         }
       };
 
       this.recognition.onerror = (event: any) => {
         console.warn('Speech recognition status:', event.error);
         if (event.error === 'no-speech') {
-          // Normal silence, keep listening unless user stopped
+          // Normal silence, keep listening
           return;
         }
 
@@ -167,7 +222,7 @@ export class VoiceAssistantEngine {
       this.recognition.onend = () => {
         clearTimeout(this.silenceTimer);
         // If there was uncommitted speech when recognition ended, commit it now!
-        if (!this.isCommitted && this.latestTranscript.trim().length > 1) {
+        if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
           this.commitCurrentSpeech();
         } else {
           this.isListening = false;
@@ -219,7 +274,11 @@ export class VoiceAssistantEngine {
       const textToDeliver = this.latestTranscript.trim();
       this.latestTranscript = '';
       this.stopListening();
-      this.onTranscriptCallback?.(textToDeliver, true);
+      try {
+        this.onTranscriptCallback?.(textToDeliver, true);
+      } catch (cbErr) {
+        console.error('Error invoking onTranscriptCallback:', cbErr);
+      }
     }
   }
 
@@ -265,9 +324,14 @@ export class VoiceAssistantEngine {
 
       // AudioContext for live volume tracking and visualizer
       try {
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioCtx) {
-          this.audioContext = new AudioCtx();
+        if (!this.audioContext) {
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) this.audioContext = new AudioCtx();
+        }
+        if (this.audioContext) {
+          if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
+          }
           const source = this.audioContext.createMediaStreamSource(stream);
           this.analyser = this.audioContext.createAnalyser();
           this.analyser.fftSize = 256;
@@ -294,7 +358,7 @@ export class VoiceAssistantEngine {
                 if (this.speechDetectedDuringRecord && this.isListening) {
                   this.stopMediaRecorderListening();
                 }
-              }, 1400);
+              }, 1100);
             }
           }, 100);
         }
@@ -389,12 +453,6 @@ export class VoiceAssistantEngine {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
     }
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      try {
-        this.audioContext.close();
-      } catch (e) {}
-      this.audioContext = null;
-    }
   }
 
   public stopListening() {
@@ -407,9 +465,84 @@ export class VoiceAssistantEngine {
   }
 
   /**
+   * Decodes and plays base64 WAV audio via Web Audio API AudioContext
+   * Returns true on success, false if decoding or playback fails.
+   */
+  public async playAudioBase64(base64: string, onEnd?: () => void): Promise<boolean> {
+    try {
+      await this.unlockAudio();
+      if (this.audioContext) {
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // Web Audio API decodes WAV PCM cleanly in browser
+        const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0));
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.audioContext.destination);
+
+        this.currentBufferSource = source;
+        this.onSpeakingChange?.(true);
+
+        source.onended = () => {
+          this.onSpeakingChange?.(false);
+          this.currentBufferSource = null;
+          onEnd?.();
+        };
+
+        source.start(0);
+        return true;
+      }
+    } catch (webAudioErr) {
+      console.warn('Web Audio API playback notice, falling back to Blob HTMLAudio:', webAudioErr);
+    }
+
+    // HTMLAudioElement Fallback with Blob URL
+    try {
+      const binaryString = atob(base64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const blobUrl = URL.createObjectURL(blob);
+      const audio = new Audio(blobUrl);
+      this.currentAudioElement = audio;
+
+      audio.onplay = () => this.onSpeakingChange?.(true);
+      audio.onended = () => {
+        this.onSpeakingChange?.(false);
+        this.currentAudioElement = null;
+        URL.revokeObjectURL(blobUrl);
+        onEnd?.();
+      };
+      audio.onerror = () => {
+        this.onSpeakingChange?.(false);
+        this.currentAudioElement = null;
+        URL.revokeObjectURL(blobUrl);
+      };
+
+      await audio.play();
+      return true;
+    } catch (htmlAudioErr) {
+      console.warn('HTML Audio playback error:', htmlAudioErr);
+      return false;
+    }
+  }
+
+  /**
    * Natural Empathetic Speech Synthesis (TTS)
-   * Supports playing high-fidelity WAV audio generated by Gemini 3.8 Flash Lite TTS,
-   * with seamless fallback to native browser SpeechSynthesis.
+   * 1. Plays Gemini 3.8 Flash Lite TTS audio if provided via Web Audio API.
+   * 2. Seamlessly falls back to resilient browser SpeechSynthesis.
    */
   public speak(
     text: string,
@@ -423,38 +556,14 @@ export class VoiceAssistantEngine {
   ) {
     this.stopSpeaking();
 
-    // 1. If high-fidelity Gemini 3.8 TTS audio was provided, play it directly
+    // 1. If high-fidelity Gemini 3.8 TTS audio was provided, play it
     if (options.audioBase64) {
-      try {
-        const audioUrl = `data:audio/wav;base64,${options.audioBase64}`;
-        const audio = new Audio(audioUrl);
-        this.currentAudioElement = audio;
-
-        audio.onplay = () => {
-          this.onSpeakingChange?.(true);
-        };
-
-        audio.onended = () => {
-          this.onSpeakingChange?.(false);
-          this.currentAudioElement = null;
-          options.onEnd?.();
-        };
-
-        audio.onerror = () => {
-          this.onSpeakingChange?.(false);
-          this.currentAudioElement = null;
-          // Fallback to browser synthesis if audio element fails
+      this.playAudioBase64(options.audioBase64, options.onEnd).then((success) => {
+        if (!success) {
           this.speakBrowserSynthesis(text, options);
-        };
-
-        audio.play().catch((playErr) => {
-          console.warn('Audio play failed, falling back to Web Speech Synthesis:', playErr);
-          this.speakBrowserSynthesis(text, options);
-        });
-        return;
-      } catch (audioErr) {
-        console.warn('Gemini audio element setup failed:', audioErr);
-      }
+        }
+      });
+      return;
     }
 
     // 2. Otherwise, use responsive browser SpeechSynthesis
@@ -473,11 +582,6 @@ export class VoiceAssistantEngine {
       options.onEnd?.();
       return;
     }
-
-    try {
-      this.synth.cancel();
-      this.synth.resume();
-    } catch (e) {}
 
     // Clean text of markdown formatting before speaking
     const cleanText = text
@@ -498,50 +602,109 @@ export class VoiceAssistantEngine {
     utterance.rate = options.rate ?? 1.0;
 
     // Pick best English voice available
-    const voices = this.synth.getVoices();
-    const preferredVoice = voices.find(
-      (v) =>
-        v.lang.startsWith('en') &&
-        (v.name.includes('Natural') ||
-          v.name.includes('Google') ||
-          v.name.includes('Samantha') ||
-          v.name.includes('Karen') ||
-          v.name.includes('Daniel') ||
-          v.name.includes('Victoria') ||
-          v.name.includes('Serena') ||
-          v.name.includes('Ava') ||
-          v.name.includes('Zira'))
-    );
+    const voices = this.cachedVoices.length > 0 ? this.cachedVoices : this.synth.getVoices();
+    const preferredVoice =
+      voices.find(
+        (v) =>
+          v.lang.startsWith('en') &&
+          (v.name.includes('Natural') ||
+            v.name.includes('Google') ||
+            v.name.includes('Samantha') ||
+            v.name.includes('Karen') ||
+            v.name.includes('Daniel') ||
+            v.name.includes('Victoria') ||
+            v.name.includes('Serena') ||
+            v.name.includes('Ava') ||
+            v.name.includes('Zira'))
+      ) || voices.find((v) => v.lang.startsWith('en'));
+
     if (preferredVoice) {
       utterance.voice = preferredVoice;
     }
+
+    let hasEnded = false;
+    const finish = () => {
+      if (hasEnded) return;
+      hasEnded = true;
+      this.onSpeakingChange?.(false);
+      this.currentUtterance = null;
+      if (typeof window !== 'undefined') {
+        window.__activeAuroUtterance = null;
+      }
+      options.onEnd?.();
+    };
+
+    // Watchdog to prevent Chrome from stalling utterances
+    const maxDuration = Math.max(3000, cleanText.length * 90);
+    const watchdogTimer = setTimeout(() => {
+      if (!hasEnded && this.synth) {
+        if (this.synth.speaking) {
+          try {
+            this.synth.pause();
+            this.synth.resume();
+          } catch (e) {}
+        } else {
+          finish();
+        }
+      }
+    }, maxDuration);
+
+    const safeFinish = () => {
+      clearTimeout(watchdogTimer);
+      finish();
+    };
 
     utterance.onstart = () => {
       this.onSpeakingChange?.(true);
     };
 
-    utterance.onend = () => {
-      this.onSpeakingChange?.(false);
-      this.currentUtterance = null;
-      options.onEnd?.();
+    utterance.onend = safeFinish;
+    utterance.onerror = (e) => {
+      console.warn('SpeechSynthesis error:', e);
+      safeFinish();
     };
 
-    utterance.onerror = () => {
-      this.onSpeakingChange?.(false);
-      this.currentUtterance = null;
-      options.onEnd?.();
-    };
-
+    // Prevent garbage collection in Chromium browsers
     this.currentUtterance = utterance;
+    if (typeof window !== 'undefined') {
+      window.__activeAuroUtterance = utterance;
+    }
+
     try {
-      this.synth.speak(utterance);
+      // In Chrome, avoid immediate cancel() before speak() which triggers cancellation bugs
+      if (this.synth.speaking || this.synth.pending) {
+        this.synth.cancel();
+        setTimeout(() => {
+          if (this.synth) {
+            this.synth.resume();
+            this.synth.speak(utterance);
+          }
+        }, 50);
+      } else {
+        this.synth.resume();
+        this.synth.speak(utterance);
+      }
     } catch (speakErr) {
       console.warn('SpeechSynthesis speak failed:', speakErr);
-      options.onEnd?.();
+      safeFinish();
     }
   }
 
+  public testVoiceOutput(onEnd?: () => void) {
+    this.unlockAudio();
+    const greeting = "Hello Thamizh! My voice channel is active. I am ready to converse in real-time.";
+    this.speak(greeting, { onEnd });
+  }
+
   public stopSpeaking() {
+    if (this.currentBufferSource) {
+      try {
+        this.currentBufferSource.stop();
+        this.currentBufferSource.disconnect();
+      } catch (e) {}
+      this.currentBufferSource = null;
+    }
+
     if (this.currentAudioElement) {
       try {
         this.currentAudioElement.pause();

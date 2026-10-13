@@ -57,6 +57,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [micStatusMessage, setMicStatusMessage] = useState<string | null>(null);
   const [showMicHelp, setShowMicHelp] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const handleUserSpeechRef = useRef<(spokenText: string) => void>(() => {});
 
   const speakWithAuro = (
     text: string,
@@ -68,6 +69,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     } = {}
   ) => {
     if (isMuted) return;
+    speechEngine.unlockAudio();
     speechEngine.speak(text, {
       pitch: options.pitch ?? user.preferences?.voicePitch ?? 1.04,
       rate: options.rate ?? user.preferences?.voiceRate ?? 1.0,
@@ -95,7 +97,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     speechEngine.onTranscriptCallback = (transcript, isFinal) => {
       setLiveTranscript(transcript);
       if (isFinal && transcript.trim()) {
-        handleUserSpeech(transcript.trim());
+        handleUserSpeechRef.current?.(transcript.trim());
       }
     };
     speechEngine.onErrorCallback = (error) => {
@@ -109,15 +111,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         setMicStatusMessage(`Microphone status: ${error}. You can also type your message below.`);
       }
     };
+
+    return () => {
+      speechEngine.onListeningChange = undefined;
+      speechEngine.onSpeakingChange = undefined;
+      speechEngine.onAudioVolume = undefined;
+      speechEngine.onTranscriptCallback = undefined;
+      speechEngine.onErrorCallback = undefined;
+    };
   }, []);
 
   useEffect(() => {
     if (isOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      speechEngine.unlockAudio();
       // Automatically activate speech listening for real-time conversation
       const startTimer = setTimeout(() => {
         speechEngine.startListening();
-      }, 400);
+      }, 350);
       return () => clearTimeout(startTimer);
     } else {
       speechEngine.stopListening();
@@ -127,16 +138,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const handleUserSpeech = async (spokenText: string) => {
-    if (!spokenText) return;
+    if (!spokenText || !spokenText.trim()) return;
+    speechEngine.unlockAudio();
     setLiveTranscript('');
     speechEngine.stopListening();
 
     const userMsg = {
       role: 'user' as const,
-      content: spokenText,
+      content: spokenText.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
     addVoiceMessage(userMsg);
@@ -371,6 +381,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     if (isListening) {
       speechEngine.stopListening();
     } else {
+      speechEngine.unlockAudio();
       setMicStatusMessage(null);
       speechEngine.stopSpeaking();
       if (isIOSChrome()) {
@@ -397,6 +408,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     handleUserSpeech(msg);
   };
 
+  handleUserSpeechRef.current = handleUserSpeech;
+
   const quickPrompts = [
     { label: 'Check WhatsApp', text: 'Read out my latest WhatsApp messages.' },
     { label: 'Reply via Auro', text: 'Send reply' },
@@ -405,6 +418,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     { label: 'Set GCP Budget $250', text: 'Set Google Cloud budget to 250.' },
     { label: 'Import Phone Contacts', text: 'Show me my synced phone contacts and how to import more from my phone.' },
   ];
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl p-2 sm:p-4">
@@ -433,6 +448,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           </div>
 
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => {
+                if (isMuted) setIsMuted(false);
+                speechEngine.testVoiceOutput();
+              }}
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/30 transition-all cursor-pointer shadow-sm"
+              title="Test Aura voice audio output"
+            >
+              <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span className="hidden sm:inline">Test Sound</span>
+            </button>
             <button
               onClick={() => setIsHandsFree(!isHandsFree)}
               className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
@@ -625,19 +651,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
 
           {/* Live Transcript Preview */}
           {liveTranscript && (
-            <div className="mt-3 px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-indigo-500/40 text-indigo-200 text-xs flex items-center justify-between gap-3 shadow-lg max-w-lg w-full animate-fade-in">
-              <div className="flex items-center gap-2 truncate">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                <span className="truncate italic">"{liveTranscript}"</span>
+            <div className="mt-3 px-4 py-2.5 rounded-2xl bg-slate-950/95 border border-indigo-500/50 text-indigo-200 text-xs flex items-center justify-between gap-3 shadow-xl max-w-lg w-full animate-fade-in">
+              <div className="flex flex-col min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-semibold mb-0.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                  <span>Hearing voice • Auto-answering on pause:</span>
+                </div>
+                <div className="truncate text-white font-medium italic text-xs">
+                  "{liveTranscript}"
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => speechEngine.commitCurrentSpeech()}
-                className="shrink-0 px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow transition-colors flex items-center gap-1 cursor-pointer"
+                onClick={() => {
+                  speechEngine.unlockAudio();
+                  speechEngine.commitCurrentSpeech();
+                }}
+                className="shrink-0 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
                 title="Send spoken words immediately"
               >
                 <span>Answer Now</span>
-                <Send className="w-3 h-3" />
+                <Send className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
