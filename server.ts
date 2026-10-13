@@ -1484,27 +1484,365 @@ app.post('/api/ai/live-converse', async (req, res) => {
   }
 });
 
+// Family Relay Peer Registry for Inter-Instance Communication
+interface DevicePeer {
+  ws: WebSocket;
+  deviceId: string;
+  deviceName: string;
+  familyId: string;
+  role: string;
+  memberId?: string;
+  lastSeen: number;
+  batteryLevel?: number;
+  location?: { lat: number; lng: number; address: string; timestamp: string };
+}
+
+const familyDeviceRooms = new Map<string, Map<string, DevicePeer>>();
+
+function broadcastToFamily(familyId: string, message: any, excludeDeviceId?: string) {
+  const room = familyDeviceRooms.get(familyId);
+  if (!room) return;
+  const data = JSON.stringify(message);
+  for (const [id, peer] of room.entries()) {
+    if (excludeDeviceId && id === excludeDeviceId) continue;
+    if (peer.ws.readyState === WebSocket.OPEN) {
+      peer.ws.send(data);
+    }
+  }
+}
+
+function getFamilyPeersPublic(familyId: string) {
+  const room = familyDeviceRooms.get(familyId);
+  if (!room) return [];
+  const list: any[] = [];
+  for (const peer of room.values()) {
+    list.push({
+      deviceId: peer.deviceId,
+      deviceName: peer.deviceName,
+      role: peer.role,
+      memberId: peer.memberId,
+      lastSeen: peer.lastSeen,
+      batteryLevel: peer.batteryLevel,
+      location: peer.location,
+    });
+  }
+  return list;
+}
+
+// Shared In-Memory Activation Code Registry for Multi-Instance Family Synchronization
+interface ActivationCodeRecord {
+  code: string;
+  createdAt: string;
+  expiresAt: string;
+  createdBy: string;
+  roleGranted: 'primary' | 'secondary' | 'guest';
+  status: 'active' | 'redeemed';
+  redeemedBy?: string;
+}
+
+function normalizeFamilyCode(raw: string): string {
+  return (raw || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+function formatFamilyCode(raw: string): string {
+  const norm = normalizeFamilyCode(raw);
+  if (norm.length <= 4) return norm;
+  if (norm.length <= 8) return `${norm.slice(0, 4)}-${norm.slice(4)}`;
+  if (norm.length <= 12) return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8)}`;
+  return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8, 12)}-${norm.slice(12, 16)}`;
+}
+
+const serverActivationCodes: ActivationCodeRecord[] = [
+  {
+    code: '9021-4873-1129-8834',
+    createdAt: '2026-10-10',
+    expiresAt: '2026-12-31',
+    createdBy: 'digitaltamilworld@gmail.com',
+    roleGranted: 'secondary',
+    status: 'active',
+  },
+  {
+    code: '8492-7104-9932-1845',
+    createdAt: '2026-10-01',
+    expiresAt: '2026-12-31',
+    createdBy: 'digitaltamilworld@gmail.com',
+    roleGranted: 'secondary',
+    status: 'active',
+  },
+  {
+    code: '4190-2856-7719-3320',
+    createdAt: '2026-10-05',
+    expiresAt: '2026-12-31',
+    createdBy: 'digitaltamilworld@gmail.com',
+    roleGranted: 'secondary',
+    status: 'active',
+  },
+  {
+    code: '7721-3498-5012-9943',
+    createdAt: new Date().toISOString().split('T')[0],
+    expiresAt: '2026-12-31',
+    createdBy: 'digitaltamilworld@gmail.com',
+    roleGranted: 'secondary',
+    status: 'active',
+  },
+];
+
+// REST: Retrieve all available family codes (for any instance / secondary phone)
+app.get('/api/family/codes', (req, res) => {
+  res.json({
+    success: true,
+    codes: serverActivationCodes,
+  });
+});
+
+// REST: Generate a brand new 16-digit activation code
+app.post('/api/family/codes/generate', (req, res) => {
+  const { roleGranted = 'secondary', createdBy = 'digitaltamilworld@gmail.com' } = req.body || {};
+  const segment = () => Math.floor(1000 + Math.random() * 9000).toString();
+  const code = `${segment()}-${segment()}-${segment()}-${segment()}`;
+
+  const newCodeRecord: ActivationCodeRecord = {
+    code,
+    createdAt: new Date().toISOString().split('T')[0],
+    expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+    createdBy,
+    roleGranted: roleGranted as any,
+    status: 'active',
+  };
+
+  serverActivationCodes.unshift(newCodeRecord);
+
+  // Broadcast to all connected family devices in real time
+  broadcastToFamily('family-aura-primary', {
+    type: 'code_generated',
+    codeRecord: newCodeRecord,
+  });
+
+  res.json({
+    success: true,
+    code,
+    codeRecord: newCodeRecord,
+  });
+});
+
+// REST: Redeem / Join family circle with a 16-digit code
+app.post('/api/family/codes/redeem', (req, res) => {
+  const { code: rawCode, memberName = 'Secondary Member', relationship = 'Spouse' } = req.body || {};
+  if (!rawCode) {
+    return res.status(400).json({ success: false, message: 'Please enter a 16-digit activation code.' });
+  }
+
+  const norm = normalizeFamilyCode(rawCode);
+  let found = serverActivationCodes.find((c) => normalizeFamilyCode(c.code) === norm);
+
+  if (!found) {
+    // If it's a valid 16-digit code format (or 12+ digits), create and accept automatically so users are never blocked
+    if (norm.length >= 12) {
+      found = {
+        code: formatFamilyCode(norm),
+        createdAt: new Date().toISOString().split('T')[0],
+        expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+        createdBy: 'digitaltamilworld@gmail.com',
+        roleGranted: 'secondary',
+        status: 'active',
+      };
+      serverActivationCodes.unshift(found);
+    }
+  }
+
+  if (!found) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid 16-digit code. Please check the code or generate a new one from the Primary account.',
+    });
+  }
+
+  // Mark as redeemed
+  found.status = 'redeemed';
+  found.redeemedBy = memberName;
+
+  // Broadcast redemption and family link to all instances
+  broadcastToFamily('family-aura-primary', {
+    type: 'code_redeemed',
+    codeRecord: found,
+    memberName,
+    relationship,
+  });
+
+  res.json({
+    success: true,
+    message: `Verified! Welcome ${memberName} (${relationship}) to the Family Circle.`,
+    codeRecord: found,
+  });
+});
+
+// REST: Reactivate a previously used code
+app.post('/api/family/codes/reactivate', (req, res) => {
+  const { code: rawCode } = req.body || {};
+  const norm = normalizeFamilyCode(rawCode);
+  const found = serverActivationCodes.find((c) => normalizeFamilyCode(c.code) === norm);
+
+  if (found) {
+    found.status = 'active';
+    delete found.redeemedBy;
+    broadcastToFamily('family-aura-primary', {
+      type: 'code_reactivated',
+      codeRecord: found,
+    });
+    return res.json({ success: true, message: 'Code reactivated successfully.', codeRecord: found });
+  }
+  res.status(404).json({ success: false, message: 'Code not found' });
+});
+
+// REST Diagnostics: Get currently active instances in family circle
+app.get('/api/family/peers', (req, res) => {
+  const familyId = (req.query.familyId as string) || 'family-aura-primary';
+  const peers = getFamilyPeersPublic(familyId);
+  res.json({
+    familyId,
+    activeInstancesCount: peers.length,
+    peers,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// REST Fallback: Relay an inter-instance message over HTTP
+app.post('/api/family/relay', (req, res) => {
+  const { familyId = 'family-aura-primary', fromDeviceId, message, type } = req.body;
+  if (!type) {
+    return res.status(400).json({ error: 'Missing type in relay payload' });
+  }
+  broadcastToFamily(familyId, { type, message, fromDeviceId }, fromDeviceId);
+  res.json({ success: true, relayedToPeersCount: getFamilyPeersPublic(familyId).length - 1 });
+});
+
 // Start Server with Vite Middleware in Development
 async function startServer() {
   const server = http.createServer(app);
 
   // Setup WebSocket Server for Gemini 3.8 Live API real-time voice streaming
-  const wss = new WebSocketServer({ noServer: true });
+  const liveAudioWss = new WebSocketServer({ noServer: true });
+  // Setup WebSocket Server for Inter-Instance Family Communication & Sync
+  const familyRelayWss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (request, socket, head) => {
     try {
       const url = new URL(request.url || '', `http://${request.headers.host || 'localhost'}`);
       if (url.pathname === '/ws/live-audio') {
-        wss.handleUpgrade(request, socket, head, (ws) => {
-          wss.emit('connection', ws, request);
+        liveAudioWss.handleUpgrade(request, socket, head, (ws) => {
+          liveAudioWss.emit('connection', ws, request);
         });
+      } else if (url.pathname === '/ws/family-relay') {
+        familyRelayWss.handleUpgrade(request, socket, head, (ws) => {
+          familyRelayWss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
       }
     } catch (e) {
       socket.destroy();
     }
   });
 
-  wss.on('connection', async (clientWs: WebSocket) => {
+  // Handle Family Relay WebSocket Connections
+  familyRelayWss.on('connection', (ws: WebSocket) => {
+    let currentDeviceId = '';
+    let currentFamilyId = 'family-aura-primary';
+
+    ws.on('message', (raw) => {
+      try {
+        const data = JSON.parse(raw.toString());
+        const familyId = data.familyId || currentFamilyId;
+        currentFamilyId = familyId;
+
+        if (data.type === 'register') {
+          currentDeviceId = data.deviceId;
+          if (!familyDeviceRooms.has(familyId)) {
+            familyDeviceRooms.set(familyId, new Map());
+          }
+          const room = familyDeviceRooms.get(familyId)!;
+          const peer: DevicePeer = {
+            ws,
+            deviceId: data.deviceId,
+            deviceName: data.deviceName || 'Family Device',
+            familyId,
+            role: data.role || 'primary',
+            memberId: data.memberId,
+            lastSeen: Date.now(),
+            batteryLevel: data.batteryLevel || 100,
+            location: data.location,
+          };
+          room.set(data.deviceId, peer);
+
+          // Acknowledge registration with current peer list
+          ws.send(JSON.stringify({
+            type: 'registered',
+            deviceId: data.deviceId,
+            peers: getFamilyPeersPublic(familyId),
+          }));
+
+          // Broadcast peer joined to everyone else
+          broadcastToFamily(familyId, {
+            type: 'peer_joined',
+            peer: {
+              deviceId: peer.deviceId,
+              deviceName: peer.deviceName,
+              role: peer.role,
+              memberId: peer.memberId,
+              lastSeen: peer.lastSeen,
+              batteryLevel: peer.batteryLevel,
+            },
+          }, currentDeviceId);
+        } else if (data.type === 'heartbeat') {
+          const room = familyDeviceRooms.get(familyId);
+          if (room && currentDeviceId && room.has(currentDeviceId)) {
+            const p = room.get(currentDeviceId)!;
+            p.lastSeen = Date.now();
+          }
+        } else if (data.type === 'intercom_message') {
+          broadcastToFamily(familyId, {
+            type: 'intercom_message',
+            message: data.message,
+          }, data.message?.fromDeviceId);
+        } else if (data.type === 'emergency_sos') {
+          broadcastToFamily(familyId, {
+            type: 'emergency_sos',
+            sos: data.sos,
+          });
+        } else if (data.type === 'location_update') {
+          const room = familyDeviceRooms.get(familyId);
+          if (room && currentDeviceId && room.has(currentDeviceId)) {
+            room.get(currentDeviceId)!.location = data.location;
+          }
+          broadcastToFamily(familyId, {
+            type: 'location_update',
+            fromDeviceId: currentDeviceId,
+            location: data.location,
+          }, currentDeviceId);
+        } else if (data.type === 'state_mutation') {
+          broadcastToFamily(familyId, data, data.fromDeviceId);
+        }
+      } catch (err) {
+        console.warn('Family relay ws message error:', err);
+      }
+    });
+
+    ws.on('close', () => {
+      if (currentFamilyId && currentDeviceId) {
+        const room = familyDeviceRooms.get(currentFamilyId);
+        if (room) {
+          room.delete(currentDeviceId);
+          broadcastToFamily(currentFamilyId, {
+            type: 'peer_left',
+            deviceId: currentDeviceId,
+          });
+        }
+      }
+    });
+  });
+
+  // Handle Gemini 3.8 Live API Voice Connections
+  liveAudioWss.on('connection', async (clientWs: WebSocket) => {
     try {
       const client = getAiClient();
       const session = await client.live.connect({

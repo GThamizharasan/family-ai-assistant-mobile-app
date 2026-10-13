@@ -51,7 +51,13 @@ export const initAuth = (
   });
 };
 
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string | null }> => {
+export interface GoogleAuthResult {
+  user: User | null;
+  accessToken: string | null;
+  cancelled?: boolean;
+}
+
+export const googleSignIn = async (): Promise<GoogleAuthResult> => {
   try {
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
@@ -60,14 +66,22 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.error('Google Sign-In Error:', error);
+    if (
+      error?.code === 'auth/popup-closed-by-user' ||
+      error?.code === 'auth/cancelled-popup-request' ||
+      error?.code === 'auth/popup-blocked'
+    ) {
+      console.warn('Google Sign-In popup closed or cancelled by user:', error.code);
+      return { user: null, accessToken: null, cancelled: true };
+    }
+    console.warn('Google Sign-In notice:', error?.message || error);
     throw error;
   } finally {
     isSigningIn = false;
   }
 };
 
-export const googleSignInGcp = async (): Promise<{ user: User; accessToken: string | null }> => {
+export const googleSignInGcp = async (): Promise<GoogleAuthResult> => {
   try {
     isSigningIn = true;
     const gcpProvider = new GoogleAuthProvider();
@@ -84,7 +98,15 @@ export const googleSignInGcp = async (): Promise<{ user: User; accessToken: stri
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
-    console.error('Google GCP Sign-In Error:', error);
+    if (
+      error?.code === 'auth/popup-closed-by-user' ||
+      error?.code === 'auth/cancelled-popup-request' ||
+      error?.code === 'auth/popup-blocked'
+    ) {
+      console.warn('Google GCP Sign-In popup closed or cancelled by user:', error.code);
+      return { user: null, accessToken: null, cancelled: true };
+    }
+    console.warn('Google GCP Sign-In notice:', error?.message || error);
     throw error;
   } finally {
     isSigningIn = false;

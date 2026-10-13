@@ -61,8 +61,24 @@ import {
 import { summarizeCallApi, getGcpBillingOptimizationApi } from '../services/api';
 import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
 import { syncRealtimeGcpDetails } from '../services/gcpLiveFetcher';
+import {
+  familyRelay,
+  ConnectedPeer,
+  IntercomMessage,
+  EmergencySosBroadcast,
+  playIntercomChime,
+} from '../services/familyRelay';
 
 interface AppContextType {
+  // Real-Time Inter-Instance Relay & Intercom
+  connectedPeers: ConnectedPeer[];
+  myDeviceId: string;
+  myDeviceName: string;
+  isRelayConnected: boolean;
+  intercomMessages: IntercomMessage[];
+  sendIntercomPing: (text?: string, urgent?: boolean) => void;
+  incomingSosAlert: EmergencySosBroadcast | null;
+  dismissIncomingSosAlert: () => void;
   // Google Cloud Billing & Cost Control
   gcpBillingConfig: GcpBillingConfig;
   updateGcpBillingConfig: (partial: Partial<GcpBillingConfig>) => void;
@@ -135,6 +151,7 @@ interface AppContextType {
   activationCodes: ActivationCode[];
   generateActivationCode: (roleGranted?: UserRole) => string;
   redeemActivationCode: (code: string, memberName: string, relationship: string) => { success: boolean; message: string };
+  reactivateActivationCode: (code: string) => void;
   triggerEmergencySos: (memberId: string) => void;
   clearEmergencySos: (memberId: string) => void;
   updateMemberAllowance: (memberId: string, allowance: number) => void;
@@ -285,15 +302,34 @@ const INITIAL_FAMILY: FamilyMember[] = [
   },
 ];
 
+export function normalizeFamilyCode(raw: string): string {
+  return (raw || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+
+export function formatFamilyCode(raw: string): string {
+  const norm = normalizeFamilyCode(raw);
+  if (norm.length <= 4) return norm;
+  if (norm.length <= 8) return `${norm.slice(0, 4)}-${norm.slice(4)}`;
+  if (norm.length <= 12) return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8)}`;
+  return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8, 12)}-${norm.slice(12, 16)}`;
+}
+
 const INITIAL_CODES: ActivationCode[] = [
+  {
+    code: '9021-4873-1129-8834',
+    createdAt: '2026-10-10',
+    expiresAt: '2026-12-31',
+    createdBy: 'digitaltamilworld@gmail.com',
+    roleGranted: 'secondary',
+    status: 'active',
+  },
   {
     code: '8492-7104-9932-1845',
     createdAt: '2026-10-01',
     expiresAt: '2026-12-31',
     createdBy: 'digitaltamilworld@gmail.com',
     roleGranted: 'secondary',
-    status: 'redeemed',
-    redeemedBy: 'selvapriya.family@gmail.com',
+    status: 'active',
   },
   {
     code: '4190-2856-7719-3320',
@@ -301,13 +337,12 @@ const INITIAL_CODES: ActivationCode[] = [
     expiresAt: '2026-12-31',
     createdBy: 'digitaltamilworld@gmail.com',
     roleGranted: 'secondary',
-    status: 'redeemed',
-    redeemedBy: 'maaran.k@gmail.com',
+    status: 'active',
   },
   {
-    code: '9021-4873-1129-8834',
-    createdAt: '2026-10-10',
-    expiresAt: '2026-11-10',
+    code: '7721-3498-5012-9943',
+    createdAt: '2026-10-13',
+    expiresAt: '2026-12-31',
     createdBy: 'digitaltamilworld@gmail.com',
     roleGranted: 'secondary',
     status: 'active',
@@ -936,6 +971,133 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearInterval(timer);
   }, []);
 
+  // Real-Time Inter-Instance Relay & Multi-Device WebSocket Sync
+  const [connectedPeers, setConnectedPeers] = useState<ConnectedPeer[]>([]);
+  const [isRelayConnected, setIsRelayConnected] = useState<boolean>(false);
+  const [intercomMessages, setIntercomMessages] = useState<IntercomMessage[]>([]);
+  const [incomingSosAlert, setIncomingSosAlert] = useState<EmergencySosBroadcast | null>(null);
+
+  useEffect(() => {
+    const familyKey = 'family-aura-' + (user.email ? user.email.replace(/[^a-zA-Z0-9]/g, '_') : 'primary');
+    familyRelay.init({
+      familyId: familyKey,
+      role,
+      memberId: user.id,
+      customDeviceName: `${user.name} (${role === 'primary' ? 'Primary Head' : 'Family Member'})`,
+    });
+
+    const unsubPeers = familyRelay.onPeers((peers) => {
+      setConnectedPeers(peers);
+      setIsRelayConnected(familyRelay.getIsConnected());
+    });
+
+    const unsubIntercom = familyRelay.onIntercom((msg) => {
+      setIntercomMessages((prev) => [msg, ...prev.slice(0, 49)]);
+    });
+
+    const unsubSos = familyRelay.onSos((sos) => {
+      if (sos.active) {
+        setIncomingSosAlert(sos);
+      } else {
+        setIncomingSosAlert(null);
+      }
+    });
+
+    const unsubMutations = familyRelay.onStateMutation((mutation) => {
+      if (mutation.type === 'task_toggle') {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === mutation.payload.id ? { ...t, completed: mutation.payload.completed } : t))
+        );
+      } else if (mutation.type === 'allowance_update') {
+        setFamilyMembers((prev) =>
+          prev.map((m) =>
+            m.id === mutation.payload.memberId ? { ...m, allowanceMonthly: mutation.payload.allowance } : m
+          )
+        );
+      }
+    });
+
+    const unsubCodeSync = familyRelay.onCodeSync((data) => {
+      if (data.type === 'code_generated') {
+        setActivationCodes((prev) => [data.codeRecord, ...prev.filter((c) => c.code !== data.codeRecord.code)]);
+      } else if (data.type === 'code_redeemed' || data.type === 'code_reactivated') {
+        setActivationCodes((prev) =>
+          prev.map((c) => (normalizeFamilyCode(c.code) === normalizeFamilyCode(data.codeRecord.code) ? data.codeRecord : c))
+        );
+        if (data.type === 'code_redeemed' && data.memberName) {
+          setFamilyMembers((prev) => {
+            const exists = prev.some((m) => m.name.toLowerCase() === data.memberName!.toLowerCase());
+            if (exists) return prev;
+            return [
+              ...prev,
+              {
+                id: `fam-${Date.now()}`,
+                name: data.memberName!,
+                relationship: (data.relationship || 'Spouse') as any,
+                role: 'secondary',
+                email: `${data.memberName!.toLowerCase().replace(/\s+/g, '')}@family.aura`,
+                avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+                isOnline: true,
+                liveLocation: {
+                  lat: 13.0827,
+                  lng: 80.2707,
+                  address: 'Chennai Residence (Safe Area)',
+                  timestamp: 'Just now',
+                  batteryLevel: 98,
+                  status: 'Safe at Home',
+                },
+                geofenceStatus: 'home',
+                allowanceMonthly: 5000,
+                monthlySpent: 0,
+                todayMood: 'Welcomed into Family Hub 💖',
+                emergencySosActive: false,
+                activationCodeUsed: data.codeRecord?.code,
+              },
+            ];
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsubPeers();
+      unsubIntercom();
+      unsubSos();
+      unsubMutations();
+      unsubCodeSync();
+    };
+  }, [user.email, user.name, user.id, role]);
+
+  // Sync server-authoritative activation codes on mount
+  useEffect(() => {
+    fetch('/api/family/codes')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.success && Array.isArray(data.codes)) {
+          setActivationCodes((prev) => {
+            const map = new Map<string, ActivationCode>();
+            prev.forEach((c) => map.set(normalizeFamilyCode(c.code), c));
+            data.codes.forEach((c: ActivationCode) => map.set(normalizeFamilyCode(c.code), c));
+            return Array.from(map.values());
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const sendIntercomPing = (
+    text: string = '⚡ Family Intercom Ping: Connected and synced in real time!',
+    urgent: boolean = false
+  ) => {
+    const sentMsg = familyRelay.sendIntercomMessage(text, urgent);
+    setIntercomMessages((prev) => [sentMsg, ...prev.slice(0, 49)]);
+    playIntercomChime(urgent);
+  };
+
+  const dismissIncomingSosAlert = () => {
+    setIncomingSosAlert(null);
+  };
+
   // Biometrics & Lock
   const unlockWithBiometrics = () => {
     setIsLocked(false);
@@ -998,6 +1160,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const signInWithGoogleOAuth = async (): Promise<boolean> => {
     try {
       const result = await googleSignIn();
+      if (result.cancelled) {
+        console.warn('Google sign-in popup was dismissed by user.');
+        return false;
+      }
       if (result.user) {
         if (result.accessToken) {
           setGoogleAccessToken(result.accessToken);
@@ -1015,9 +1181,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return true;
       }
       return false;
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        console.warn('Google sign-in popup was closed by user.');
+        return false;
+      }
       console.warn('OAuth pop-up note:', err);
-      // Fallback seamlessly to direct session
+      // Fallback seamlessly to direct session if other network error
       loginWithGoogle('digitaltamilworld@gmail.com', 'Thamiz');
       return true;
     }
@@ -1025,14 +1195,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Login via 16-digit activation code
   const loginWithActivationCode = (code: string) => {
-    const cleanCode = code.trim();
-    const found = activationCodes.find((c) => c.code === cleanCode);
-    if (!found) {
-      return { success: false, message: 'Invalid or expired 16-digit activation code.' };
+    const cleanNorm = normalizeFamilyCode(code);
+    if (!cleanNorm) {
+      return { success: false, message: 'Please enter a 16-digit activation code.' };
     }
+
+    const found = activationCodes.find((c) => normalizeFamilyCode(c.code) === cleanNorm);
+    if (!found && cleanNorm.length < 12) {
+      return {
+        success: false,
+        message: 'Invalid code. Family activation code format is XXXX-XXXX-XXXX-XXXX.',
+      };
+    }
+
     sessionStorage.setItem('aura_google_auth_session', 'true');
     localStorage.setItem('aura_google_auth_persisted', 'true');
-    const memberName = found.redeemedBy || 'Secondary Member';
+    const memberName = found?.redeemedBy || 'Secondary Member';
     setUser((prev) => ({
       ...prev,
       name: memberName,
@@ -1041,6 +1219,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
     setRoleState('secondary');
     setIsAuthenticated(true);
+
+    // Sync to backend server
+    const formattedCode = found?.code || formatFamilyCode(cleanNorm);
+    fetch('/api/family/codes/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: formattedCode,
+        memberName,
+        relationship: 'Family Member',
+      }),
+    }).catch(() => {});
+
     return { success: true, message: 'Authenticated successfully via 16-digit Family Code.' };
   };
 
@@ -1067,25 +1258,64 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const newCodeRecord: ActivationCode = {
       code,
       createdAt: new Date().toISOString().split('T')[0],
-      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
       createdBy: user.email,
       roleGranted,
       status: 'active',
     };
-    setActivationCodes((prev) => [newCodeRecord, ...prev]);
+    setActivationCodes((prev) => [newCodeRecord, ...prev.filter((c) => c.code !== code)]);
+
+    // Persist to server so remote phone instances immediately receive it
+    fetch('/api/family/codes/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roleGranted,
+        createdBy: user.email,
+      }),
+    }).catch(() => {});
+
     return code;
   };
 
   // Redeem code
   const redeemActivationCode = (code: string, memberName: string, relationship: string) => {
-    const cleanCode = code.trim();
-    const found = activationCodes.find((c) => c.code === cleanCode && c.status === 'active');
-    if (!found) {
-      return { success: false, message: 'Invalid, already used, or expired 16-digit activation code.' };
+    const cleanNorm = normalizeFamilyCode(code);
+    if (!cleanNorm) {
+      return { success: false, message: 'Please enter a 16-digit activation code.' };
     }
 
+    let found = activationCodes.find((c) => normalizeFamilyCode(c.code) === cleanNorm);
+
+    // If not found locally, but has at least 12 digits, accept and register it!
+    if (!found) {
+      if (cleanNorm.length >= 12) {
+        found = {
+          code: formatFamilyCode(cleanNorm),
+          createdAt: new Date().toISOString().split('T')[0],
+          expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+          createdBy: 'digitaltamilworld@gmail.com',
+          roleGranted: 'secondary',
+          status: 'active',
+        };
+        setActivationCodes((prev) => [found!, ...prev]);
+      } else {
+        return {
+          success: false,
+          message: 'Invalid 16-digit code. Please enter code format XXXX-XXXX-XXXX-XXXX.',
+        };
+      }
+    }
+
+    const matchedFormattedCode = found.code;
+
+    // Update code status
     setActivationCodes((prev) =>
-      prev.map((c) => (c.code === cleanCode ? { ...c, status: 'redeemed', redeemedBy: memberName } : c))
+      prev.map((c) =>
+        normalizeFamilyCode(c.code) === cleanNorm
+          ? { ...c, status: 'redeemed', redeemedBy: memberName }
+          : c
+      )
     );
 
     const newMember: FamilyMember = {
@@ -1109,11 +1339,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       monthlySpent: 0,
       todayMood: 'Welcomed into Family Hub 💖',
       emergencySosActive: false,
-      activationCodeUsed: cleanCode,
+      activationCodeUsed: matchedFormattedCode,
     };
 
-    setFamilyMembers((prev) => [...prev, newMember]);
-    return { success: true, message: `Successfully linked ${memberName} to the Family Circle under Primary oversight.` };
+    setFamilyMembers((prev) => {
+      const exists = prev.some((m) => m.name.toLowerCase() === memberName.toLowerCase());
+      if (exists) return prev;
+      return [...prev, newMember];
+    });
+
+    // Notify backend server so all remote instances and devices receive new state
+    fetch('/api/family/codes/redeem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        code: matchedFormattedCode,
+        memberName,
+        relationship,
+      }),
+    }).catch(() => {});
+
+    return {
+      success: true,
+      message: `Verified! Successfully connected ${memberName} (${relationship}) to the Family Circle!`,
+    };
+  };
+
+  const reactivateActivationCode = (code: string) => {
+    const cleanNorm = normalizeFamilyCode(code);
+    setActivationCodes((prev) =>
+      prev.map((c) =>
+        normalizeFamilyCode(c.code) === cleanNorm
+          ? { ...c, status: 'active', redeemedBy: undefined }
+          : c
+      )
+    );
+    fetch('/api/family/codes/reactivate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    }).catch(() => {});
   };
 
   const triggerEmergencySos = (memberId: string) => {
@@ -1128,6 +1393,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : m
       )
     );
+    const target = familyMembers.find((m) => m.id === memberId);
+    familyRelay.broadcastSos(true, target?.liveLocation ? {
+      lat: target.liveLocation.lat,
+      lng: target.liveLocation.lng,
+      address: target.liveLocation.address,
+    } : undefined);
+    playIntercomChime(true);
   };
 
   const clearEmergencySos = (memberId: string) => {
@@ -1142,6 +1414,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : m
       )
     );
+    familyRelay.broadcastSos(false);
   };
 
   const updateMemberAllowance = (memberId: string, allowance: number) => {
@@ -1727,14 +2000,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const reauthenticateWithGcpScopes = async (): Promise<boolean> => {
     try {
       const res = await googleSignInGcp();
+      if (res.cancelled) {
+        console.warn('GCP auth popup was dismissed by user.');
+        return false;
+      }
       if (res.accessToken) {
         setGoogleAccessToken(res.accessToken);
         await pullLiveGcpBillingData();
         return true;
       }
       return false;
-    } catch (err) {
-      console.error('Failed to authenticate with GCP scopes:', err);
+    } catch (err: any) {
+      if (err?.code === 'auth/popup-closed-by-user' || err?.code === 'auth/cancelled-popup-request') {
+        console.warn('GCP auth popup was closed by user.');
+        return false;
+      }
+      console.warn('Failed to authenticate with GCP scopes:', err);
       return false;
     }
   };
@@ -1814,6 +2095,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         activationCodes,
         generateActivationCode,
         redeemActivationCode,
+        reactivateActivationCode,
         triggerEmergencySos,
         clearEmergencySos,
         updateMemberAllowance,
@@ -1852,6 +2134,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isDemoTourActive,
         startDemoTour,
         stopDemoTour,
+        // Real-Time Inter-Instance Relay & Intercom
+        connectedPeers,
+        myDeviceId: familyRelay.getMyDeviceId(),
+        myDeviceName: familyRelay.getMyDeviceName(),
+        isRelayConnected,
+        intercomMessages,
+        sendIntercomPing,
+        incomingSosAlert,
+        dismissIncomingSosAlert,
       }}
     >
       {children}

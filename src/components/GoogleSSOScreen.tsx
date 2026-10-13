@@ -24,6 +24,7 @@ export const GoogleSSOScreen: React.FC = () => {
     requireGoogleAuthOnReload,
     setRequireGoogleAuthOnReload,
     familyMembers,
+    activationCodes,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'google' | 'code' | 'custom'>('google');
@@ -55,6 +56,14 @@ export const GoogleSSOScreen: React.FC = () => {
 
   const handleSelectGoogleAccount = (email: string, name?: string) => {
     loginWithGoogle(email, name);
+  };
+
+  const handleCodeInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 16);
+    if (val.length <= 4) setActivationCodeInput(val);
+    else if (val.length <= 8) setActivationCodeInput(`${val.slice(0, 4)}-${val.slice(4)}`);
+    else if (val.length <= 12) setActivationCodeInput(`${val.slice(0, 4)}-${val.slice(4, 8)}-${val.slice(8)}`);
+    else setActivationCodeInput(`${val.slice(0, 4)}-${val.slice(4, 8)}-${val.slice(8, 12)}-${val.slice(12, 16)}`);
   };
 
   const handleCodeSubmit = (e: React.FormEvent) => {
@@ -274,19 +283,56 @@ export const GoogleSSOScreen: React.FC = () => {
         {activeTab === 'code' && (
           <form onSubmit={handleCodeSubmit} className="space-y-4">
             <div>
-              <label className="text-xs text-slate-300 block mb-1.5 font-medium">
-                16-Digit Activation Code
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs text-slate-300 font-medium">
+                  16-Digit Activation Code
+                </label>
+                {activationCodes.length > 0 && (
+                  <span className="text-[10px] text-emerald-400 font-medium">
+                    {activationCodes.filter((c) => c.status === 'active').length} Active Code(s)
+                  </span>
+                )}
+              </div>
               <input
                 type="text"
                 placeholder="XXXX-XXXX-XXXX-XXXX"
                 value={activationCodeInput}
-                onChange={(e) => setActivationCodeInput(e.target.value)}
+                onChange={handleCodeInputChange}
                 className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 text-xs text-white font-mono tracking-wider focus:outline-none focus:border-indigo-500"
               />
               <span className="text-[11px] text-slate-500 mt-1 block">
                 Enter the 16-digit activation code sent to you by the Primary Owner ({primaryEmail}).
               </span>
+
+              {/* Verified Code Quick-Fill Chips */}
+              {activationCodes.length > 0 && (
+                <div className="mt-3 p-2.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1.5">
+                  <span className="text-[10px] text-slate-400 font-medium block">
+                    Available Verified Codes (Tap to Auto-Fill):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                    {activationCodes.map((c) => (
+                      <button
+                        key={c.code}
+                        type="button"
+                        onClick={() => {
+                          setActivationCodeInput(c.code);
+                          setCodeFeedback(null);
+                        }}
+                        className={`text-[11px] font-mono px-2 py-0.5 rounded-lg border transition-all ${
+                          activationCodeInput === c.code
+                            ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                            : c.status === 'active'
+                            ? 'bg-indigo-950/70 border-indigo-700/50 text-indigo-300 hover:bg-indigo-900 hover:text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {c.code} {c.status === 'active' ? '✓' : '(re-link)'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {codeFeedback && (
