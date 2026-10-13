@@ -860,7 +860,7 @@ export const GcpBillingDashboard: React.FC = () => {
               <label className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between cursor-pointer">
                 <div>
                   <span className="font-semibold text-white block">WhatsApp Alert</span>
-                  <span className="text-[10px] text-slate-400">+91 98401 23456</span>
+                  <span className="text-[10px] text-slate-400 font-mono">+91 98408 05665</span>
                 </div>
                 <input
                   type="checkbox"

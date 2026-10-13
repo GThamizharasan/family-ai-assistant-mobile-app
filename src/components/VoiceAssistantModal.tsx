@@ -19,7 +19,7 @@ import {
   PhoneCall,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { speechEngine } from '../services/speech';
+import { speechEngine, isIOSChrome } from '../services/speech';
 import { sendChatMessage } from '../services/api';
 
 interface VoiceAssistantModalProps {
@@ -364,6 +364,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     } else {
       setMicStatusMessage(null);
       speechEngine.stopSpeaking();
+      if (isIOSChrome()) {
+        setMicStatusMessage('Apple iOS WebKit restricts speech recognition in Chrome. On iPhone, please use Safari for voice dictation, or type your message below.');
+        return;
+      }
       const hasPermission = await speechEngine.requestMicPermission();
       if (!hasPermission) {
         setMicStatusMessage('Microphone access blocked. Click the lock 🔒 or site permissions icon in the address bar to set Microphone to "Allow".');
@@ -371,7 +375,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       }
       const started = speechEngine.startListening();
       if (!started) {
-        setMicStatusMessage('Speech recognition could not be started in this browser. Please use Chrome, Edge, or Safari, or type below.');
+        setMicStatusMessage('Speech recognition could not be started in this browser. Please use Chrome on Desktop/Android, or Safari on iPhone, or type below.');
       }
     }
   };

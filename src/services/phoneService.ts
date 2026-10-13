@@ -246,7 +246,7 @@ export const INITIAL_PHONE_CONTACTS: PhoneContact[] = [
   {
     id: 'pc-selvapriya',
     name: 'Selvapriya (Spouse)',
-    phone: '+91 98401 54321',
+    phone: '+91 96779 01342',
     email: 'selvapriya.family@gmail.com',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
     relationship: 'Spouse',
@@ -258,14 +258,14 @@ export const INITIAL_PHONE_CONTACTS: PhoneContact[] = [
   {
     id: 'pc-maaran',
     name: 'Maaran (Son)',
-    phone: '+91 98401 87654',
+    phone: '+44 7721 877710',
     email: 'maaran.k@gmail.com',
     avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
     relationship: 'Son',
     category: 'family',
     source: 'google',
     isFavorite: true,
-    notes: 'Robotics Academy & AI study tracking.',
+    notes: 'Robotics Academy & AI study tracking (UK Line).',
   },
   {
     id: 'pc-sequoia',
@@ -334,7 +334,7 @@ export const INITIAL_CALL_LOGS: CallLogItem[] = [
   {
     id: 'cl-1',
     contactName: 'Selvapriya (Spouse)',
-    phone: '+91 98401 54321',
+    phone: '+91 96779 01342',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
     relationship: 'Spouse',
     timestamp: 'Today, 08:35 AM',

@@ -843,7 +843,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
                 </span>
               </div>
               <p className="text-[11px] text-slate-400 font-mono">
-                +91 98401 23456 • {phoneContacts.length} Contacts Synced
+                +91 98408 05665 • {phoneContacts.length} Contacts Synced
               </p>
             </div>
           </div>

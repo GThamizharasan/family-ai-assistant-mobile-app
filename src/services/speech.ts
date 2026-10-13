@@ -7,6 +7,19 @@ declare global {
   }
 }
 
+export function isIOSChrome(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  return isIOS && /CriOS/.test(ua);
+}
+
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 export class VoiceAssistantEngine {
   private recognition: any = null;
   private isListening: boolean = false;
@@ -21,51 +34,66 @@ export class VoiceAssistantEngine {
     if (typeof window !== 'undefined') {
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
-        this.recognition = new SpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.interimResults = true;
-        this.recognition.lang = 'en-US';
+        try {
+          this.recognition = new SpeechRecognition();
+          this.recognition.continuous = true;
+          this.recognition.interimResults = true;
+          this.recognition.lang = 'en-US';
 
-        this.recognition.onstart = () => {
-          this.isListening = true;
-          this.onListeningChange?.(true);
-        };
+          this.recognition.onstart = () => {
+            this.isListening = true;
+            this.onListeningChange?.(true);
+          };
 
-        this.recognition.onresult = (event: any) => {
-          let interimTranscript = '';
-          let finalTranscript = '';
+          this.recognition.onresult = (event: any) => {
+            let interimTranscript = '';
+            let finalTranscript = '';
 
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript;
-            } else {
-              interimTranscript += event.results[i][0].transcript;
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+              if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript;
+              } else {
+                interimTranscript += event.results[i][0].transcript;
+              }
             }
-          }
 
-          if (finalTranscript) {
-            this.onTranscriptCallback?.(finalTranscript.trim(), true);
-          } else if (interimTranscript) {
-            this.onTranscriptCallback?.(interimTranscript.trim(), false);
-          }
-        };
+            if (finalTranscript) {
+              this.onTranscriptCallback?.(finalTranscript.trim(), true);
+            } else if (interimTranscript) {
+              this.onTranscriptCallback?.(interimTranscript.trim(), false);
+            }
+          };
 
-        this.recognition.onerror = (event: any) => {
-          console.warn('Speech recognition status:', event.error);
-          this.isListening = false;
-          this.onListeningChange?.(false);
-          this.onErrorCallback?.(event.error);
-        };
+          this.recognition.onerror = (event: any) => {
+            console.warn('Speech recognition status:', event.error);
+            this.isListening = false;
+            this.onListeningChange?.(false);
+            this.onErrorCallback?.(event.error);
+          };
 
-        this.recognition.onend = () => {
-          this.isListening = false;
-          this.onListeningChange?.(false);
-        };
+          this.recognition.onend = () => {
+            this.isListening = false;
+            this.onListeningChange?.(false);
+          };
+        } catch (e) {
+          console.warn('SpeechRecognition initialization error:', e);
+        }
       }
 
       if ('speechSynthesis' in window) {
         this.synth = window.speechSynthesis;
       }
+
+      // iOS WebKit Audio Unlocker on first user touch/click
+      const unlockAudio = () => {
+        try {
+          if (this.synth) {
+            this.synth.resume();
+          }
+        } catch (e) {}
+      };
+      window.addEventListener('touchstart', unlockAudio, { passive: true, once: true });
+      window.addEventListener('click', unlockAudio, { passive: true, once: true });
     }
   }
 

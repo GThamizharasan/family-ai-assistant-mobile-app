@@ -48,6 +48,8 @@ import {
   INITIAL_WHATSAPP_CONFIG,
   INITIAL_WHATSAPP_CONTACTS,
   INITIAL_WHATSAPP_MESSAGES,
+  sendWhatsAppViaApiCall,
+  connectWhatsAppAccountApi,
 } from '../services/whatsapp';
 import {
   INITIAL_PHONE_CONTACTS,
@@ -97,6 +99,13 @@ interface AppContextType {
   markWhatsAppAsRead: (contactId: string) => void;
   updateWhatsAppConfig: (partial: Partial<WhatsAppAccountConfig>) => void;
   refreshWhatsAppMessages: () => Promise<void>;
+  addWhatsAppContact: (contact: Omit<WhatsAppContact, 'id'>) => string;
+  deleteWhatsAppContact: (id: string) => void;
+  linkRealWhatsAppNumber: (phone: string, accountName?: string) => void;
+  startWhatsAppChatWithNumber: (phone: string, name?: string, initialText?: string) => string;
+  lastWhatsAppApiReceipt: any | null;
+  connectWhatsAppAccountViaApi: (phone: string, accountName?: string, apiKey?: string, phoneNumberId?: string) => Promise<any>;
+  sendWhatsAppApiDirect: (to: string, text: string, contactName?: string) => Promise<any>;
   // Google Single Sign-On (SSO) & Session
   isAuthenticated: boolean;
   googleAccessToken: string | null;
@@ -182,8 +191,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // Initial Seed Data
 const INITIAL_USER: UserProfile = {
   id: 'usr-primary-001',
-  name: 'Thamiz',
+  name: 'Thamizh',
   email: 'digitaltamilworld@gmail.com',
+  phone: '+91 98408 05665',
   role: 'primary',
   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
   isBiometricEnabled: true,
@@ -204,10 +214,11 @@ const INITIAL_USER: UserProfile = {
 const INITIAL_FAMILY: FamilyMember[] = [
   {
     id: 'fam-01',
-    name: 'Thamiz (Primary)',
+    name: 'Thamizh (Primary)',
     relationship: 'Self (Head)',
     role: 'primary',
     email: 'digitaltamilworld@gmail.com',
+    phone: '+91 98408 05665',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
@@ -230,6 +241,7 @@ const INITIAL_FAMILY: FamilyMember[] = [
     relationship: 'Spouse',
     role: 'secondary',
     email: 'selvapriya.family@gmail.com',
+    phone: '+91 96779 01342',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
@@ -253,6 +265,7 @@ const INITIAL_FAMILY: FamilyMember[] = [
     relationship: 'Eldest Son',
     role: 'secondary',
     email: 'maaran.k@gmail.com',
+    phone: '+44 7721 877710',
     avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
@@ -610,9 +623,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       try {
         const parsed: FamilyMember[] = JSON.parse(saved);
         return parsed.map((m) => {
-          if (m.name.includes('Karthik')) return { ...m, name: 'Thamiz (Primary)' };
-          if (m.name.includes('Ananya')) return { ...m, name: 'Selvapriya (Spouse)', email: 'selvapriya.family@gmail.com' };
-          if (m.name.includes('Aravind')) return { ...m, name: 'Maaran (Son)', email: 'maaran.k@gmail.com' };
+          if (m.name.includes('Karthik') || m.name.includes('Thamiz')) {
+            return { ...m, name: 'Thamizh (Primary)', phone: '+91 98408 05665' };
+          }
+          if (m.name.includes('Ananya') || m.name.includes('Selvapriya')) {
+            return { ...m, name: 'Selvapriya (Spouse)', phone: '+91 96779 01342', email: 'selvapriya.family@gmail.com' };
+          }
+          if (m.name.includes('Aravind') || m.name.includes('Maaran')) {
+            return { ...m, name: 'Maaran (Son)', phone: '+44 7721 877710', email: 'maaran.k@gmail.com' };
+          }
           return m;
         });
       } catch {
@@ -637,15 +656,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved ? JSON.parse(saved) : INITIAL_BILLIONAIRE_MILESTONES;
   });
 
-  // WhatsApp Integration State
+  // WhatsApp Integration State & API Call Gateway
+  const [lastWhatsAppApiReceipt, setLastWhatsAppApiReceipt] = useState<any | null>(null);
+
   const [whatsAppConfig, setWhatsAppConfig] = useState<WhatsAppAccountConfig>(() => {
     const saved = localStorage.getItem('aura_wa_config');
-    return saved ? JSON.parse(saved) : INITIAL_WHATSAPP_CONFIG;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (
+          parsed.linkedPhone === '+91 98401 23456' ||
+          !parsed.linkedPhone ||
+          parsed.linkedPhone.includes('98401')
+        ) {
+          return {
+            ...parsed,
+            isConnected: true,
+            linkedPhone: '+91 98408 05665',
+            accountName: 'Thamizh (Primary Account)',
+            connectionMethod: 'meta_cloud_api',
+            countryCode: '+91',
+          };
+        }
+        return {
+          ...parsed,
+          accountName: parsed.accountName?.replace('Thamiz ', 'Thamizh ') || 'Thamizh (Primary Account)',
+        };
+      } catch (e) {}
+    }
+    return INITIAL_WHATSAPP_CONFIG;
   });
 
   const [whatsAppContacts, setWhatsAppContacts] = useState<WhatsAppContact[]>(() => {
     const saved = localStorage.getItem('aura_wa_contacts');
-    return saved ? JSON.parse(saved) : INITIAL_WHATSAPP_CONTACTS;
+    if (saved) {
+      try {
+        const list: WhatsAppContact[] = JSON.parse(saved);
+        return list.map((c) => {
+          if (c.id === 'wa-contact-selvapriya' || c.name.includes('Selvapriya')) {
+            return { ...c, name: 'Selvapriya (Spouse)', phone: '+91 96779 01342' };
+          }
+          if (c.id === 'wa-contact-maaran' || c.name.includes('Maaran')) {
+            return { ...c, name: 'Maaran (Son)', phone: '+44 7721 877710' };
+          }
+          if (c.id === 'wa-contact-family-group') {
+            return { ...c, name: 'Thamizh Family Circle 🌟', phone: '+91 98408 00000' };
+          }
+          return c;
+        });
+      } catch (e) {}
+    }
+    return INITIAL_WHATSAPP_CONTACTS;
   });
 
   const [whatsAppMessages, setWhatsAppMessages] = useState<WhatsAppMessage[]>(() => {
@@ -656,7 +717,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Phone Contacts & Calling State
   const [phoneContacts, setPhoneContacts] = useState<PhoneContact[]>(() => {
     const saved = localStorage.getItem('aura_phone_contacts');
-    return saved ? JSON.parse(saved) : INITIAL_PHONE_CONTACTS;
+    if (saved) {
+      try {
+        const list: PhoneContact[] = JSON.parse(saved);
+        return list.map((c) => {
+          if (c.id === 'pc-selvapriya' || c.name.includes('Selvapriya')) {
+            return { ...c, phone: '+91 96779 01342' };
+          }
+          if (c.id === 'pc-maaran' || c.name.includes('Maaran')) {
+            return { ...c, phone: '+44 7721 877710' };
+          }
+          return c;
+        });
+      } catch (e) {}
+    }
+    return INITIAL_PHONE_CONTACTS;
   });
 
   const [callLogs, setCallLogs] = useState<CallLogItem[]>(() => {
@@ -1198,7 +1273,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsDemoTourActive(false);
   };
 
-  // WhatsApp Handlers
+  // WhatsApp Handlers with Cloud API Calling
   const sendWhatsAppMessage = (contactId: string, text: string) => {
     if (!text.trim()) return;
     const contact = whatsAppContacts.find((c) => c.id === contactId);
@@ -1228,6 +1303,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : c
       )
     );
+
+    // Asynchronously dispatch real WhatsApp Cloud API call
+    if (contact?.phone) {
+      sendWhatsAppViaApiCall(contact.phone, text.trim(), contact.name)
+        .then((receipt) => {
+          setLastWhatsAppApiReceipt(receipt);
+          setWhatsAppMessages((prev) =>
+            prev.map((m) =>
+              m.id === newMsg.id
+                ? {
+                    ...m,
+                    apiMessageId: receipt.messageId,
+                    channel: receipt.channel,
+                    status: 'delivered',
+                  }
+                : m
+            )
+          );
+        })
+        .catch((err) => {
+          console.warn('WhatsApp API message dispatch error:', err);
+        });
+    }
   };
 
   const markWhatsAppAsRead = (contactId: string) => {
@@ -1237,11 +1335,92 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const updateWhatsAppConfig = (partial: Partial<WhatsAppAccountConfig>) => {
-    setWhatsAppConfig((prev) => ({ ...prev, ...partial }));
+    setWhatsAppConfig((prev) => {
+      const updated = { ...prev, ...partial };
+      localStorage.setItem('aura_wa_config', JSON.stringify(updated));
+      return updated;
+    });
   };
 
   const refreshWhatsAppMessages = async () => {
     await new Promise((r) => setTimeout(r, 600));
+  };
+
+  const addWhatsAppContact = (contactData: Omit<WhatsAppContact, 'id'>): string => {
+    const newId = `wa-contact-${Date.now()}`;
+    const newContact: WhatsAppContact = {
+      ...contactData,
+      id: newId,
+      unreadCount: contactData.unreadCount ?? 0,
+      isOnline: contactData.isOnline ?? true,
+      avatar: contactData.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+    };
+    setWhatsAppContacts((prev) => [newContact, ...prev]);
+    return newId;
+  };
+
+  const deleteWhatsAppContact = (id: string) => {
+    setWhatsAppContacts((prev) => prev.filter((c) => c.id !== id));
+    setWhatsAppMessages((prev) => prev.filter((m) => m.contactId !== id));
+  };
+
+  const connectWhatsAppAccountViaApi = async (
+    phone: string,
+    accountName?: string,
+    apiKey?: string,
+    phoneNumberId?: string
+  ) => {
+    const formatted = phone.trim();
+    const result = await connectWhatsAppAccountApi(formatted, accountName, apiKey, phoneNumberId);
+    const updatedConfig: WhatsAppAccountConfig = {
+      ...whatsAppConfig,
+      isConnected: true,
+      linkedPhone: formatted,
+      accountName: accountName ? accountName.trim() : whatsAppConfig.accountName,
+      pairedAt: `Verified via WhatsApp Cloud API (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+      connectionMethod: 'meta_cloud_api',
+    };
+    setWhatsAppConfig(updatedConfig);
+    localStorage.setItem('aura_wa_config', JSON.stringify(updatedConfig));
+    setLastWhatsAppApiReceipt(result);
+    return result;
+  };
+
+  const sendWhatsAppApiDirect = async (to: string, text: string, contactName?: string) => {
+    const receipt = await sendWhatsAppViaApiCall(to, text, contactName);
+    setLastWhatsAppApiReceipt(receipt);
+    return receipt;
+  };
+
+  const linkRealWhatsAppNumber = (phone: string, accountName?: string) => {
+    const formatted = phone.trim();
+    connectWhatsAppAccountViaApi(formatted, accountName);
+  };
+
+  const startWhatsAppChatWithNumber = (phone: string, name?: string, initialText?: string): string => {
+    const clean = phone.replace(/[^0-9]/g, '');
+    const existing = whatsAppContacts.find((c) => c.phone.replace(/[^0-9]/g, '') === clean);
+    if (existing) {
+      if (initialText) {
+        sendWhatsAppMessage(existing.id, initialText);
+      }
+      return existing.id;
+    }
+    const newId = addWhatsAppContact({
+      name: name?.trim() || phone.trim(),
+      phone: phone.trim(),
+      avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80',
+      relationship: 'Contact',
+      lastMessageTime: 'Just now',
+      unreadCount: 0,
+      isOnline: true,
+      category: 'business',
+      lastMessagePreview: initialText ? `You: ${initialText}` : 'Direct mobile chat created',
+    });
+    if (initialText) {
+      sendWhatsAppMessage(newId, initialText);
+    }
+    return newId;
   };
 
   // Phone & Direct Call Handlers
@@ -1601,6 +1780,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         markWhatsAppAsRead,
         updateWhatsAppConfig,
         refreshWhatsAppMessages,
+        addWhatsAppContact,
+        deleteWhatsAppContact,
+        linkRealWhatsAppNumber,
+        startWhatsAppChatWithNumber,
+        lastWhatsAppApiReceipt,
+        connectWhatsAppAccountViaApi,
+        sendWhatsAppApiDirect,
         isAuthenticated,
         googleAccessToken,
         isGoogleConnected: Boolean(googleAccessToken),

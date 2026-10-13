@@ -4,6 +4,7 @@ export interface UserProfile {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   avatar: string;
   pinHash?: string;
@@ -27,6 +28,7 @@ export interface FamilyMember {
   relationship: 'Self (Head)' | 'Spouse' | 'Eldest Son' | 'Daughter' | 'Parent';
   role: UserRole;
   email: string;
+  phone?: string;
   avatar: string;
   isOnline: boolean;
   liveLocation: {
@@ -198,6 +200,8 @@ export interface WhatsAppMessage {
   suggestedReplies?: string[];
   urgency?: 'urgent' | 'normal' | 'info';
   category?: 'family' | 'business' | 'groups' | 'urgent';
+  apiMessageId?: string;
+  channel?: string;
 }
 
 export interface WhatsAppContact {
@@ -221,6 +225,13 @@ export interface WhatsAppAccountConfig {
   autoDraftWithAura: boolean;
   autoVoiceRead: boolean;
   pairingCode: string;
+  connectionMethod?: 'direct_number' | 'web_pairing' | 'meta_cloud_api';
+  countryCode?: string;
+  metaCloudApiConfig?: {
+    phoneNumberId?: string;
+    wabaId?: string;
+    accessToken?: string;
+  };
 }
 
 export interface PhoneContact {

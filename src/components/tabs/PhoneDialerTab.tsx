@@ -202,9 +202,9 @@ export const PhoneDialerTab: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-slate-400 flex items-center gap-2">
-                <span>Thamiz (Primary Account)</span>
+                <span>Thamizh (Primary Account)</span>
                 <span className="text-slate-600">•</span>
-                <span className="font-mono text-emerald-400/90">+91 98401 23456</span>
+                <span className="font-mono text-emerald-400/90 font-semibold">+91 98408 05665</span>
               </p>
             </div>
           </div>

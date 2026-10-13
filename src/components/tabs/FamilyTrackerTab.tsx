@@ -336,8 +336,8 @@ export const FamilyTrackerTab: React.FC = () => {
                   <button
                     onClick={() => {
                       const phone = member.relationship.includes('Spouse')
-                        ? '+91 98401 54321'
-                        : '+91 98401 87654';
+                        ? '+91 96779 01342'
+                        : '+44 7721 877710';
                       startCall({ name: member.name, phone, avatar: member.avatar, relationship: member.relationship }, false);
                     }}
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold transition-colors shadow-sm"
@@ -348,7 +348,7 @@ export const FamilyTrackerTab: React.FC = () => {
                   </button>
 
                   <a
-                    href={`tel:${member.relationship.includes('Spouse') ? '+919840154321' : '+919840187654'}`}
+                    href={`tel:${member.relationship.includes('Spouse') ? '+919677901342' : '+447721877710'}`}
                     className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 hover:text-white transition-colors border border-slate-700"
                     title="Direct cellular call"
                   >
