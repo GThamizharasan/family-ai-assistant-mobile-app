@@ -998,31 +998,47 @@ app.post('/api/ai/generate-video', async (req, res) => {
     const targetRes = resolution === '1080p' ? '1080p' : '720p';
 
     const client = getAiClient();
-    const operation = await client.models.generateVideos({
-      model: 'veo-3.1-fast-generate-preview',
-      prompt,
-      config: {
-        numberOfVideos: 1,
-        resolution: targetRes,
-        aspectRatio: targetRatio,
-      },
-    });
+    const videoModels = ['veo-3.1-lite-generate-preview', 'veo-3.1-generate-preview', 'veo-3.1-fast-generate-preview'];
+    let operation: any = null;
+    let selectedModel = 'veo-3.1-lite-generate-preview';
+
+    for (const modelCandidate of videoModels) {
+      try {
+        operation = await client.models.generateVideos({
+          model: modelCandidate,
+          prompt,
+          config: {
+            numberOfVideos: 1,
+            resolution: targetRes,
+            aspectRatio: targetRatio,
+          },
+        });
+        selectedModel = modelCandidate;
+        break;
+      } catch (err: any) {
+        console.warn(`Attempt with ${modelCandidate} failed, trying next:`, err.message);
+      }
+    }
+
+    if (!operation) {
+      throw new Error('All Veo video models failed to initialize operation.');
+    }
 
     res.json({
       operationName: operation.name,
-      modelUsed: 'veo-3.1-fast-generate-preview',
+      modelUsed: selectedModel,
       aspectRatio: targetRatio,
       status: 'pending',
     });
   } catch (error: any) {
     console.error('Error in /api/ai/generate-video:', error);
     res.status(500).json({
-      error: error.message || 'Failed to start video generation with veo-3.1-fast-generate-preview',
+      error: error.message || 'Failed to start video generation with Veo 3.1',
     });
   }
 });
 
-// Feature 4: Animate Images into Video using model "veo-3.1-fast-generate-preview"
+// Feature 4: Animate Images into Video using model "veo-3.1-lite-generate-preview"
 app.post('/api/ai/image-to-video', async (req, res) => {
   try {
     const { imageBase64, mimeType, prompt, aspectRatio, resolution } = req.body;
@@ -1035,30 +1051,46 @@ app.post('/api/ai/image-to-video', async (req, res) => {
     const targetRes = resolution === '1080p' ? '1080p' : '720p';
 
     const client = getAiClient();
-    const operation = await client.models.generateVideos({
-      model: 'veo-3.1-fast-generate-preview',
-      prompt: prompt || 'Animate this photo with smooth cinematic camera movements, subtle atmospheric depth, and realistic environmental motion.',
-      image: {
-        imageBytes: cleanBase64,
-        mimeType: mimeType || 'image/png',
-      },
-      config: {
-        numberOfVideos: 1,
-        resolution: targetRes,
-        aspectRatio: targetRatio,
-      },
-    });
+    const videoModels = ['veo-3.1-lite-generate-preview', 'veo-3.1-generate-preview', 'veo-3.1-fast-generate-preview'];
+    let operation: any = null;
+    let selectedModel = 'veo-3.1-lite-generate-preview';
+
+    for (const modelCandidate of videoModels) {
+      try {
+        operation = await client.models.generateVideos({
+          model: modelCandidate,
+          prompt: prompt || 'Animate this photo with smooth cinematic camera movements, subtle atmospheric depth, and realistic environmental motion.',
+          image: {
+            imageBytes: cleanBase64,
+            mimeType: mimeType || 'image/png',
+          },
+          config: {
+            numberOfVideos: 1,
+            resolution: targetRes,
+            aspectRatio: targetRatio,
+          },
+        });
+        selectedModel = modelCandidate;
+        break;
+      } catch (err: any) {
+        console.warn(`Attempt with ${modelCandidate} image-to-video failed, trying next:`, err.message);
+      }
+    }
+
+    if (!operation) {
+      throw new Error('All Veo image-to-video models failed to initialize operation.');
+    }
 
     res.json({
       operationName: operation.name,
-      modelUsed: 'veo-3.1-fast-generate-preview',
+      modelUsed: selectedModel,
       aspectRatio: targetRatio,
       status: 'pending',
     });
   } catch (error: any) {
     console.error('Error in /api/ai/image-to-video:', error);
     res.status(500).json({
-      error: error.message || 'Failed to animate image with veo-3.1-fast-generate-preview',
+      error: error.message || 'Failed to animate image with Veo 3.1',
     });
   }
 });

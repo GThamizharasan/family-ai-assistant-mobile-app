@@ -23,6 +23,7 @@ import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
 import { WhatsAppTab } from './components/tabs/WhatsAppTab';
 import { PhoneDialerTab } from './components/tabs/PhoneDialerTab';
 import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
+import { AiStudioTab } from './components/tabs/AiStudioTab';
 import { ActiveCallModal } from './components/ActiveCallModal';
 
 const AppContent: React.FC = () => {
@@ -64,6 +65,8 @@ const AppContent: React.FC = () => {
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
+      case 'ai-studio':
+        return <AiStudioTab onOpenVoiceAssistant={() => setIsVoiceOpen(true)} />;
       case 'family':
         return <FamilyTrackerTab />;
       case 'phone':

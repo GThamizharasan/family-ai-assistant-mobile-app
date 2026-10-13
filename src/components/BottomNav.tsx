@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   Home,
   Users,
@@ -13,11 +12,13 @@ import {
   Cctv,
   MessageSquare,
   Phone,
+  Sparkles,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export type TabKey =
   | 'home'
+  | 'ai-studio'
   | 'phone'
   | 'family'
   | 'billionaire'
@@ -48,13 +49,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
 
   const mainTabs: { key: TabKey; label: string; icon: React.FC<{ className?: string }>; badge?: number }[] = [
     { key: 'home', label: 'Hub', icon: Home },
-    { key: 'phone', label: 'Phone', icon: Phone },
+    { key: 'ai-studio', label: 'AI Studio', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'family', label: 'Family', icon: Users, badge: emergencyAlertCount },
     { key: 'google', label: 'Google', icon: Mail, badge: 3 },
+    { key: 'phone', label: 'Phone', icon: Phone },
     { key: 'finance', label: 'Wealth', icon: Wallet },
-    { key: 'productivity', label: 'Tasks', icon: CheckSquare, badge: pendingTasksCount },
-    { key: 'billionaire', label: 'Billionaire', icon: TrendingUp },
+    { key: 'billionaire', label: 'Blueprint', icon: TrendingUp },
   ];
 
   return (
