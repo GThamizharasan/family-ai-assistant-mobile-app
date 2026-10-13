@@ -4,6 +4,7 @@ export async function sendChatMessage(payload: {
   context?: any;
   userProfile?: any;
   currentMood?: string;
+  includeSpeechAudio?: boolean;
 }) {
   const res = await fetch('/api/chat', {
     method: 'POST',
@@ -11,6 +12,32 @@ export async function sendChatMessage(payload: {
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Chat service error');
+  return res.json();
+}
+
+export async function transcribeAudioApi(audioBase64: string, mimeType = 'audio/webm') {
+  const res = await fetch('/api/ai/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audioBase64, mimeType }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to transcribe audio with gemini-3.5-transcribe');
+  }
+  return res.json();
+}
+
+export async function synthesizeSpeechApi(text: string, voiceName = 'Kore') {
+  const res = await fetch('/api/ai/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voiceName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Speech synthesis failed');
+  }
   return res.json();
 }
 

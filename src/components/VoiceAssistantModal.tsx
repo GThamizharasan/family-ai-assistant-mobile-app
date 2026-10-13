@@ -49,12 +49,39 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('');
+  const [liveVolume, setLiveVolume] = useState(0);
+  const [isHandsFree, setIsHandsFree] = useState(true);
   const [textInput, setTextInput] = useState('');
   const [isMuted, setIsMuted] = useState(false);
   const [currentEmotion, setCurrentEmotion] = useState('warm & empathetic');
   const [micStatusMessage, setMicStatusMessage] = useState<string | null>(null);
   const [showMicHelp, setShowMicHelp] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const speakWithAuro = (
+    text: string,
+    options: {
+      pitch?: number;
+      rate?: number;
+      emotion?: string;
+      audioBase64?: string | null;
+    } = {}
+  ) => {
+    if (isMuted) return;
+    speechEngine.speak(text, {
+      pitch: options.pitch ?? user.preferences?.voicePitch ?? 1.04,
+      rate: options.rate ?? user.preferences?.voiceRate ?? 1.0,
+      emotion: options.emotion,
+      audioBase64: options.audioBase64,
+      onEnd: () => {
+        if (isHandsFree) {
+          setTimeout(() => {
+            speechEngine.startListening();
+          }, 450);
+        }
+      },
+    });
+  };
 
   useEffect(() => {
     speechEngine.onListeningChange = (listening) => {
@@ -64,6 +91,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       }
     };
     speechEngine.onSpeakingChange = (speaking) => setIsSpeaking(speaking);
+    speechEngine.onAudioVolume = (vol) => setLiveVolume(vol);
     speechEngine.onTranscriptCallback = (transcript, isFinal) => {
       setLiveTranscript(transcript);
       if (isFinal && transcript.trim()) {
@@ -86,13 +114,18 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   useEffect(() => {
     if (isOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // Automatically activate speech listening for real-time conversation
+      const startTimer = setTimeout(() => {
+        speechEngine.startListening();
+      }, 400);
+      return () => clearTimeout(startTimer);
     } else {
       speechEngine.stopListening();
       speechEngine.stopSpeaking();
       setMicStatusMessage(null);
       setShowMicHelp(false);
     }
-  }, [isOpen, chatHistory]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -148,12 +181,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           emotion: 'helpful & attentive',
           actionSuggestion: `Reply to ${latestMsg.contactName}: "${topReply}"`,
         });
-        if (!isMuted) {
-          speechEngine.speak(readout, {
-            pitch: user.preferences.voicePitch,
-            rate: user.preferences.voiceRate,
-          });
-        }
+        speakWithAuro(readout);
         return;
       }
     }
@@ -214,12 +242,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             emotion: 'efficient & protective',
             actionSuggestion: `Chat open with ${targetContact.name}`,
           });
-          if (!isMuted) {
-            speechEngine.speak(confirmText, {
-              pitch: user.preferences.voicePitch,
-              rate: user.preferences.voiceRate,
-            });
-          }
+          speakWithAuro(confirmText);
           return;
         }
       }
@@ -250,12 +273,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             emotion: 'authoritative & disciplined',
             actionSuggestion: `Budget set to $${newBudget.toFixed(2)} USD`,
           });
-          if (!isMuted) {
-            speechEngine.speak(confirmBudget, {
-              pitch: user.preferences.voicePitch,
-              rate: user.preferences.voiceRate,
-            });
-          }
+          speakWithAuro(confirmBudget);
           return;
         }
       }
@@ -271,12 +289,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         emotion: 'analytical & vigilant',
         actionSuggestion: 'Review GCP services breakdown',
       });
-      if (!isMuted) {
-        speechEngine.speak(billingReport, {
-          pitch: user.preferences.voicePitch,
-          rate: user.preferences.voiceRate,
-        });
-      }
+      speakWithAuro(billingReport);
       return;
     }
 
@@ -320,6 +333,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         context: contextPayload,
         userProfile: user,
         currentMood: currentEmotion,
+        includeSpeechAudio: !isMuted,
       });
 
       setIsThinking(false);
@@ -336,25 +350,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       };
       addVoiceMessage(aiMsg);
 
-      if (!isMuted && user.preferences.autoSpeechReply) {
-        speechEngine.speak(replyText, {
-          pitch: user.preferences.voicePitch,
-          rate: user.preferences.voiceRate,
-          emotion: emotionText,
-        });
-      }
+      speakWithAuro(replyText, {
+        emotion: emotionText,
+        audioBase64: result.audioBase64 || null,
+      });
     } catch (err) {
       setIsThinking(false);
-      const fallbackReply = "I hear you, Thamiz. I've noted that into your encrypted local memory vault.";
+      const fallbackReply = "I hear you, Thamizh. I've noted that into your encrypted local memory vault.";
       addVoiceMessage({
         role: 'assistant',
         content: fallbackReply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         emotion: 'comforting',
       });
-      if (!isMuted) {
-        speechEngine.speak(fallbackReply);
-      }
+      speakWithAuro(fallbackReply);
     }
   };
 
@@ -424,6 +433,18 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           </div>
 
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsHandsFree(!isHandsFree)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+                isHandsFree
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/40'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title={isHandsFree ? 'Hands-Free Loop Active: Aura auto-listens after speaking' : 'Tap to enable Hands-Free Conversation'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isHandsFree ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+              <span>{isHandsFree ? 'Hands-Free' : 'Push-to-Talk'}</span>
+            </button>
             <button
               onClick={() => setShowMicHelp(!showMicHelp)}
               className={`p-2 rounded-xl transition-colors ${
@@ -563,40 +584,61 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           <div className="mt-3 text-center">
             <span className="text-xs font-semibold tracking-wide uppercase text-slate-400">
               {isListening
-                ? 'Listening to your voice...'
+                ? 'Listening to your voice... (Pause or tap Answer)'
                 : isSpeaking
                 ? 'Aura is speaking...'
                 : isThinking
-                ? 'Synthesizing empathetic thought...'
+                ? 'Synthesizing real-time voice response...'
                 : 'Tap microphone below to talk'}
             </span>
 
             {/* Animated Audio Equalizer Bars */}
             <div className="flex items-center justify-center gap-1 mt-2 h-4">
-              {[40, 70, 95, 60, 85, 100, 75, 45, 90, 65, 35].map((height, idx) => (
-                <span
-                  key={idx}
-                  className={`w-1 rounded-full transition-all duration-200 ${
-                    isSpeaking
-                      ? 'bg-indigo-400'
-                      : isListening
-                      ? 'bg-emerald-400'
-                      : isThinking
-                      ? 'bg-amber-400'
-                      : 'bg-slate-700'
-                  }`}
-                  style={{
-                    height: isSpeaking || isListening ? `${(height * Math.random() + 20).toFixed(0)}%` : '20%',
-                  }}
-                />
-              ))}
+              {[40, 70, 95, 60, 85, 100, 75, 45, 90, 65, 35].map((height, idx) => {
+                let barHeight = '20%';
+                if (isSpeaking) {
+                  barHeight = `${Math.min(100, height * 0.7 + Math.random() * 30)}%`;
+                } else if (isListening) {
+                  const dynamicHeight = Math.max(18, Math.min(100, liveVolume > 5 ? liveVolume * (height / 50) : height * 0.25));
+                  barHeight = `${dynamicHeight.toFixed(0)}%`;
+                } else if (isThinking) {
+                  barHeight = '45%';
+                }
+                return (
+                  <span
+                    key={idx}
+                    className={`w-1 rounded-full transition-all duration-150 ${
+                      isSpeaking
+                        ? 'bg-indigo-400'
+                        : isListening
+                        ? 'bg-emerald-400'
+                        : isThinking
+                        ? 'bg-amber-400'
+                        : 'bg-slate-700'
+                    }`}
+                    style={{ height: barHeight }}
+                  />
+                );
+              })}
             </div>
           </div>
 
           {/* Live Transcript Preview */}
           {liveTranscript && (
-            <div className="mt-3 px-4 py-2 rounded-xl bg-slate-950/80 border border-indigo-500/30 text-indigo-200 text-xs text-center max-w-md animate-fade-in">
-              "{liveTranscript}"
+            <div className="mt-3 px-4 py-2.5 rounded-2xl bg-slate-950/90 border border-indigo-500/40 text-indigo-200 text-xs flex items-center justify-between gap-3 shadow-lg max-w-lg w-full animate-fade-in">
+              <div className="flex items-center gap-2 truncate">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <span className="truncate italic">"{liveTranscript}"</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => speechEngine.commitCurrentSpeech()}
+                className="shrink-0 px-2.5 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow transition-colors flex items-center gap-1 cursor-pointer"
+                title="Send spoken words immediately"
+              >
+                <span>Answer Now</span>
+                <Send className="w-3 h-3" />
+              </button>
             </div>
           )}
         </div>
