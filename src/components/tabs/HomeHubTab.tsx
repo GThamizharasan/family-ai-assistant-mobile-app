@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
+  Home,
   Sparkles,
   Shield,
   Lock,
@@ -44,6 +45,11 @@ import {
   BookOpen,
   Book,
   Flame,
+  Mic,
+  Grid,
+  CheckSquare,
+  CreditCard,
+  FileText,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { useApp } from '../../context/AppContext';
@@ -118,6 +124,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
   const [isHomeDigestLoading, setIsHomeDigestLoading] = useState(false);
   const [homeDigestResult, setHomeDigestResult] = useState<any>(null);
   const [homeWaToast, setHomeWaToast] = useState<string | null>(null);
+  const [hubGridSearch, setHubGridSearch] = useState('');
+  const [hubGridCategory, setHubGridCategory] = useState<
+    'All' | 'Core' | 'Intelligence' | 'Family & Safety' | 'Wealth' | 'Lifestyle'
+  >('All');
 
   const handleImportPhoneContacts = async () => {
     const res = await importDeviceContacts();
@@ -244,6 +254,280 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
           >
             <LogOut className="w-4 h-4" />
           </button>
+        </div>
+      </div>
+
+      {/* =========================================================================
+          ACTIVE REALTIME VOICE ASSISTANT HERO COMMAND CENTER
+          - Center: Active Real-Time Voice Assistant (AURO) with live status & interactive mic
+          - Left: Important Features (Apple Books, Gemini AI Studio, WhatsApp, Direct Calls)
+          - Right: Important Features (Sovereign Wealth, Google Workspace, Family GPS, Tapo IoT)
+          ========================================================================= */}
+      <div className="rounded-3xl bg-gradient-to-br from-indigo-950/70 via-slate-900 to-purple-950/70 border border-indigo-500/40 p-4 sm:p-5 shadow-2xl relative overflow-hidden space-y-4">
+        <div className="absolute top-0 right-1/4 w-80 h-80 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-1/4 w-80 h-80 bg-purple-500/15 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Section Title Header */}
+        <div className="flex items-center justify-between border-b border-indigo-500/20 pb-3 relative z-10">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-xl bg-indigo-500/20 text-indigo-300">
+              <Sparkles className="w-4 h-4 animate-spin text-indigo-400" />
+            </div>
+            <div>
+              <span className="text-xs font-bold text-white tracking-wide uppercase">
+                Active Realtime Voice Command Center
+              </span>
+              <p className="text-[10px] text-slate-400 font-mono">
+                Gemini 3.8 Flash • Hands-Free Conversational Intelligence
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/30 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              ONLINE & READY
+            </span>
+          </div>
+        </div>
+
+        {/* 3-Column Command Deck: Left Features | Center Realtime Voice Assistant | Right Features */}
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch relative z-10">
+          {/* LEFT WING: Important Features */}
+          <div className="md:col-span-4 flex flex-col justify-between gap-2">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-indigo-300/80 px-1 font-semibold flex items-center gap-1">
+              <ChevronLeft className="w-3 h-3" />
+              <span>Core Intelligence (Left)</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-2 flex-1">
+              {/* Feature 1: Apple Books & PDF Document Reader */}
+              <div
+                onClick={() => onNavigate('ibooks')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-amber-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center shrink-0 border border-amber-500/25 group-hover:scale-105 transition-transform">
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Apple Books & PDF</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-amber-500/20 text-amber-300">7D</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Sovereign Reader & Notes</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 2: Gemini Next-Gen AI Studio */}
+              <div
+                onClick={() => onNavigate('ai-studio')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/25 group-hover:scale-105 transition-transform">
+                    <Sparkles className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">AI Studio Suite</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-indigo-500/20 text-indigo-300">VEO 3</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Video, Lyria, Banana</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 3: WhatsApp & Auro AI */}
+              <div
+                onClick={() => onNavigate('whatsapp')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/25 group-hover:scale-105 transition-transform">
+                    <MessageSquare className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">WhatsApp Hub</span>
+                      {whatsAppContacts.reduce((sum, c) => sum + c.unreadCount, 0) > 0 && (
+                        <span className="text-[9px] font-bold px-1 rounded-full bg-rose-500 text-white animate-pulse">
+                          {whatsAppContacts.reduce((sum, c) => sum + c.unreadCount, 0)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Auro Instant AI Replies</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 4: Direct Phone Calls & Carrier Sync */}
+              <div
+                onClick={() => onNavigate('phone')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-teal-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-teal-500/15 text-teal-400 flex items-center justify-center shrink-0 border border-teal-500/25 group-hover:scale-105 transition-transform">
+                    <Phone className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Phone & Speed Dial</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-teal-500/20 text-teal-300">Carrier</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Cellular & In-App Voice</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-teal-400 transition-colors shrink-0" />
+              </div>
+            </div>
+          </div>
+
+          {/* EXACT CENTRE: Active Real-Time Voice Assistant (Hero Interactive Orb & Audio Waves) */}
+          <div className="md:col-span-4 p-4 rounded-3xl bg-slate-950/90 border border-indigo-500/50 flex flex-col items-center justify-center text-center shadow-xl relative overflow-hidden group">
+            <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/10 via-purple-500/5 to-transparent pointer-events-none" />
+
+            {/* Glowing Voice Orb */}
+            <div className="relative my-2">
+              <span className="absolute -inset-3 rounded-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 opacity-40 blur-lg animate-pulse" />
+              <button
+                onClick={onOpenVoice}
+                className="relative w-20 h-20 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-2xl shadow-purple-600/50 hover:scale-105 active:scale-95 transition-all ring-4 ring-slate-900 group"
+                title="Activate Active Real-Time Voice Assistant (AURO)"
+              >
+                <Mic className="w-8 h-8 text-white group-hover:scale-110 transition-transform" />
+              </button>
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-emerald-400 border-2 border-slate-950 animate-bounce" />
+            </div>
+
+            <div className="space-y-1 relative z-10 mt-1">
+              <h4 className="text-sm font-bold text-white tracking-tight flex items-center justify-center gap-1.5">
+                <span>AURO Voice Assistant</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              </h4>
+              <p className="text-[11px] text-indigo-300 font-medium">
+                Active Real-Time Voice Channel
+              </p>
+              <p className="text-[10px] text-slate-400 max-w-[210px] mx-auto">
+                Empathetic speech recognition & synthesis, intent execution, WhatsApp & call controls.
+              </p>
+            </div>
+
+            {/* Simulated Live Audio Waveform */}
+            <div className="flex items-center justify-center gap-1 my-2.5 h-5">
+              <span className="w-1 h-2 rounded-full bg-indigo-500 animate-[pulse_1.1s_ease-in-out_infinite]" />
+              <span className="w-1 h-4 rounded-full bg-purple-500 animate-[pulse_0.8s_ease-in-out_infinite]" />
+              <span className="w-1 h-5 rounded-full bg-pink-500 animate-[pulse_0.9s_ease-in-out_infinite]" />
+              <span className="w-1 h-3 rounded-full bg-indigo-400 animate-[pulse_0.7s_ease-in-out_infinite]" />
+              <span className="w-1 h-5 rounded-full bg-purple-400 animate-[pulse_1.0s_ease-in-out_infinite]" />
+              <span className="w-1 h-2 rounded-full bg-pink-400 animate-[pulse_1.2s_ease-in-out_infinite]" />
+            </div>
+
+            {/* Launch Voice Assistant Button */}
+            <button
+              onClick={onOpenVoice}
+              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5 active:scale-95"
+            >
+              <Mic className="w-3.5 h-3.5" />
+              <span>Tap to Speak with Auro</span>
+            </button>
+          </div>
+
+          {/* RIGHT WING: Important Features */}
+          <div className="md:col-span-4 flex flex-col justify-between gap-2">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-purple-300/80 px-1 font-semibold flex items-center justify-end gap-1">
+              <span>Sovereign Assets (Right)</span>
+              <ChevronRight className="w-3 h-3" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-2 flex-1">
+              {/* Feature 1: Sovereign Wealth & Net Worth */}
+              <div
+                onClick={() => onNavigate('finance')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/25 group-hover:scale-105 transition-transform">
+                    <Wallet className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Sovereign Wealth</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-emerald-500/20 text-emerald-300 font-bold">+3.4%</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">${(netWorth / 1000000).toFixed(1)}M Net Worth</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 2: Google Workspace Suite */}
+              <div
+                onClick={() => onNavigate('google', 'overview')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-blue-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-blue-500/15 text-blue-400 flex items-center justify-center shrink-0 border border-blue-500/25 group-hover:scale-105 transition-transform">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Google Workspace</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-blue-500/20 text-blue-300">2TB</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Gmail, Drive & Calendar</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-blue-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 3: Google Maps Family GPS Radar */}
+              <div
+                onClick={() => onNavigate('family')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/25 group-hover:scale-105 transition-transform">
+                    <MapPin className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Family GPS Radar</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-emerald-500/20 text-emerald-300">
+                        {familySafeCount}/{familyMembers.length}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Geofence & Live Location</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors shrink-0" />
+              </div>
+
+              {/* Feature 4: Tapo CCTV & Wearables IoT */}
+              <div
+                onClick={() => onNavigate('devices')}
+                className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-purple-500/40 transition-all flex items-center justify-between group shadow-sm"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center shrink-0 border border-purple-500/25 group-hover:scale-105 transition-transform">
+                    <Cctv className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">Tapo IoT & Watches</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-purple-500/20 text-purple-300">4 Cam</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate">Biometrics & Night Vision</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-purple-400 transition-colors shrink-0" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1489,6 +1773,310 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
               </div>
             ))
           )}
+        </div>
+      </div>
+
+      {/* =========================================================================
+          ALL 17 SOVEREIGN FEATURES & CAPABILITIES MASTER GRID (AT THE LAST)
+          - Comprehensive All-Feature launcher at the end of the page
+          - Categorized filters & real-time search
+          - Live badges, metrics, and 1-tap navigation
+          ========================================================================= */}
+      <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/90 border border-slate-800 space-y-5 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Master Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/30 shadow-inner">
+              <Grid className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white tracking-tight">
+                  All 17 Sovereign Features & Capabilities
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-[10px] font-mono font-bold border border-indigo-500/30">
+                  COMPLETE SUITE
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Executive intelligence, financial command, family safety, and AI suites in one sovereign ecosystem.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={onOpenVoice}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 shrink-0 self-start sm:self-auto"
+          >
+            <Mic className="w-3.5 h-3.5" />
+            <span>Ask Auro to Open Any App</span>
+          </button>
+        </div>
+
+        {/* Search and Category Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5 relative z-10 pt-1">
+          {/* Search Input */}
+          <div className="relative flex-1 max-w-md">
+            <input
+              type="text"
+              value={hubGridSearch}
+              onChange={(e) => setHubGridSearch(e.target.value)}
+              placeholder="Filter by feature name, category, or capability..."
+              className="w-full pl-9 pr-8 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            />
+            <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
+            {hubGridSearch && (
+              <button
+                onClick={() => setHubGridSearch('')}
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Category Filter Pills */}
+          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+            {(['All', 'Core', 'Intelligence', 'Family & Safety', 'Wealth', 'Lifestyle'] as const).map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setHubGridCategory(cat)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  hubGridCategory === cat
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
+                    : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Responsive Grid of All Features */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 relative z-10">
+          {[
+            {
+              key: 'home' as TabKey,
+              title: 'Sovereign Home Hub',
+              category: 'Core',
+              desc: 'Executive summary, priority feeds, and sovereign parameters.',
+              badge: 'MASTER',
+              icon: Home,
+              accent: 'border-slate-800 hover:border-slate-600',
+              iconBg: 'bg-slate-800 text-slate-300',
+            },
+            {
+              key: 'ibooks' as TabKey,
+              title: 'Apple Books & Sovereign Library',
+              category: 'Intelligence',
+              desc: 'Steve Jobs, Naval Ravikant, PDF Document reader with authentic vector pages.',
+              badge: '7D STREAK',
+              icon: BookOpen,
+              accent: 'border-amber-500/30 hover:border-amber-400',
+              iconBg: 'bg-amber-500/20 text-amber-400',
+            },
+            {
+              key: 'ai-studio' as TabKey,
+              title: 'Gemini Next-Gen AI Studio',
+              category: 'Intelligence',
+              desc: 'Veo 3 video, Lyria music, Banana 2.1 high-res image editing, and Argon 4.',
+              badge: 'VEO 3 & LYRIA',
+              icon: Sparkles,
+              accent: 'border-indigo-500/30 hover:border-indigo-400',
+              iconBg: 'bg-indigo-500/20 text-indigo-400',
+            },
+            {
+              key: 'whatsapp' as TabKey,
+              title: 'WhatsApp & Auro AI Suite',
+              category: 'Core',
+              desc: 'Live contact threads, 1-click suggested replies, voice readout.',
+              badge: whatsAppContacts.reduce((sum, c) => sum + c.unreadCount, 0) > 0 ? `${whatsAppContacts.reduce((sum, c) => sum + c.unreadCount, 0)} UNREAD` : 'SYNCED',
+              icon: MessageSquare,
+              accent: 'border-emerald-500/30 hover:border-emerald-400',
+              iconBg: 'bg-emerald-500/20 text-emerald-400',
+            },
+            {
+              key: 'phone' as TabKey,
+              title: 'Direct Phone Dialer & Speed Dial',
+              category: 'Core',
+              desc: 'Carrier phone integration, in-app sovereign voice calls, and address book sync.',
+              badge: `${phoneContacts.length} CONTACTS`,
+              icon: Phone,
+              accent: 'border-teal-500/30 hover:border-teal-400',
+              iconBg: 'bg-teal-500/20 text-teal-400',
+            },
+            {
+              key: 'family' as TabKey,
+              title: 'Google Maps Family GPS Radar',
+              category: 'Family & Safety',
+              desc: 'Live Chennai coordinates, geofence security zones, and real-time battery status.',
+              badge: `${familySafeCount}/${familyMembers.length} SAFE`,
+              icon: MapPin,
+              accent: 'border-emerald-500/30 hover:border-emerald-400',
+              iconBg: 'bg-emerald-500/20 text-emerald-400',
+            },
+            {
+              key: 'google' as TabKey,
+              title: 'Google Workspace & 2TB Drive',
+              category: 'Core',
+              desc: 'Gmail priority inbox, Calendar agendas, 2TB Google One storage, and AI digest.',
+              badge: '2TB CLOUD',
+              icon: Mail,
+              accent: 'border-blue-500/30 hover:border-blue-400',
+              iconBg: 'bg-blue-500/20 text-blue-400',
+            },
+            {
+              key: 'finance' as TabKey,
+              title: 'Sovereign Wealth & Net Worth',
+              category: 'Wealth',
+              desc: 'Liquid treasuries, venture equity, and real estate balance sheets.',
+              badge: `$${(netWorth / 1000000).toFixed(1)}M (+3.4%)`,
+              icon: Wallet,
+              accent: 'border-emerald-500/30 hover:border-emerald-400',
+              iconBg: 'bg-emerald-500/20 text-emerald-400',
+            },
+            {
+              key: 'billionaire' as TabKey,
+              title: 'Billionaire Blueprint Roadmap',
+              category: 'Wealth',
+              desc: 'Valuation milestones, enterprise scaling frameworks, and strategic roadmap.',
+              badge: `${activeMilestone.progressPercent}% DONE`,
+              icon: TrendingUp,
+              accent: 'border-amber-500/30 hover:border-amber-400',
+              iconBg: 'bg-amber-500/20 text-amber-400',
+            },
+            {
+              key: 'productivity' as TabKey,
+              title: 'Q1 Eisenhower Priority Tasks',
+              category: 'Lifestyle',
+              desc: 'High-leverage urgent & important execution matrix with focus timers.',
+              badge: `${urgentTasks.length} URGENT`,
+              icon: CheckSquare,
+              accent: 'border-rose-500/30 hover:border-rose-400',
+              iconBg: 'bg-rose-500/20 text-rose-400',
+            },
+            {
+              key: 'wellness' as TabKey,
+              title: 'Sleep & Longevity Biomarkers',
+              category: 'Lifestyle',
+              desc: 'Circadian rhythms, resting heart rate, HRV ms, and optimal recovery scores.',
+              badge: `${biometrics.sleepScore} SCORE`,
+              icon: HeartPulse,
+              accent: 'border-rose-500/30 hover:border-rose-400',
+              iconBg: 'bg-rose-500/20 text-rose-400',
+            },
+            {
+              key: 'mood' as TabKey,
+              title: 'Mood & Cognitive Journal',
+              category: 'Lifestyle',
+              desc: 'Daily reflection, emotional regulation, and cognitive clarity logs.',
+              badge: 'OPTIMAL',
+              icon: Smile,
+              accent: 'border-yellow-500/30 hover:border-yellow-400',
+              iconBg: 'bg-yellow-500/20 text-yellow-400',
+            },
+            {
+              key: 'writing' as TabKey,
+              title: 'Executive Writing Lab & Tone Coach',
+              category: 'Intelligence',
+              desc: 'Prose polisher, keynote speeches, venture memos, and public address scripts.',
+              badge: 'AI COACH',
+              icon: PenTool,
+              accent: 'border-purple-500/30 hover:border-purple-400',
+              iconBg: 'bg-purple-500/20 text-purple-400',
+            },
+            {
+              key: 'vault' as TabKey,
+              title: 'Encrypted Sovereign Memory Vault',
+              category: 'Family & Safety',
+              desc: 'AES-256 encrypted personal notes, trust allocations, and legal documents.',
+              badge: 'ZERO-KNOWLEDGE',
+              icon: HardDrive,
+              accent: 'border-indigo-500/30 hover:border-indigo-400',
+              iconBg: 'bg-indigo-500/20 text-indigo-400',
+            },
+            {
+              key: 'devices' as TabKey,
+              title: 'Tapo CCTV & Smart Watches',
+              category: 'Family & Safety',
+              desc: '4 Tapo cameras with live stream, night vision, and smartwatch vitals tracking.',
+              badge: '4 CAMS LIVE',
+              icon: Cctv,
+              accent: 'border-blue-500/30 hover:border-blue-400',
+              iconBg: 'bg-blue-500/20 text-blue-400',
+            },
+            {
+              key: 'billing' as TabKey,
+              title: 'Google Cloud Usage & Guardrails',
+              category: 'Wealth',
+              desc: 'Real-time billing API spend, auto scale-down limits, and AI model ceilings.',
+              badge: `$${gcpBillingConfig.currentMtdSpend.toFixed(2)} MTD`,
+              icon: CreditCard,
+              accent: 'border-indigo-500/30 hover:border-indigo-400',
+              iconBg: 'bg-indigo-500/20 text-indigo-400',
+            },
+            {
+              key: 'docs' as TabKey,
+              title: 'Docs, Architecture & Android APK',
+              category: 'Core',
+              desc: 'Technical specification, native Android APK installer, and developer diagnostics.',
+              badge: 'APK LIVE',
+              icon: FileText,
+              accent: 'border-slate-700 hover:border-slate-500',
+              iconBg: 'bg-slate-800 text-slate-300',
+            },
+          ]
+            .filter((item) => {
+              const matchesCategory = hubGridCategory === 'All' || item.category === hubGridCategory;
+              const matchesSearch =
+                !hubGridSearch ||
+                item.title.toLowerCase().includes(hubGridSearch.toLowerCase()) ||
+                item.desc.toLowerCase().includes(hubGridSearch.toLowerCase()) ||
+                item.category.toLowerCase().includes(hubGridSearch.toLowerCase());
+              return matchesCategory && matchesSearch;
+            })
+            .map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.key}
+                  onClick={() => onNavigate(item.key)}
+                  className={`cursor-pointer p-4 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border ${item.accent} transition-all flex flex-col justify-between group shadow-md hover:shadow-xl`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className={`p-2.5 rounded-xl ${item.iconBg} group-hover:scale-105 transition-transform shrink-0`}>
+                        <Icon className="w-4.5 h-4.5" />
+                      </div>
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300 border border-slate-700/80">
+                        {item.badge}
+                      </span>
+                    </div>
+
+                    <div>
+                      <h4 className="text-xs font-bold text-white group-hover:text-indigo-300 transition-colors">
+                        {item.title}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                        {item.desc}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400 group-hover:text-white font-semibold">
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500">{item.category}</span>
+                    <div className="flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                      <span>Launch</span>
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
         </div>
       </div>
 
