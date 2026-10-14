@@ -70,17 +70,43 @@ export const CHAT_ROLES: ChatRoleConfig[] = [
   },
 ];
 
-// Helper: Blob to Base64
-export async function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1] || result;
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
+// Helper: Blob to Base64 (robust against null, undefined, 0-byte blobs, and FileReader errors)
+export async function blobToBase64(blob: Blob | null | undefined): Promise<string> {
+  if (!blob || !(blob instanceof Blob) || blob.size === 0) {
+    return '';
+  }
+
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+
+      reader.onloadend = () => {
+        try {
+          const result = reader.result;
+          if (typeof result === 'string') {
+            const commaIndex = result.indexOf(',');
+            const base64 = commaIndex !== -1 ? result.slice(commaIndex + 1) : result;
+            resolve(base64.trim());
+          } else {
+            resolve('');
+          }
+        } catch {
+          resolve('');
+        }
+      };
+
+      reader.onerror = () => {
+        resolve('');
+      };
+
+      reader.onabort = () => {
+        resolve('');
+      };
+
+      reader.readAsDataURL(blob);
+    } catch {
+      resolve('');
+    }
   });
 }
 
@@ -147,13 +173,21 @@ export async function animateImageToVideo(
       }
     } else {
       // Remote or local URL
-      const fetched = await fetch(imageSource);
-      const b = await fetched.blob();
-      mimeType = b.type || 'image/png';
-      imageBase64 = await blobToBase64(b);
+      try {
+        const fetched = await fetch(imageSource);
+        if (fetched.ok) {
+          const b = await fetched.blob();
+          mimeType = b.type || 'image/png';
+          imageBase64 = await blobToBase64(b);
+        } else {
+          imageBase64 = '';
+        }
+      } catch {
+        imageBase64 = '';
+      }
     }
   } else {
-    mimeType = imageSource.type || 'image/png';
+    mimeType = imageSource?.type || 'image/png';
     imageBase64 = await blobToBase64(imageSource);
   }
 
@@ -252,13 +286,19 @@ export async function generateMusic(
         mimeType = match[1];
         imageBase64 = match[2];
       } else {
-        const fetched = await fetch(imageSource);
-        const b = await fetched.blob();
-        mimeType = b.type;
-        imageBase64 = await blobToBase64(b);
+        try {
+          const fetched = await fetch(imageSource);
+          if (fetched.ok) {
+            const b = await fetched.blob();
+            mimeType = b.type;
+            imageBase64 = await blobToBase64(b);
+          }
+        } catch {
+          imageBase64 = undefined;
+        }
       }
     } else {
-      mimeType = imageSource.type;
+      mimeType = imageSource?.type;
       imageBase64 = await blobToBase64(imageSource);
     }
   }
@@ -315,13 +355,19 @@ export async function generateOrEditImage(
         mimeType = match[1];
         imageBase64 = match[2];
       } else {
-        const fetched = await fetch(options.imageSource);
-        const b = await fetched.blob();
-        mimeType = b.type;
-        imageBase64 = await blobToBase64(b);
+        try {
+          const fetched = await fetch(options.imageSource);
+          if (fetched.ok) {
+            const b = await fetched.blob();
+            mimeType = b.type;
+            imageBase64 = await blobToBase64(b);
+          }
+        } catch {
+          imageBase64 = undefined;
+        }
       }
     } else {
-      mimeType = options.imageSource.type;
+      mimeType = options.imageSource?.type;
       imageBase64 = await blobToBase64(options.imageSource);
     }
   }

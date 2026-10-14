@@ -6,6 +6,32 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import {
+  initSqliteDb,
+  getActivationCodesFromSqlite,
+  insertActivationCodeToSqlite,
+  redeemActivationCodeInSqlite,
+  reactivateActivationCodeInSqlite,
+  upsertDevicePeerInSqlite,
+  getDevicePeersFromSqlite,
+  removeDevicePeerFromSqlite,
+  logInterInstanceCommunicationInSqlite,
+  getInterInstanceCommunicationsFromSqlite,
+  logIntercomMessageInSqlite,
+  getIntercomMessagesFromSqlite,
+  logEmergencySosInSqlite,
+  getEmergencySosEventsFromSqlite,
+  logLocationPingInSqlite,
+  getRecentLocationsFromSqlite,
+  upsertSharedFamilyRecordInSqlite,
+  getSharedFamilyRecordsFromSqlite,
+  getHubApiKeysFromSqlite,
+  setHubApiKeyInSqlite,
+  getSqliteDbStats,
+  formatFamilyCode,
+  normalizeFamilyCode,
+  type ActivationCodeRecord,
+} from './server/sqlite.ts';
 
 dotenv.config();
 
@@ -127,7 +153,8 @@ Return a valid JSON object matching:
     }
 
     let audioBase64: string | null = null;
-    if (req.body.includeSpeechAudio && parsed.reply) {
+    const client = ai || (process.env.GEMINI_API_KEY ? getAiClient() : null);
+    if (req.body.includeSpeechAudio && parsed.reply && client) {
       try {
         const cleanSpoken = parsed.reply
           .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -137,8 +164,8 @@ Return a valid JSON object matching:
           .replace(/\[(.*?)\]\(.*?\)/g, '$1')
           .slice(0, 320);
 
-        // Run TTS with a 3.5s timeout race so voice is never blocked
-        const ttsPromise = ai.models.generateContent({
+        // Run TTS with a 7s soft deadline so response is returned promptly
+        const ttsPromise = client.models.generateContent({
           model: 'gemini-3.8-flash-lite-tts',
           contents: [
             {
@@ -156,14 +183,16 @@ Return a valid JSON object matching:
           },
         });
 
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('TTS timeout')), 3500)
+        // Soft timeout resolves to null instead of rejecting, enabling clean client-side speech fallback
+        const timeoutPromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 7000)
         );
 
         const ttsResponse: any = await Promise.race([ttsPromise, timeoutPromise]);
-        audioBase64 = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
-      } catch (ttsErr) {
-        console.warn('TTS auto-generation notice (falling back to client voice synthesis):', ttsErr);
+        audioBase64 = ttsResponse?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
+      } catch {
+        // Silent graceful fallback to browser-native voice synthesis
+        audioBase64 = null;
       }
     }
 
@@ -1529,191 +1558,363 @@ function getFamilyPeersPublic(familyId: string) {
   return list;
 }
 
-// Shared In-Memory Activation Code Registry for Multi-Instance Family Synchronization
-interface ActivationCodeRecord {
-  code: string;
-  createdAt: string;
-  expiresAt: string;
-  createdBy: string;
-  roleGranted: 'primary' | 'secondary' | 'guest';
-  status: 'active' | 'redeemed';
-  redeemedBy?: string;
-}
-
-function normalizeFamilyCode(raw: string): string {
-  return (raw || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-}
-
-function formatFamilyCode(raw: string): string {
-  const norm = normalizeFamilyCode(raw);
-  if (norm.length <= 4) return norm;
-  if (norm.length <= 8) return `${norm.slice(0, 4)}-${norm.slice(4)}`;
-  if (norm.length <= 12) return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8)}`;
-  return `${norm.slice(0, 4)}-${norm.slice(4, 8)}-${norm.slice(8, 12)}-${norm.slice(12, 16)}`;
-}
-
-const serverActivationCodes: ActivationCodeRecord[] = [
-  {
-    code: '9021-4873-1129-8834',
-    createdAt: '2026-10-10',
-    expiresAt: '2026-12-31',
-    createdBy: 'digitaltamilworld@gmail.com',
-    roleGranted: 'secondary',
-    status: 'active',
-  },
-  {
-    code: '8492-7104-9932-1845',
-    createdAt: '2026-10-01',
-    expiresAt: '2026-12-31',
-    createdBy: 'digitaltamilworld@gmail.com',
-    roleGranted: 'secondary',
-    status: 'active',
-  },
-  {
-    code: '4190-2856-7719-3320',
-    createdAt: '2026-10-05',
-    expiresAt: '2026-12-31',
-    createdBy: 'digitaltamilworld@gmail.com',
-    roleGranted: 'secondary',
-    status: 'active',
-  },
-  {
-    code: '7721-3498-5012-9943',
-    createdAt: new Date().toISOString().split('T')[0],
-    expiresAt: '2026-12-31',
-    createdBy: 'digitaltamilworld@gmail.com',
-    roleGranted: 'secondary',
-    status: 'active',
-  },
-];
-
-// REST: Retrieve all available family codes (for any instance / secondary phone)
-app.get('/api/family/codes', (req, res) => {
-  res.json({
-    success: true,
-    codes: serverActivationCodes,
-  });
+// REST: Retrieve all available family codes (from SQLite data store)
+app.get('/api/family/codes', (_req, res) => {
+  try {
+    const codes = getActivationCodesFromSqlite();
+    res.json({
+      success: true,
+      storage: 'sqlite',
+      codes,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'SQLite error' });
+  }
 });
 
-// REST: Generate a brand new 16-digit activation code
+// REST: Generate a brand new 16-digit activation code (persisted in SQLite)
 app.post('/api/family/codes/generate', (req, res) => {
-  const { roleGranted = 'secondary', createdBy = 'digitaltamilworld@gmail.com' } = req.body || {};
-  const segment = () => Math.floor(1000 + Math.random() * 9000).toString();
-  const code = `${segment()}-${segment()}-${segment()}-${segment()}`;
+  try {
+    const { roleGranted = 'secondary', createdBy = 'digitaltamilworld@gmail.com' } = req.body || {};
+    const segment = () => Math.floor(1000 + Math.random() * 9000).toString();
+    const code = `${segment()}-${segment()}-${segment()}-${segment()}`;
 
-  const newCodeRecord: ActivationCodeRecord = {
-    code,
-    createdAt: new Date().toISOString().split('T')[0],
-    expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
-    createdBy,
-    roleGranted: roleGranted as any,
-    status: 'active',
-  };
+    const newCodeRecord: ActivationCodeRecord = {
+      code,
+      createdAt: new Date().toISOString().split('T')[0],
+      expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
+      createdBy,
+      roleGranted: roleGranted as any,
+      status: 'active',
+    };
 
-  serverActivationCodes.unshift(newCodeRecord);
+    insertActivationCodeToSqlite(newCodeRecord);
 
-  // Broadcast to all connected family devices in real time
-  broadcastToFamily('family-aura-primary', {
-    type: 'code_generated',
-    codeRecord: newCodeRecord,
-  });
+    // Record in SQLite inter-instance communications log
+    logInterInstanceCommunicationInSqlite(
+      'family-aura-primary',
+      'server',
+      'code_generated',
+      newCodeRecord
+    );
 
-  res.json({
-    success: true,
-    code,
-    codeRecord: newCodeRecord,
-  });
-});
-
-// REST: Redeem / Join family circle with a 16-digit code
-app.post('/api/family/codes/redeem', (req, res) => {
-  const { code: rawCode, memberName = 'Secondary Member', relationship = 'Spouse' } = req.body || {};
-  if (!rawCode) {
-    return res.status(400).json({ success: false, message: 'Please enter a 16-digit activation code.' });
-  }
-
-  const norm = normalizeFamilyCode(rawCode);
-  let found = serverActivationCodes.find((c) => normalizeFamilyCode(c.code) === norm);
-
-  if (!found) {
-    // If it's a valid 16-digit code format (or 12+ digits), create and accept automatically so users are never blocked
-    if (norm.length >= 12) {
-      found = {
-        code: formatFamilyCode(norm),
-        createdAt: new Date().toISOString().split('T')[0],
-        expiresAt: new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0],
-        createdBy: 'digitaltamilworld@gmail.com',
-        roleGranted: 'secondary',
-        status: 'active',
-      };
-      serverActivationCodes.unshift(found);
-    }
-  }
-
-  if (!found) {
-    return res.status(400).json({
-      success: false,
-      message: 'Invalid 16-digit code. Please check the code or generate a new one from the Primary account.',
-    });
-  }
-
-  // Mark as redeemed
-  found.status = 'redeemed';
-  found.redeemedBy = memberName;
-
-  // Broadcast redemption and family link to all instances
-  broadcastToFamily('family-aura-primary', {
-    type: 'code_redeemed',
-    codeRecord: found,
-    memberName,
-    relationship,
-  });
-
-  res.json({
-    success: true,
-    message: `Verified! Welcome ${memberName} (${relationship}) to the Family Circle.`,
-    codeRecord: found,
-  });
-});
-
-// REST: Reactivate a previously used code
-app.post('/api/family/codes/reactivate', (req, res) => {
-  const { code: rawCode } = req.body || {};
-  const norm = normalizeFamilyCode(rawCode);
-  const found = serverActivationCodes.find((c) => normalizeFamilyCode(c.code) === norm);
-
-  if (found) {
-    found.status = 'active';
-    delete found.redeemedBy;
+    // Broadcast to all connected family devices in real time
     broadcastToFamily('family-aura-primary', {
-      type: 'code_reactivated',
-      codeRecord: found,
+      type: 'code_generated',
+      codeRecord: newCodeRecord,
+      source: 'sqlite',
     });
-    return res.json({ success: true, message: 'Code reactivated successfully.', codeRecord: found });
+
+    res.json({
+      success: true,
+      code,
+      codeRecord: newCodeRecord,
+      storage: 'sqlite',
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate code in SQLite' });
   }
-  res.status(404).json({ success: false, message: 'Code not found' });
 });
 
-// REST Diagnostics: Get currently active instances in family circle
+// REST: Redeem / Join family circle with a 16-digit code (persisted in SQLite)
+app.post('/api/family/codes/redeem', (req, res) => {
+  try {
+    const { code: rawCode, memberName = 'Secondary Member', relationship = 'Spouse' } = req.body || {};
+    if (!rawCode) {
+      return res.status(400).json({ success: false, message: 'Please enter a 16-digit activation code.' });
+    }
+
+    const result = redeemActivationCodeInSqlite(rawCode, memberName, relationship);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    // Record in SQLite inter-instance communication audit log
+    logInterInstanceCommunicationInSqlite(
+      'family-aura-primary',
+      memberName,
+      'code_redeemed',
+      { code: result.record?.code, memberName, relationship }
+    );
+
+    // Broadcast redemption and family link to all instances
+    broadcastToFamily('family-aura-primary', {
+      type: 'code_redeemed',
+      codeRecord: result.record,
+      memberName,
+      relationship,
+      storage: 'sqlite',
+    });
+
+    res.json({
+      success: true,
+      message: result.message,
+      codeRecord: result.record,
+      storage: 'sqlite',
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message || 'Redeem error' });
+  }
+});
+
+// REST: Reactivate a previously used code (updated in SQLite)
+app.post('/api/family/codes/reactivate', (req, res) => {
+  try {
+    const { code: rawCode } = req.body || {};
+    const updated = reactivateActivationCodeInSqlite(rawCode);
+
+    if (updated) {
+      logInterInstanceCommunicationInSqlite('family-aura-primary', 'server', 'code_reactivated', { code: updated.code });
+      broadcastToFamily('family-aura-primary', {
+        type: 'code_reactivated',
+        codeRecord: updated,
+        storage: 'sqlite',
+      });
+      return res.json({ success: true, message: 'Code reactivated successfully in SQLite.', codeRecord: updated });
+    }
+    res.status(404).json({ success: false, message: 'Code not found in SQLite' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// REST Diagnostics: Get currently active instances in family circle (merged SQLite + WS)
 app.get('/api/family/peers', (req, res) => {
-  const familyId = (req.query.familyId as string) || 'family-aura-primary';
-  const peers = getFamilyPeersPublic(familyId);
-  res.json({
-    familyId,
-    activeInstancesCount: peers.length,
-    peers,
-    timestamp: new Date().toISOString(),
-  });
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const sqlitePeers = getDevicePeersFromSqlite(familyId);
+    const livePeers = getFamilyPeersPublic(familyId);
+
+    // Merge SQLite peers with active connected peer status
+    const liveDeviceIds = new Set(livePeers.map((p) => p.deviceId));
+    const mergedPeers = sqlitePeers.map((sp) => ({
+      ...sp,
+      isOnline: liveDeviceIds.has(sp.deviceId),
+    }));
+
+    res.json({
+      familyId,
+      activeInstancesCount: livePeers.length,
+      registeredInstancesCount: sqlitePeers.length,
+      peers: mergedPeers,
+      storage: 'sqlite',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// REST Fallback: Relay an inter-instance message over HTTP
+// REST: Relay an inter-instance message over HTTP & persist in SQLite
 app.post('/api/family/relay', (req, res) => {
-  const { familyId = 'family-aura-primary', fromDeviceId, message, type } = req.body;
-  if (!type) {
-    return res.status(400).json({ error: 'Missing type in relay payload' });
+  try {
+    const { familyId = 'family-aura-primary', fromDeviceId = 'http-client', message, type } = req.body;
+    if (!type) {
+      return res.status(400).json({ error: 'Missing type in relay payload' });
+    }
+
+    // Persist communication into SQLite audit log
+    const commId = logInterInstanceCommunicationInSqlite(familyId, fromDeviceId, type, message || {});
+
+    // If intercom message, save to intercom_messages table
+    if (type === 'intercom_message' && message) {
+      logIntercomMessageInSqlite({
+        id: message.id || `msg_${Date.now()}`,
+        familyId,
+        fromDeviceId: fromDeviceId,
+        fromMemberName: message.fromMemberName || 'Family Member',
+        toDeviceId: message.toDeviceId,
+        messageType: message.messageType || 'text',
+        textContent: message.textContent || message.text || '',
+        audioBase64: message.audioBase64,
+        timestamp: message.timestamp || new Date().toISOString(),
+      });
+    }
+
+    // If emergency SOS, save to emergency_sos_events table
+    if (type === 'emergency_sos' && message) {
+      logEmergencySosInSqlite({
+        id: message.id || `sos_${Date.now()}`,
+        familyId,
+        fromDeviceId,
+        memberName: message.memberName || 'Family Member',
+        sosType: message.sosType || 'Panic Alarm',
+        location: message.location,
+        status: 'active',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // If location update, save to live_location_pings table
+    if (type === 'location_update' && message?.lat && message?.lng) {
+      logLocationPingInSqlite({
+        familyId,
+        deviceId: fromDeviceId,
+        memberName: message.memberName || 'Family Member',
+        lat: message.lat,
+        lng: message.lng,
+        address: message.address,
+        batteryLevel: message.batteryLevel,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    broadcastToFamily(familyId, { type, message, fromDeviceId, commId, storage: 'sqlite' }, fromDeviceId);
+    res.json({ success: true, commId, storage: 'sqlite', relayedToPeersCount: getFamilyPeersPublic(familyId).length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-  broadcastToFamily(familyId, { type, message, fromDeviceId }, fromDeviceId);
-  res.json({ success: true, relayedToPeersCount: getFamilyPeersPublic(familyId).length - 1 });
+});
+
+// REST: Synchronize shared family records (tasks, grocery list, notes, roadmap) into SQLite
+app.post('/api/family/sync', (req, res) => {
+  try {
+    const { familyId = 'family-aura-primary', recordType, title, data, fromDeviceId = 'device' } = req.body;
+    if (!recordType || !data) {
+      return res.status(400).json({ error: 'Missing recordType or data' });
+    }
+
+    const id = req.body.id || `${recordType}_${Date.now()}`;
+    upsertSharedFamilyRecordInSqlite({
+      id,
+      familyId,
+      recordType,
+      title: title || 'Shared Record',
+      data,
+      updatedByDevice: fromDeviceId,
+      updatedAt: new Date().toISOString(),
+    });
+
+    logInterInstanceCommunicationInSqlite(familyId, fromDeviceId, 'shared_record_updated', { id, recordType, title });
+
+    broadcastToFamily(familyId, {
+      type: 'shared_record_updated',
+      record: { id, recordType, title, data, updatedByDevice: fromDeviceId, updatedAt: new Date().toISOString() },
+      storage: 'sqlite',
+    }, fromDeviceId);
+
+    res.json({ success: true, id, storage: 'sqlite' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/family/sync', (req, res) => {
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const recordType = req.query.recordType as string | undefined;
+    const records = getSharedFamilyRecordsFromSqlite(familyId, recordType);
+    res.json({ success: true, storage: 'sqlite', records });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// SQLite Health, Stats & Diagnostics for Hub
+app.get('/api/sqlite/status', (_req, res) => {
+  try {
+    const stats = getSqliteDbStats();
+    res.json({ success: true, ...stats });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// SQLite Inter-Instance Communication History
+app.get('/api/sqlite/communications', (req, res) => {
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const limit = parseInt(req.query.limit as string) || 50;
+    const communications = getInterInstanceCommunicationsFromSqlite(familyId, limit);
+    res.json({ success: true, storage: 'sqlite', communications });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// SQLite Intercom Message History
+app.get('/api/sqlite/messages', (req, res) => {
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const limit = parseInt(req.query.limit as string) || 50;
+    const messages = getIntercomMessagesFromSqlite(familyId, limit);
+    res.json({ success: true, storage: 'sqlite', messages });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// SQLite Location Telemetry
+app.get('/api/sqlite/locations', (req, res) => {
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const limit = parseInt(req.query.limit as string) || 30;
+    const locations = getRecentLocationsFromSqlite(familyId, limit);
+    res.json({ success: true, storage: 'sqlite', locations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Hub API Key Configuration (Google Maps, Gemini API, Google OAuth Client ID, WhatsApp, etc.)
+app.get('/api/config/keys', (_req, res) => {
+  try {
+    const keys = getHubApiKeysFromSqlite();
+    res.json({
+      success: true,
+      storage: 'sqlite',
+      keys: keys.map((k) => ({
+        keyName: k.keyName,
+        // Mask confidential values unless needed
+        hasValue: !!k.keyValue,
+        valuePreview: k.keyValue
+          ? k.keyValue.length > 8
+            ? `${k.keyValue.slice(0, 4)}...${k.keyValue.slice(-4)}`
+            : 'configured'
+          : '',
+        description: k.description,
+        updatedAt: k.updatedAt,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/config/keys', (req, res) => {
+  try {
+    const { keyName, keyValue, description } = req.body;
+    if (!keyName || keyValue === undefined) {
+      return res.status(400).json({ error: 'Missing keyName or keyValue' });
+    }
+
+    const updated = setHubApiKeyInSqlite(keyName, keyValue, description);
+
+    // Apply live to process environment so backend routes pick it up immediately
+    if (keyName === 'GEMINI_API_KEY') {
+      process.env.GEMINI_API_KEY = keyValue;
+      if (keyValue) {
+        ai = getAiClient();
+      }
+    } else if (keyName === 'GOOGLE_MAPS_API_KEY') {
+      process.env.GOOGLE_MAPS_API_KEY = keyValue;
+    } else if (keyName === 'GOOGLE_CLIENT_ID') {
+      process.env.GOOGLE_CLIENT_ID = keyValue;
+    } else if (keyName === 'WHATSAPP_API_TOKEN') {
+      process.env.WHATSAPP_API_TOKEN = keyValue;
+    } else if (keyName === 'WHATSAPP_PHONE_ID') {
+      process.env.WHATSAPP_PHONE_ID = keyValue;
+    }
+
+    res.json({
+      success: true,
+      storage: 'sqlite',
+      key: updated,
+      message: `Configured key "${keyName}" updated in SQLite and runtime environment.`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Start Server with Vite Middleware in Development
@@ -1743,6 +1944,10 @@ async function startServer() {
       socket.destroy();
     }
   });
+
+  // Initialize SQLite Persistent Data Store before handling traffic
+  await initSqliteDb();
+  console.log('[AuraFamily] SQLite persistent store ready for multi-instance communication.');
 
   // Handle Family Relay WebSocket Connections
   familyRelayWss.on('connection', (ws: WebSocket) => {
@@ -1774,16 +1979,38 @@ async function startServer() {
           };
           room.set(data.deviceId, peer);
 
+          // Persist device peer in SQLite
+          upsertDevicePeerInSqlite({
+            deviceId: peer.deviceId,
+            familyId,
+            deviceName: peer.deviceName,
+            role: peer.role,
+            memberId: peer.memberId,
+            lastSeen: peer.lastSeen,
+            batteryLevel: peer.batteryLevel,
+            location: peer.location,
+            connectedAt: new Date().toISOString(),
+          });
+
+          // Log registration in SQLite communication log
+          logInterInstanceCommunicationInSqlite(familyId, data.deviceId, 'device_registered', {
+            deviceName: peer.deviceName,
+            role: peer.role,
+            memberId: peer.memberId,
+          });
+
           // Acknowledge registration with current peer list
           ws.send(JSON.stringify({
             type: 'registered',
             deviceId: data.deviceId,
+            storage: 'sqlite',
             peers: getFamilyPeersPublic(familyId),
           }));
 
           // Broadcast peer joined to everyone else
           broadcastToFamily(familyId, {
             type: 'peer_joined',
+            storage: 'sqlite',
             peer: {
               deviceId: peer.deviceId,
               deviceName: peer.deviceName,
@@ -1798,15 +2025,65 @@ async function startServer() {
           if (room && currentDeviceId && room.has(currentDeviceId)) {
             const p = room.get(currentDeviceId)!;
             p.lastSeen = Date.now();
+            if (data.batteryLevel !== undefined) {
+              p.batteryLevel = data.batteryLevel;
+            }
+            // Update last seen in SQLite
+            upsertDevicePeerInSqlite({
+              deviceId: p.deviceId,
+              familyId,
+              deviceName: p.deviceName,
+              role: p.role,
+              memberId: p.memberId,
+              lastSeen: p.lastSeen,
+              batteryLevel: p.batteryLevel,
+              location: p.location,
+              connectedAt: new Date().toISOString(),
+            });
           }
         } else if (data.type === 'intercom_message') {
+          const msg = data.message || {};
+          // Persist intercom communication into SQLite tables
+          logIntercomMessageInSqlite({
+            id: msg.id || `msg_${Date.now()}`,
+            familyId,
+            fromDeviceId: currentDeviceId || msg.fromDeviceId || 'unknown',
+            fromMemberName: msg.fromMemberName || 'Family Member',
+            toDeviceId: msg.toDeviceId,
+            messageType: msg.messageType || 'text',
+            textContent: msg.textContent || msg.text || '',
+            audioBase64: msg.audioBase64,
+            timestamp: msg.timestamp || new Date().toISOString(),
+          });
+          logInterInstanceCommunicationInSqlite(familyId, currentDeviceId, 'intercom_message', {
+            id: msg.id,
+            fromMemberName: msg.fromMemberName,
+            messageType: msg.messageType,
+          });
+
           broadcastToFamily(familyId, {
             type: 'intercom_message',
+            storage: 'sqlite',
             message: data.message,
           }, data.message?.fromDeviceId);
         } else if (data.type === 'emergency_sos') {
+          const sos = data.sos || {};
+          // Persist emergency SOS in SQLite
+          logEmergencySosInSqlite({
+            id: sos.id || `sos_${Date.now()}`,
+            familyId,
+            fromDeviceId: currentDeviceId,
+            memberName: sos.memberName || 'Family Member',
+            sosType: sos.sosType || 'Panic Alarm',
+            location: sos.location,
+            status: 'active',
+            timestamp: new Date().toISOString(),
+          });
+          logInterInstanceCommunicationInSqlite(familyId, currentDeviceId, 'emergency_sos', sos);
+
           broadcastToFamily(familyId, {
             type: 'emergency_sos',
+            storage: 'sqlite',
             sos: data.sos,
           });
         } else if (data.type === 'location_update') {
@@ -1814,13 +2091,48 @@ async function startServer() {
           if (room && currentDeviceId && room.has(currentDeviceId)) {
             room.get(currentDeviceId)!.location = data.location;
           }
+          if (data.location?.lat && data.location?.lng) {
+            logLocationPingInSqlite({
+              familyId,
+              deviceId: currentDeviceId,
+              memberName: data.memberName || 'Family Member',
+              lat: data.location.lat,
+              lng: data.location.lng,
+              address: data.location.address,
+              batteryLevel: data.batteryLevel,
+              timestamp: new Date().toISOString(),
+            });
+          }
+          logInterInstanceCommunicationInSqlite(familyId, currentDeviceId, 'location_update', data.location);
+
           broadcastToFamily(familyId, {
             type: 'location_update',
+            storage: 'sqlite',
             fromDeviceId: currentDeviceId,
             location: data.location,
           }, currentDeviceId);
         } else if (data.type === 'state_mutation') {
-          broadcastToFamily(familyId, data, data.fromDeviceId);
+          // Persist shared state change in SQLite
+          if (data.recordType && data.recordData) {
+            upsertSharedFamilyRecordInSqlite({
+              id: data.recordId || `${data.recordType}_${Date.now()}`,
+              familyId,
+              recordType: data.recordType,
+              title: data.recordTitle || 'Shared State Item',
+              data: data.recordData,
+              updatedByDevice: currentDeviceId,
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          logInterInstanceCommunicationInSqlite(familyId, currentDeviceId, 'state_mutation', {
+            mutationType: data.mutationType,
+            recordType: data.recordType,
+          });
+
+          broadcastToFamily(familyId, {
+            ...data,
+            storage: 'sqlite',
+          }, data.fromDeviceId);
         }
       } catch (err) {
         console.warn('Family relay ws message error:', err);
@@ -1832,8 +2144,12 @@ async function startServer() {
         const room = familyDeviceRooms.get(currentFamilyId);
         if (room) {
           room.delete(currentDeviceId);
+          logInterInstanceCommunicationInSqlite(currentFamilyId, currentDeviceId, 'peer_disconnected', {
+            deviceId: currentDeviceId,
+          });
           broadcastToFamily(currentFamilyId, {
             type: 'peer_left',
+            storage: 'sqlite',
             deviceId: currentDeviceId,
           });
         }

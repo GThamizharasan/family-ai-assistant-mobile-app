@@ -22,16 +22,28 @@ export function isIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const res = reader.result as string;
-      const base64 = res.split(',')[1] || '';
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
+function blobToBase64(blob: Blob | null | undefined): Promise<string> {
+  if (!blob || !(blob instanceof Blob) || blob.size === 0) {
+    return Promise.resolve('');
+  }
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = reader.result;
+        if (typeof res === 'string') {
+          const commaIndex = res.indexOf(',');
+          resolve(commaIndex !== -1 ? res.slice(commaIndex + 1).trim() : res.trim());
+        } else {
+          resolve('');
+        }
+      };
+      reader.onerror = () => resolve('');
+      reader.onabort = () => resolve('');
+      reader.readAsDataURL(blob);
+    } catch {
+      resolve('');
+    }
   });
 }
 

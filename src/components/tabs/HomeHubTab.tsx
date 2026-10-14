@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
   Shield,
@@ -25,6 +25,7 @@ import {
   Plus,
   X,
   ChevronRight,
+  ChevronLeft,
   Send,
   RefreshCw,
   MessageSquare,
@@ -38,7 +39,13 @@ import {
   Sliders,
   Cpu,
   ShieldCheck,
+  Key,
+  Database,
+  BookOpen,
+  Book,
+  Flame,
 } from 'lucide-react';
+import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { useApp } from '../../context/AppContext';
 import { speechEngine } from '../../services/speech';
 import { TabKey } from '../BottomNav';
@@ -107,6 +114,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
   const [homeGoogleSubTab, setHomeGoogleSubTab] = useState<'gmail' | 'calendar' | 'drive' | 'googleone' | 'gcp-billing'>('gmail');
   const [selectedHomeEmail, setSelectedHomeEmail] = useState<GoogleEmailMessage | null>(null);
   const [showHomeDigestModal, setShowHomeDigestModal] = useState(false);
+  const [showKeysAndSqliteModal, setShowKeysAndSqliteModal] = useState(false);
   const [isHomeDigestLoading, setIsHomeDigestLoading] = useState(false);
   const [homeDigestResult, setHomeDigestResult] = useState<any>(null);
   const [homeWaToast, setHomeWaToast] = useState<string | null>(null);
@@ -209,6 +217,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             Switch to {role === 'primary' ? 'Secondary' : 'Primary'}
           </button>
 
+          {/* Hub API Keys & SQLite Data Store button */}
+          <button
+            onClick={() => setShowKeysAndSqliteModal(true)}
+            className="p-2 rounded-xl bg-slate-800/80 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/30 transition-colors flex items-center gap-1.5 text-xs font-medium"
+            title="Configure Google Maps, Gemini API, OAuth & SQLite Store"
+          >
+            <Key className="w-4 h-4 text-indigo-400" />
+            <span className="hidden sm:inline">Keys & SQLite</span>
+          </button>
+
           {/* Biometric Lock button */}
           <button
             onClick={lockApp}
@@ -225,6 +243,43 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             title="Sign Out of Google SSO"
           >
             <LogOut className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Sovereign SQLite Multi-Instance Store & Key Config Enclave */}
+      <div
+        onClick={() => setShowKeysAndSqliteModal(true)}
+        className="cursor-pointer p-4 rounded-3xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-indigo-950/70 border border-emerald-500/40 hover:border-emerald-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl relative overflow-hidden group"
+      >
+        <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex items-center gap-3 relative z-10">
+          <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30 group-hover:scale-105 transition-transform shadow-inner">
+            <Database className="w-6 h-6 text-emerald-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-white">SQLite Multi-Instance Synchronizer & API Keys</span>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono font-bold border border-emerald-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                SQLITE ACTIVE
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Google Maps GPS • Gemini 3.8 Flash • @react-oauth/google • Inter-Instance SQLite Data Store
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 relative z-10">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowKeysAndSqliteModal(true);
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 group-hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-md shadow-emerald-900/40 shrink-0"
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>Configure Keys & SQLite</span>
           </button>
         </div>
       </div>
@@ -1101,165 +1156,291 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
         </div>
       </div>
 
-      {/* Quick Launchpad to Companion Features */}
-      <div className="grid grid-cols-4 gap-2">
-        <button
-          onClick={() => onNavigate('writing')}
-          className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 transition-all text-center group"
-        >
-          <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:scale-105 transition-transform mb-1.5">
-            <PenTool className="w-4 h-4" />
-          </div>
-          <span className="text-[11px] font-medium text-slate-200">Writing Lab</span>
-          <span className="text-[9px] text-slate-500">Tone Coach</span>
-        </button>
+      {/* =========================================================================
+          APPLE BOOKS & SOVEREIGN IBOOKS SPOTLIGHT
+          ========================================================================= */}
+      <div
+        onClick={() => onNavigate('ibooks')}
+        className="cursor-pointer group p-5 rounded-3xl bg-gradient-to-r from-amber-950/60 via-slate-900 to-indigo-950/60 border border-amber-500/40 hover:border-amber-400 transition-all shadow-xl relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 w-48 h-48 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        <button
-          onClick={() => onNavigate('mood')}
-          className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 transition-all text-center group"
-        >
-          <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-400 group-hover:scale-105 transition-transform mb-1.5">
-            <Smile className="w-4 h-4" />
-          </div>
-          <span className="text-[11px] font-medium text-slate-200">Mood Log</span>
-          <span className="text-[9px] text-slate-500">Mental Health</span>
-        </button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-16 rounded-xl bg-gradient-to-br from-amber-600 via-rose-700 to-indigo-950 p-2 flex flex-col justify-between shrink-0 shadow-lg border-l-2 border-white/30 group-hover:scale-105 transition-transform">
+              <span className="text-[7px] font-mono text-amber-300 uppercase">iBooks</span>
+              <BookOpen className="w-4 h-4 text-white" />
+            </div>
 
-        <button
-          onClick={() => onNavigate('productivity')}
-          className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 transition-all text-center group"
-        >
-          <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 group-hover:scale-105 transition-transform mb-1.5">
-            <Clock className="w-4 h-4" />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-white group-hover:text-amber-400 transition-colors">
+                  Apple Books & Sovereign Library
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[9px] font-mono font-bold border border-amber-500/30 flex items-center gap-1">
+                  <Flame className="w-3 h-3 text-amber-400" />
+                  <span>7D STREAK</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Now Reading: <strong className="text-amber-400">The Innovator's Compass</strong> by Thamiz (26% complete)
+              </p>
+              <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-400 font-mono">
+                <span className="text-rose-400 font-semibold">PDF Document Reader</span>
+                <span>•</span>
+                <span>Ambient Soundscapes</span>
+                <span>•</span>
+                <span>Voice Narration</span>
+                <span>•</span>
+                <span>AI Companion</span>
+              </div>
+            </div>
           </div>
-          <span className="text-[11px] font-medium text-slate-200">Doc AI</span>
-          <span className="text-[9px] text-slate-500">Summarizer</span>
-        </button>
 
-        <button
-          onClick={() => onNavigate('google')}
-          className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 transition-all text-center group"
-        >
-          <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 group-hover:scale-105 transition-transform mb-1.5">
-            <Search className="w-4 h-4" />
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate('ibooks');
+              }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition-all shadow-lg shadow-amber-500/20"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Open Library</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <span className="text-[11px] font-medium text-slate-200">Google One</span>
-          <span className="text-[9px] text-slate-500">Unified Sync</span>
-        </button>
+        </div>
       </div>
 
-      {/* Core Life Pillars Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-        {/* 1. Billionaire Blueprint Status */}
-        <div
-          onClick={() => onNavigate('billionaire')}
-          className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800 transition-all shadow-md relative overflow-hidden"
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
-                <TrendingUp className="w-4 h-4" />
-              </div>
-              <span className="text-xs font-bold text-white">Billionaire Blueprint</span>
-            </div>
-            <span className="text-xs font-mono font-bold text-amber-400">
-              {activeMilestone.progressPercent}%
+      {/* =========================================================================
+          SLIDING FEATURES DECK (ELIMINATES BOTTOM PAGE CLUTTER)
+          ========================================================================= */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Sliders className="w-4 h-4 text-indigo-400" />
+            <h3 className="text-sm font-bold text-white">Sovereign Features & Capabilities</h3>
+            <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+              (Slide horizontally to explore)
             </span>
           </div>
 
-          <h4 className="text-sm font-semibold text-slate-200 truncate">{activeMilestone.title}</h4>
-          <p className="text-xs text-slate-400 mt-0.5">{activeMilestone.targetValuation}</p>
-
-          <div className="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-amber-500 to-yellow-400 h-2 rounded-full transition-all duration-500"
-              style={{ width: `${activeMilestone.progressPercent}%` }}
-            />
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                const el = document.getElementById('hub-sliding-features-track');
+                if (el) el.scrollBy({ left: -260, behavior: 'smooth' });
+              }}
+              className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors"
+              title="Slide Left"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('hub-sliding-features-track');
+                if (el) el.scrollBy({ left: 260, behavior: 'smooth' });
+              }}
+              className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 transition-colors"
+              title="Slide Right"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
-        {/* 2. Family Real-Time Radar Snapshot */}
+        {/* Horizontal Sliding Carousel Track */}
         <div
-          onClick={() => onNavigate('family')}
-          className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800 transition-all shadow-md"
+          id="hub-sliding-features-track"
+          className="flex items-stretch gap-3.5 overflow-x-auto no-scrollbar scroll-smooth snap-x snap-mandatory py-1"
+          style={{ WebkitOverflowScrolling: 'touch' }}
         >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
-                <Users className="w-4 h-4" />
+          {/* Card 1: Apple Books */}
+          <div
+            onClick={() => onNavigate('ibooks')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Apple Books Library</span>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-amber-400">7-Day Streak</span>
               </div>
-              <span className="text-xs font-bold text-white">Family Safety Radar</span>
+              <h4 className="text-sm font-semibold text-slate-200 truncate">Curated Masterpieces</h4>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                Steve Jobs, Naval Ravikant, STEM Lab for Maaran, Meditations, and AI Book Weaver.
+              </p>
             </div>
-            <span className="text-xs font-semibold text-emerald-400">
-              {familySafeCount}/{familyMembers.length} Safe
-            </span>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-amber-400 font-semibold">
+              <span>Continue Reading</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
           </div>
 
-          <div className="flex items-center gap-2 mt-2">
-            <div className="flex -space-x-2">
-              {familyMembers.map((m) => (
-                <img
-                  key={m.id}
-                  src={m.avatar}
-                  alt={m.name}
-                  className="w-8 h-8 rounded-full border-2 border-slate-900 object-cover"
+          {/* Card 2: Billionaire Blueprint */}
+          <div
+            onClick={() => onNavigate('billionaire')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Billionaire Blueprint</span>
+                </div>
+                <span className="text-xs font-mono font-bold text-amber-400">
+                  {activeMilestone.progressPercent}%
+                </span>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200 truncate">{activeMilestone.title}</h4>
+              <p className="text-xs text-slate-400 mt-1">{activeMilestone.targetValuation}</p>
+              <div className="w-full bg-slate-800 rounded-full h-1.5 mt-2.5 overflow-hidden">
+                <div
+                  className="bg-amber-500 h-1.5 rounded-full"
+                  style={{ width: `${activeMilestone.progressPercent}%` }}
                 />
-              ))}
-            </div>
-            <div className="text-xs text-slate-300">
-              <span className="font-medium text-white">{familyMembers[1]?.name || 'Family'}</span> is at{' '}
-              <span className="text-slate-400">{familyMembers[1]?.liveLocation?.status}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* 3. Financial Net Worth Snapshot */}
-        <div
-          onClick={() => onNavigate('finance')}
-          className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800 transition-all shadow-md"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
-                <Wallet className="w-4 h-4" />
               </div>
-              <span className="text-xs font-bold text-white">Total Sovereign Net Worth</span>
             </div>
-            <ArrowUpRight className="w-4 h-4 text-slate-500 group-hover:text-emerald-400 transition-colors" />
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-300 font-semibold">
+              <span>Open Roadmap</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
           </div>
 
-          <div className="text-xl font-bold font-mono text-white tracking-tight">
-            ${(netWorth / 1000000).toFixed(1)}M
-          </div>
-          <p className="text-xs text-emerald-400 mt-0.5">+3.4% trailing 24h portfolio gain</p>
-        </div>
-
-        {/* 4. Longevity & Sleep Biometrics */}
-        <div
-          onClick={() => onNavigate('wellness')}
-          className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800 transition-all shadow-md"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400">
-                <HeartPulse className="w-4 h-4" />
+          {/* Card 3: Family Safety Radar */}
+          <div
+            onClick={() => onNavigate('family')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Family Safety Radar</span>
+                </div>
+                <span className="text-xs font-semibold text-emerald-400">
+                  {familySafeCount}/{familyMembers.length} Safe
+                </span>
               </div>
-              <span className="text-xs font-bold text-white">Sleep & Longevity Hub</span>
+              <div className="flex items-center gap-2 my-2">
+                <div className="flex -space-x-2">
+                  {familyMembers.map((m) => (
+                    <img
+                      key={m.id}
+                      src={m.avatar}
+                      alt={m.name}
+                      className="w-7 h-7 rounded-full border-2 border-slate-900 object-cover"
+                    />
+                  ))}
+                </div>
+                <span className="text-xs text-slate-300 truncate">
+                  {familyMembers[1]?.name || 'Family'} at safe zone
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">Geofence boundaries & live GPS active.</p>
             </div>
-            <span className="text-xs font-bold font-mono text-emerald-400">{biometrics.sleepScore} Score</span>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-indigo-300 font-semibold">
+              <span>View Live Map</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
           </div>
 
-          <div className="flex items-center justify-between text-xs text-slate-300 mt-2">
-            <span>Resting HR: <strong className="text-white">{biometrics.restingHeartRate} bpm</strong></span>
-            <span>HRV: <strong className="text-white">{biometrics.hrvMs} ms</strong></span>
+          {/* Card 4: Total Sovereign Net Worth */}
+          <div
+            onClick={() => onNavigate('finance')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-emerald-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
+                    <Wallet className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Sovereign Wealth</span>
+                </div>
+                <span className="text-xs text-emerald-400 font-mono font-bold">+3.4%</span>
+              </div>
+              <div className="text-xl font-bold font-mono text-white tracking-tight mt-1">
+                ${(netWorth / 1000000).toFixed(1)}M
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Global liquid assets, venture equity, and real estate holdings.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-emerald-400 font-semibold">
+              <span>Financial Command</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">Apple Watch Ultra & Oura Ring Synced</p>
+
+          {/* Card 5: Sleep & Longevity Hub */}
+          <div
+            onClick={() => onNavigate('wellness')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-rose-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400">
+                    <HeartPulse className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Longevity & Sleep</span>
+                </div>
+                <span className="text-xs font-bold font-mono text-emerald-400">{biometrics.sleepScore} Score</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-300 mt-2">
+                <span>RHR: <strong className="text-white">{biometrics.restingHeartRate} bpm</strong></span>
+                <span>HRV: <strong className="text-white">{biometrics.hrvMs} ms</strong></span>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">Biomarkers & circadian rhythms synced.</p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-rose-300 font-semibold">
+              <span>Longevity Hub</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* Card 6: Writing & Tone Coach */}
+          <div
+            onClick={() => onNavigate('writing')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-indigo-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                    <PenTool className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Executive Writing Lab</span>
+                </div>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200">Keynote & Tone Coach</h4>
+              <p className="text-xs text-slate-400 mt-1">
+                Polished prose, venture communications, and public address scripts.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-indigo-300 font-semibold">
+              <span>Open Writing Coach</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Eisenhower Urgent Priorities Coach */}
+      {/* =========================================================================
+          EISENHOWER URGENT PRIORITIES COACH (COLLAPSIBLE / COMPACT)
+          ========================================================================= */}
       <div className="p-4 sm:p-5 rounded-3xl bg-slate-900/80 border border-slate-800">
-        <div className="flex items-center justify-between mb-3.5">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400">
               <Clock className="w-4 h-4" />
@@ -1271,17 +1452,18 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
           </div>
           <button
             onClick={() => onNavigate('productivity')}
-            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold"
+            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1"
           >
-            All Tasks
+            <span>All Tasks</span>
+            <ChevronRight className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           {urgentTasks.length === 0 ? (
             <p className="text-xs text-slate-400 py-2">No urgent tasks remaining. High-leverage execution complete!</p>
           ) : (
-            urgentTasks.map((t) => (
+            urgentTasks.slice(0, 3).map((t) => (
               <div
                 key={t.id}
                 onClick={() => toggleTask(t.id)}
@@ -1466,6 +1648,12 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
           </div>
         </div>
       )}
+
+      {/* Hub API Keys & SQLite Data Store Modal */}
+      <HubKeysAndSqliteModal
+        isOpen={showKeysAndSqliteModal}
+        onClose={() => setShowKeysAndSqliteModal(false)}
+      />
     </div>
   );
 };

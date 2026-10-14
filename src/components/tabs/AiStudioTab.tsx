@@ -304,8 +304,11 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       setAnimateImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setAnimateImagePreview(reader.result as string);
+        if (typeof reader.result === 'string') {
+          setAnimateImagePreview(reader.result);
+        }
       };
+      reader.onerror = () => setAnimateImagePreview(null);
       reader.readAsDataURL(file);
     }
   };
@@ -412,8 +415,11 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       setMusicImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setMusicImagePreview(reader.result as string);
+        if (typeof reader.result === 'string') {
+          setMusicImagePreview(reader.result);
+        }
       };
+      reader.onerror = () => setMusicImagePreview(null);
       reader.readAsDataURL(file);
     }
   };
@@ -454,8 +460,11 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       setSourceImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setSourceImagePreview(reader.result as string);
+        if (typeof reader.result === 'string') {
+          setSourceImagePreview(reader.result);
+        }
       };
+      reader.onerror = () => setSourceImagePreview(null);
       reader.readAsDataURL(file);
     }
   };

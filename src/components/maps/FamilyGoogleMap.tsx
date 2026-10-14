@@ -31,6 +31,7 @@ export const FamilyGoogleMap: React.FC<FamilyGoogleMapProps> = ({
   onClearSos,
 }) => {
   const apiKey =
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_google_maps_key') : null) ||
     (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string) ||
     'AIzaSyB2zaNA_vbSdD78UFydYrxswRHhTlOPmbI';
 

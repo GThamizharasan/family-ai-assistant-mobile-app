@@ -24,6 +24,7 @@ import { WhatsAppTab } from './components/tabs/WhatsAppTab';
 import { PhoneDialerTab } from './components/tabs/PhoneDialerTab';
 import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
 import { AiStudioTab } from './components/tabs/AiStudioTab';
+import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
 import { ActiveCallModal } from './components/ActiveCallModal';
 
 const AppContent: React.FC = () => {
@@ -65,6 +66,8 @@ const AppContent: React.FC = () => {
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
+      case 'ibooks':
+        return <IBooksLibraryTab />;
       case 'ai-studio':
         return <AiStudioTab onOpenVoiceAssistant={() => setIsVoiceOpen(true)} />;
       case 'family':
@@ -146,10 +149,19 @@ const AppContent: React.FC = () => {
   );
 };
 
+import { GoogleOAuthProvider } from '@react-oauth/google';
+
 export default function App() {
+  const googleClientId =
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_google_client_id') : null) ||
+    (import.meta.env.VITE_GOOGLE_CLIENT_ID as string) ||
+    '600050762948-bqe3traltdnne31fmu99p1hn9n1ubgb8.apps.googleusercontent.com';
+
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </GoogleOAuthProvider>
   );
 }

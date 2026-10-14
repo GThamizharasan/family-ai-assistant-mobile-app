@@ -14,6 +14,8 @@ import {
   Calendar,
   CloudCheck,
 } from 'lucide-react';
+import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
+import { parseGoogleIdToken } from '../services/googleAuth';
 import { useApp } from '../context/AppContext';
 
 export const GoogleSSOScreen: React.FC = () => {
@@ -37,22 +39,31 @@ export const GoogleSSOScreen: React.FC = () => {
 
   const primaryEmail = 'digitaltamilworld@gmail.com';
 
-  const handleOfficialGoogleSignIn = async () => {
-    setIsSigningIn(true);
-    setAuthError(null);
-    try {
-      const success = await signInWithGoogleOAuth();
-      if (!success) {
-        setAuthError('Sign-in cancelled or closed. You can also use one-tap instant login below.');
+  // Direct @react-oauth/google hook for full Workspace scopes
+  const googleOAuthDirect = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setIsSigningIn(true);
+      setAuthError(null);
+      try {
+        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        });
+        const info = await res.json();
+        const userEmail = info.email || primaryEmail;
+        const userName = info.name || 'Thamiz';
+        loginWithGoogle(userEmail, userName);
+      } catch (e) {
+        loginWithGoogle(primaryEmail, 'Thamiz');
+      } finally {
+        setIsSigningIn(false);
       }
-    } catch (err: any) {
-      console.warn('Google sign-in popup error:', err);
-      setAuthError('OAuth pop-up window closed. Continuing in secure mode.');
-      loginWithGoogle(primaryEmail, 'Thamiz');
-    } finally {
+    },
+    onError: (errorResponse) => {
+      console.warn('@react-oauth/google error:', errorResponse);
+      setAuthError('Google sign-in was dismissed. You can select one-tap login below.');
       setIsSigningIn(false);
-    }
-  };
+    },
+  });
 
   const handleSelectGoogleAccount = (email: string, name?: string) => {
     loginWithGoogle(email, name);
@@ -170,40 +181,44 @@ export const GoogleSSOScreen: React.FC = () => {
 
         {activeTab === 'google' && (
           <div className="space-y-3.5">
-            {/* Official Google Material Sign-In Button */}
-            <button
-              onClick={handleOfficialGoogleSignIn}
-              disabled={isSigningIn}
-              className="gsi-material-button shadow-lg shadow-blue-500/10"
-              title="Authenticate with Google Identity Services"
-            >
-              <div className="gsi-material-button-state"></div>
-              <div className="gsi-material-button-content-wrapper">
-                <div className="gsi-material-button-icon">
-                  <svg viewBox="0 0 48 48" className="w-full h-full">
-                    <path
-                      fill="#EA4335"
-                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
-                    />
-                  </svg>
-                </div>
-                <span className="gsi-material-button-contents">
-                  {isSigningIn ? 'Opening Google Sign-In...' : 'Sign in with Google'}
-                </span>
+            {/* Direct Google Identity Sign-In Button via @react-oauth/google */}
+            <div className="flex flex-col items-center justify-center gap-2.5">
+              <div className="w-full flex justify-center py-1">
+                <GoogleLogin
+                  onSuccess={(credentialResponse) => {
+                    setIsSigningIn(false);
+                    setAuthError(null);
+                    if (credentialResponse.credential) {
+                      const payload = parseGoogleIdToken(credentialResponse.credential);
+                      if (payload && payload.email) {
+                        loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
+                        return;
+                      }
+                    }
+                    loginWithGoogle(primaryEmail, 'Thamiz');
+                  }}
+                  onError={() => {
+                    setIsSigningIn(false);
+                    setAuthError('Google sign-in was closed. You can continue with one-tap access below.');
+                  }}
+                  theme="filled_black"
+                  shape="pill"
+                  size="large"
+                  text="signin_with"
+                  width="340"
+                />
               </div>
-            </button>
+
+              <button
+                type="button"
+                onClick={() => googleOAuthDirect()}
+                disabled={isSigningIn}
+                className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-800/60"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+                <span>Authorize Full Google Workspace & Drive Cloud Scopes</span>
+              </button>
+            </div>
 
             {authError && (
               <p className="text-[11px] text-amber-400 text-center bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
