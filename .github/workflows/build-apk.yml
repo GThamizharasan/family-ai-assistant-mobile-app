@@ -31,7 +31,7 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Android SDK (Manual)
         run: |
@@ -49,12 +49,12 @@ jobs:
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
           
           yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "cmdline-tools;latest" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install Capacitor & Add Android Platform
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap add android || echo "android platform already exists"
+          if [ ! -d android ]; then npx cap add android; fi
           npx cap sync
 
       - name: Build Debug APK with Gradle
