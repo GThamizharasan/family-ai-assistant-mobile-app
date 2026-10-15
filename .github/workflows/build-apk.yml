@@ -15,12 +15,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
 
       - name: Install Dependencies & Build Web App
         run: |
-          npm install
+          npm ci || npm install --legacy-peer-deps
           npm run build
 
       - name: Setup Java (Android SDK requirement)
