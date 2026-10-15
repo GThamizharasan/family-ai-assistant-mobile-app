@@ -29,8 +29,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK (Manual)
+        env:
+          ANDROID_SDK_ROOT: ${{ runner.tool_cache }}/android-sdk
+          ANDROID_HOME: ${{ runner.tool_cache }}/android-sdk
+        run: |
+          set -e
+          mkdir -p $ANDROID_SDK_ROOT
+          cd /tmp
+          curl -fsSL -o commandlinetools.zip "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          unzip -q commandlinetools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools/latest
+          mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools/* $ANDROID_SDK_ROOT/cmdline-tools/latest/ || true
+          
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
+          
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "cmdline-tools;latest" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install Capacitor & Android Platform
         run: |
