@@ -50,7 +50,7 @@ jobs:
       - name: Install Capacitor & Android Platform
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap init AuraFamily com.family.ai.assistant --web-dir dist --yes
+          npx cap init AuraFamily com.family.ai.assistant --web-dir dist
           npx cap sync android
 
       - name: Build Debug APK with Gradle
