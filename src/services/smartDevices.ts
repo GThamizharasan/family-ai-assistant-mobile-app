@@ -59,6 +59,7 @@ export interface TapoCameraDevice {
   sdCardRecordings?: TapoSdRecording[];
   localIp?: string;
   cameraAccountUser?: string;
+  cameraAccountPassword?: string;
   rtspStreamUrl?: string;
   webrtcBridgeUrl?: string;
   onvifPort?: number;
@@ -183,10 +184,11 @@ export const INITIAL_TAPO_CAMERAS: TapoCameraDevice[] = [
     sirenAlarmActive: false,
     sdCardStorageGb: { total: 128, used: 24, free: 104 },
     sdCardHealth: 'Healthy (Good)',
-    localIp: '192.168.1.120',
-    cameraAccountUser: 'thamiz_admin',
-    rtspStreamUrl: 'rtsp://thamiz_admin:••••••••@192.168.1.120:554/stream1',
-    webrtcBridgeUrl: 'ws://192.168.1.120:1984/api/ws?src=living_room_c210',
+    localIp: '172.20.10.2',
+    cameraAccountUser: 'thamizh',
+    cameraAccountPassword: 'iloveyou',
+    rtspStreamUrl: 'rtsp://thamizh:iloveyou@172.20.10.2:554/stream1',
+    webrtcBridgeUrl: 'http://172.20.10.2:1984/stream.html?src=living_room_c210',
     onvifPort: 2020,
     cloudArchiveDays: 30,
     panTiltAngle: { pan: 0, tilt: 15 },

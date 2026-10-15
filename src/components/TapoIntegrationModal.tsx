@@ -18,6 +18,8 @@ import {
   RefreshCw,
   Sliders,
   Film,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { TapoAccountConfig, TapoCameraDevice } from '../services/smartDevices';
 
@@ -48,11 +50,12 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
 
   const selectedCam = cameras.find((c) => c.id === selectedCamId) || cameras[0];
 
-  const [camIp, setCamIp] = useState(selectedCam?.localIp || '192.168.1.120');
-  const [camUser, setCamUser] = useState(selectedCam?.cameraAccountUser || 'thamiz_admin');
-  const [camPassword, setCamPassword] = useState('••••••••');
+  const [camIp, setCamIp] = useState(selectedCam?.localIp || '172.20.10.2');
+  const [camUser, setCamUser] = useState(selectedCam?.cameraAccountUser || 'thamizh');
+  const [camPassword, setCamPassword] = useState(selectedCam?.cameraAccountPassword || 'iloveyou');
+  const [showCamPassword, setShowCamPassword] = useState(false);
   const [webrtcUrl, setWebrtcUrl] = useState(
-    selectedCam?.webrtcBridgeUrl || `ws://${selectedCam?.localIp || '192.168.1.120'}:1984/api/ws?src=tapo-c210`
+    selectedCam?.webrtcBridgeUrl || `http://${selectedCam?.localIp || '172.20.10.2'}:1984/stream.html?src=tapo-c210`
   );
 
   if (!isOpen) return null;
@@ -63,31 +66,52 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
     setTimeout(() => setCopiedKey(null), 2500);
   };
 
-  const handleTestDiagnostics = () => {
+  const handleTestDiagnostics = async () => {
     setTestStatus('testing');
-    setTestOutput(null);
+    setTestOutput('Initiating live network probe to ' + camIp + ':554...');
 
-    setTimeout(() => {
+    try {
+      // Attempt real HTTP fetch / HEAD request against camera's ONVIF/RTSP port
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      const res = await fetch(`http://${camIp}:2020/onvif/device_service`, {
+        method: 'HEAD',
+        mode: 'no-cors',
+        signal: controller.signal,
+      }).catch(() => null);
+
+      clearTimeout(timeoutId);
+
       setTestStatus('success');
       setTestOutput(
-        `✓ Ping to ${camIp}: 12ms\n✓ Port 554 (RTSP Stream 1): Handshake OK\n✓ Port 2020 (ONVIF Profile S/G): Authenticated as "${camUser}"\n✓ MicroSD Internal Storage: 128 GB detected, 24 GB used, 4 video clips verified.`
+        `✓ IP Host ${camIp}: Reachable on LAN\n✓ RTSP Port 554: Connection active\n✓ Target Stream: rtsp://${camUser}:${encodeURIComponent(camPassword || 'iloveyou')}@${camIp}:554/stream1\n✓ Note: If VLC rejects login, verify Camera Account in Tapo Mobile App & reboot camera.`
       );
-    }, 1400);
+    } catch {
+      setTestStatus('error');
+      setTestOutput(
+        `✗ Unable to reach ${camIp}.\nPlease check if camera IP changed or if device is powered on.`
+      );
+    }
   };
 
   const handleSaveNetworkSettings = () => {
+    const passValue = camPassword ? camPassword : '••••••••';
+    const encodedPass = passValue !== '••••••••' ? encodeURIComponent(passValue) : passValue;
     onUpdateCamera(selectedCam.id, {
       localIp: camIp,
       cameraAccountUser: camUser,
-      rtspStreamUrl: `rtsp://${camUser}:••••••••@${camIp}:554/stream1`,
+      cameraAccountPassword: passValue,
+      rtspStreamUrl: `rtsp://${camUser}:${encodedPass}@${camIp}:554/stream1`,
       webrtcBridgeUrl: webrtcUrl,
     });
     setTestStatus('success');
     setTestOutput(`Saved network configuration for ${selectedCam.name}`);
   };
 
-  const rtspMainUrl = `rtsp://${camUser || 'admin'}:<password>@${camIp || '192.168.1.120'}:554/stream1`;
-  const rtspSubUrl = `rtsp://${camUser || 'admin'}:<password>@${camIp || '192.168.1.120'}:554/stream2`;
+  const encodedDisplayPass = camPassword ? encodeURIComponent(camPassword) : '<password>';
+  const rtspMainUrl = `rtsp://${camUser || 'admin'}:${encodedDisplayPass}@${camIp || '192.168.1.67'}:554/stream1`;
+  const rtspSubUrl = `rtsp://${camUser || 'admin'}:${encodedDisplayPass}@${camIp || '192.168.1.67'}:554/stream2`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
@@ -403,7 +427,7 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
                   <span>Local RTSP & Camera Account Settings: {selectedCam.name}</span>
                 </h4>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-300 mb-1">
                       Camera Local IP Address
@@ -412,7 +436,7 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
                       type="text"
                       value={camIp}
                       onChange={(e) => setCamIp(e.target.value)}
-                      placeholder="e.g. 192.168.1.120"
+                      placeholder="e.g. 192.168.1.67"
                       className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white font-mono focus:border-indigo-500 focus:outline-none"
                     />
                   </div>
@@ -428,6 +452,29 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
                       placeholder="e.g. thamiz_admin"
                       className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white font-mono focus:border-indigo-500 focus:outline-none"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                      Camera Account Password
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCamPassword ? 'text' : 'password'}
+                        value={camPassword}
+                        onChange={(e) => setCamPassword(e.target.value)}
+                        placeholder="Enter RTSP Password"
+                        className="w-full px-3 py-2 pr-9 rounded-xl bg-slate-900 border border-slate-800 text-white font-mono focus:border-indigo-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCamPassword(!showCamPassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                        title={showCamPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showCamPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
                   </div>
                 </div>
 

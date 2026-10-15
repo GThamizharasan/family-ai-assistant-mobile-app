@@ -60,7 +60,7 @@ export const GoogleSSOScreen: React.FC = () => {
     },
     onError: (errorResponse) => {
       console.warn('@react-oauth/google error:', errorResponse);
-      setAuthError('Google sign-in was dismissed. You can select one-tap login below.');
+      setAuthError('Google OAuth popup was closed or origin is not authorized in Google Cloud Console. Click "Continue As Thamiz" below for instant 1-tap login.');
       setIsSigningIn(false);
     },
   });
@@ -199,7 +199,7 @@ export const GoogleSSOScreen: React.FC = () => {
                   }}
                   onError={() => {
                     setIsSigningIn(false);
-                    setAuthError('Google sign-in was closed. You can continue with one-tap access below.');
+                    setAuthError('Google sign-in popup was blocked or origin is unlisted in Google Cloud. Click "Continue As Thamiz" below to sign in instantly.');
                   }}
                   theme="filled_black"
                   shape="pill"

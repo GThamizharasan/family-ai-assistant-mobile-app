@@ -1,5 +1,6 @@
 import express from 'express';
 import http from 'http';
+import { spawn } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, GenerateVideosOperation, Modality, LiveServerMessage } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -72,6 +73,134 @@ app.get('/api/health', (_req, res) => {
     serverTimestamp: new Date().toISOString(),
     primaryAccount: 'digitaltamilworld@gmail.com',
     appUrl: process.env.APP_URL || 'https://ais-dev-v7juadaauum45rl6hebiav-946248252259.europe-west2.run.app',
+  });
+});
+
+// Camera RTSP MAP
+const CAMERA_RTSP_MAP: Record<string, string> = {
+  'cam-01': 'rtsp://thamizh:iloveyou@172.20.10.2:554/stream1',
+  'cam-02': 'rtsp://thamiz_admin:••••••••@192.168.1.121:554/stream1',
+  'cam-03': 'rtsp://thamiz_admin:••••••••@192.168.1.122:554/stream1',
+  'cam-04': 'rtsp://thamiz_admin:••••••••@192.168.1.123:554/stream1',
+};
+
+// Camera RTSP LAN Diagnostic & Stream Info API
+app.get('/api/camera/stream-info', (req, res) => {
+  const ip = (req.query.ip as string) || '172.20.10.2';
+  const user = (req.query.user as string) || 'thamizh';
+  const port = (req.query.port as string) || '554';
+  const pass = (req.query.pass as string) || 'iloveyou';
+
+  const rtspMain = `rtsp://${user}:${encodeURIComponent(pass)}@${ip}:${port}/stream1`;
+  const rtspSub = `rtsp://${user}:${encodeURIComponent(pass)}@${ip}:${port}/stream2`;
+
+  res.json({
+    status: 'configured',
+    cameraIp: ip,
+    rtspPort: parseInt(port),
+    username: user,
+    rtspStream1: rtspMain,
+    rtspStream2: rtspSub,
+    vlcSupported: true,
+    browserDirectRtspSupported: true,
+    mjpegStreamUrl: `/api/camera/stream?url=${encodeURIComponent(rtspSub)}`,
+  });
+});
+
+// Real-Time Camera MJPEG Stream Endpoint (Translates RTSP to HTML5 MJPEG Video)
+app.get('/api/camera/stream', (req, res) => {
+  const camId = req.query.camId as string;
+  let rtspUrl = (req.query.url as string) || (camId && CAMERA_RTSP_MAP[camId]) || 'rtsp://thamizh:iloveyou@172.20.10.2:554/stream1';
+
+  const quality = req.query.quality as string;
+  if (quality === 'sub' && rtspUrl.includes('/stream1')) {
+    rtspUrl = rtspUrl.replace('/stream1', '/stream2');
+  }
+
+  const boundary = 'mjpegframe';
+  res.writeHead(200, {
+    'Content-Type': `multipart/x-mixed-replace; boundary=${boundary}`,
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+
+  const ffmpegProcess = spawn('ffmpeg', [
+    '-loglevel', 'quiet',
+    '-rtsp_transport', 'tcp',
+    '-i', rtspUrl,
+    '-vf', 'scale=854:-1',
+    '-q:v', '6',
+    '-r', '10',
+    '-f', 'image2pipe',
+    '-vcodec', 'mjpeg',
+    '-',
+  ]);
+
+  let buf = Buffer.alloc(0);
+
+  ffmpegProcess.stdout.on('data', (chunk: Buffer) => {
+    buf = Buffer.concat([buf, chunk]);
+
+    while (true) {
+      const soi = buf.indexOf(Buffer.from([0xff, 0xd8]));
+      if (soi === -1) break;
+
+      const eoi = buf.indexOf(Buffer.from([0xff, 0xd9]), soi + 2);
+      if (eoi === -1) break;
+
+      const jpegFrame = buf.subarray(soi, eoi + 2);
+      buf = buf.subarray(eoi + 2);
+
+      try {
+        res.write(`--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegFrame.length}\r\n\r\n`);
+        res.write(jpegFrame);
+        res.write('\r\n');
+      } catch {
+        ffmpegProcess.kill('SIGKILL');
+        break;
+      }
+    }
+  });
+
+  ffmpegProcess.on('error', (err) => {
+    console.error('FFmpeg stream process error:', err);
+    try { res.end(); } catch {}
+  });
+
+  req.on('close', () => {
+    ffmpegProcess.kill('SIGKILL');
+  });
+});
+
+// Real-Time Camera Snapshot Endpoint (Single JPEG Capture from RTSP)
+app.get('/api/camera/snapshot', (req, res) => {
+  const camId = req.query.camId as string;
+  const rtspUrl = (req.query.url as string) || (camId && CAMERA_RTSP_MAP[camId]) || 'rtsp://thamizh:iloveyou@172.20.10.2:554/stream2';
+
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+
+  const ffmpegProcess = spawn('ffmpeg', [
+    '-loglevel', 'quiet',
+    '-rtsp_transport', 'tcp',
+    '-i', rtspUrl,
+    '-vframes', '1',
+    '-vf', 'scale=854:-1',
+    '-q:v', '5',
+    '-f', 'image2',
+    '-',
+  ]);
+
+  ffmpegProcess.stdout.pipe(res);
+
+  ffmpegProcess.on('error', (err) => {
+    console.error('FFmpeg snapshot process error:', err);
+    res.status(500).end();
+  });
+
+  req.on('close', () => {
+    ffmpegProcess.kill('SIGKILL');
   });
 });
 
@@ -519,21 +648,52 @@ app.post('/api/google-search-sync', async (req, res) => {
 // 8. Gmail AI Executive Digest
 app.post('/api/summarize-emails', async (req, res) => {
   try {
-    const { emails } = req.body;
-    if (!ai || !emails || emails.length === 0) {
+    const { emails, accessToken } = req.body;
+
+    let targetEmails = emails;
+    // If accessToken is provided and ai is ready, fetch live emails if needed or summarize provided
+    if ((!targetEmails || targetEmails.length === 0) && accessToken && ai) {
+      try {
+        const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (gmailRes.ok) {
+          const data = await gmailRes.json();
+          const msgs = data.messages || [];
+          const fetched = [];
+          for (const m of msgs.slice(0, 5)) {
+            const detailRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            if (detailRes.ok) {
+              const detail = await detailRes.json();
+              const headers = detail.payload?.headers || [];
+              const subject = headers.find((h: any) => h.name === 'Subject')?.value || 'No Subject';
+              const from = headers.find((h: any) => h.name === 'From')?.value || 'Unknown Sender';
+              fetched.push({ subject, from, snippet: detail.snippet || '' });
+            }
+          }
+          if (fetched.length > 0) targetEmails = fetched;
+        }
+      } catch (err) {
+        console.warn('Auto-fetch live emails error:', err);
+      }
+    }
+
+    if (!ai || !targetEmails || targetEmails.length === 0) {
       return res.json({
-        executiveDigest: "You have 3 incoming communications regarding estate trust structuring, secondary liquidation options, and a family calendar update. No critical emergencies detected.",
+        executiveDigest: "You have incoming communications regarding family operations, estate trust structuring, and device telemetry. All systems nominal.",
         actionItems: [
-          "Review the Delaware LLC term sheet addendum",
-          "Confirm family weekend focus block"
+          "Verify Delaware LLC term sheet addendum",
+          "Review Tapo CCTV perimeter status"
         ],
-        urgentCount: 1,
+        urgentCount: 0,
         sentiment: "positive & productive"
       });
     }
 
     const prompt = `Analyze these emails fetched from the user's connected Gmail account:
-${JSON.stringify(emails.slice(0, 10))}
+${JSON.stringify(targetEmails.slice(0, 10))}
 
 Return structured JSON:
 {
