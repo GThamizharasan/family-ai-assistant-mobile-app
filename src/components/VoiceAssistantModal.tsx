@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Mic,
   MicOff,
@@ -390,7 +391,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       }
       const hasPermission = await speechEngine.requestMicPermission();
       if (!hasPermission) {
-        setMicStatusMessage('Microphone access blocked. Click the lock 🔒 or site permissions icon in the address bar to set Microphone to "Allow".');
+        setMicStatusMessage(
+          Capacitor.isNativePlatform()
+            ? 'Microphone permission is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone, allow access, then try again.'
+            : 'Microphone access is blocked. Use the site permissions control in your browser to allow microphone access, then try again.'
+        );
         return;
       }
       const started = speechEngine.startListening();
