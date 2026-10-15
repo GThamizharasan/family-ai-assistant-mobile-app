@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react';
 import {
+  Home,
   Smartphone,
   Maximize2,
   Lock,
@@ -17,12 +18,14 @@ interface MobileFrameProps {
   children: ReactNode;
   onOpenVoice: () => void;
   onOpenInstallerHub: () => void;
+  onGoHome: () => void;
 }
 
 export const MobileFrame: React.FC<MobileFrameProps> = ({
   children,
   onOpenVoice,
   onOpenInstallerHub,
+  onGoHome,
 }) => {
   const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, signOutGoogle } = useApp();
 
@@ -31,7 +34,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-start p-0 sm:py-6 selection:bg-indigo-500/30">
       {/* Top Floating Utility Control Bar */}
-      <header className="w-full max-w-lg mb-3 px-3 flex items-center justify-between text-xs text-slate-400">
+      <header className="sticky top-0 z-40 w-full max-w-lg mb-3 px-3 pt-[env(safe-area-inset-top)] flex items-center justify-between text-xs text-slate-400 bg-slate-950/95 backdrop-blur-xl">
         <div className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-400" />
           <span className="font-semibold text-slate-200">AuraFamily Life OS</span>
@@ -39,6 +42,15 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            onClick={onGoHome}
+            className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+            title="Go to Home"
+            aria-label="Go to Home"
+          >
+            <Home className="w-3.5 h-3.5" />
+          </button>
+
           {/* Install Android APK Button */}
           <PWAInstallButton onOpenInstallerHub={onOpenInstallerHub} />
 
@@ -107,7 +119,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
         )}
 
         {/* Content Body */}
-        <main className={`w-full ${isMobileDeviceFrame ? 'px-4' : ''}`}>
+        <main className={`w-full app-content ${isMobileDeviceFrame ? 'px-4' : ''}`}>
           {children}
         </main>
 

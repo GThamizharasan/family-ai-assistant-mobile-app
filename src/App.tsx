@@ -1,4 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
 import { AppProvider, useApp } from './context/AppContext';
 import { MobileFrame } from './components/MobileFrame';
 import { BottomNav, TabKey } from './components/BottomNav';
@@ -36,6 +39,45 @@ const AppContent: React.FC = () => {
   const [activeWhatsAppContactId, setActiveWhatsAppContactId] = useState<string | undefined>(undefined);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    void StatusBar.setOverlaysWebView({ overlay: false });
+    void StatusBar.setBackgroundColor({ color: '#090d16' });
+    void StatusBar.setStyle({ style: Style.Light });
+    void StatusBar.show();
+  }, []);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    let listener: { remove: () => Promise<void> } | undefined;
+    let disposed = false;
+
+    void CapacitorApp.addListener('backButton', () => {
+      if (isVoiceOpen) {
+        setIsVoiceOpen(false);
+      } else if (isInstallerOpen) {
+        setIsInstallerOpen(false);
+      } else if (currentTab !== 'home') {
+        setCurrentTab('home');
+      } else {
+        void CapacitorApp.exitApp();
+      }
+    }).then((handle) => {
+      if (disposed) {
+        void handle.remove();
+      } else {
+        listener = handle;
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void listener?.remove();
+    };
+  }, [currentTab, isInstallerOpen, isVoiceOpen]);
 
   // When not authenticated (such as on initial application load/reload), present Google Single Sign-On
   if (!isAuthenticated) {
@@ -123,6 +165,7 @@ const AppContent: React.FC = () => {
     <MobileFrame
       onOpenVoice={() => setIsVoiceOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
+      onGoHome={() => setCurrentTab('home')}
     >
       {renderActiveTab()}
 

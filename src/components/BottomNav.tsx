@@ -178,7 +178,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
           ========================================================================= */}
       <nav
         aria-label="Application Navigation"
-        className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/80 px-1 sm:px-3 py-1.5 max-w-lg mx-auto sm:max-w-2xl md:max-w-4xl shadow-2xl transition-all"
+        className="fixed bottom-0 left-0 right-0 z-40 safe-area-bottom bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/80 px-1 sm:px-3 py-1.5 max-w-lg mx-auto sm:max-w-2xl md:max-w-4xl shadow-2xl transition-all"
       >
         <div className="relative flex items-center h-14 w-full">
           {/* LEFT WING: Important Features Sliding Track */}
