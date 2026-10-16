@@ -14,11 +14,8 @@ WORKDIR /app
 # Copy package manifests
 COPY package*.json ./
 
-# Install dependencies including optional platform binaries
-RUN npm install --include=optional
-
-# Explicitly ensure Linux rolldown native binding is installed for Vite on Linux amd64
-RUN npm install --no-save @rolldown/binding-linux-x64-gnu || true
+# Remove package-lock inside container to resolve cross-platform optional dependency bug (npm #4828)
+RUN rm -f package-lock.json && npm install --include=optional
 
 # Copy application code
 COPY . .

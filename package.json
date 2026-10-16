@@ -49,5 +49,9 @@
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "vite-plugin-pwa": "^2.0.0"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "^1.2.13",
+    "@rollup/rollup-linux-x64-gnu": "^4.30.1"
   }
 }
