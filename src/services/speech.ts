@@ -319,7 +319,7 @@ export class VoiceAssistantEngine {
       return true;
     }
 
-    // Use getUserMedia in Capacitor WebViews so Android's WebView permission flow can grant capture.
+    // Prefer browser speech recognition for immediate, streaming transcripts.
     if (this.recognition && !isIOSChrome()) {
       try {
         this.isUsingMediaRecorderFallback = false;

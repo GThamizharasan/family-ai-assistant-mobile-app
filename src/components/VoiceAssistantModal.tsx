@@ -59,6 +59,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [showMicHelp, setShowMicHelp] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const handleUserSpeechRef = useRef<(spokenText: string) => void>(() => {});
+  const isLocalVoiceMode = Capacitor.isNativePlatform() && !import.meta.env.VITE_API_BASE_URL;
 
   const speakWithAuro = (
     text: string,
@@ -98,7 +99,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     speechEngine.onTranscriptCallback = (transcript, isFinal) => {
       setLiveTranscript(transcript);
       if (isFinal && transcript.trim()) {
-        handleUserSpeechRef.current?.(transcript.trim());
+        if (isLocalVoiceMode) {
+          setTextInput(transcript.trim());
+          setMicStatusMessage('Voice transcribed on this device. AI replies are off because no backend is configured.');
+        } else {
+          handleUserSpeechRef.current?.(transcript.trim());
+        }
       }
     };
     speechEngine.onErrorCallback = (error) => {
@@ -126,7 +132,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       speechEngine.onTranscriptCallback = undefined;
       speechEngine.onErrorCallback = undefined;
     };
-  }, []);
+  }, [isLocalVoiceMode]);
 
   useEffect(() => {
     if (isOpen) {
@@ -623,6 +629,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                 ? 'Aura is speaking...'
                 : isThinking
                 ? 'Synthesizing real-time voice response...'
+                : isLocalVoiceMode
+                ? 'Tap microphone to transcribe on this device'
                 : 'Tap microphone below to talk'}
             </span>
 
@@ -663,13 +671,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               <div className="flex flex-col min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-semibold mb-0.5">
                   <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-                  <span>Hearing voice • Auto-answering on pause:</span>
+                  <span>
+                    {isLocalVoiceMode
+                      ? 'Device voice transcript:'
+                      : 'Hearing voice • Auto-answering on pause:'}
+                  </span>
                 </div>
                 <div className="truncate text-white font-medium italic text-xs">
                   "{liveTranscript}"
                 </div>
               </div>
-              <button
+              {!isLocalVoiceMode && <button
                 type="button"
                 onClick={() => {
                   speechEngine.unlockAudio();
@@ -680,7 +692,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               >
                 <span>Answer Now</span>
                 <Send className="w-3.5 h-3.5" />
-              </button>
+              </button>}
             </div>
           )}
         </div>
@@ -803,12 +815,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               type="text"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Talk or type with Aura..."
+              placeholder={isLocalVoiceMode ? 'Speak to transcribe, or edit transcript...' : 'Talk or type with Aura...'}
               className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
-              disabled={!textInput.trim()}
+              disabled={!textInput.trim() || isLocalVoiceMode}
+              title={isLocalVoiceMode ? 'AI replies require a configured backend' : 'Send message'}
               className="p-3 rounded-xl bg-slate-800 hover:bg-indigo-600 disabled:opacity-40 text-white transition-colors"
             >
               <Send className="w-4 h-4" />
