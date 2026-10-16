@@ -60,9 +60,9 @@ if (existsSync(manifestPath)) {
 
 if (existsSync(variablesPath)) {
   let vars = await readFile(variablesPath, 'utf8');
-  // Pin SDK to stable 35 to guarantee 100% launch stability across Android devices
-  vars = vars.replace(/compileSdkVersion\s*=\s*\d+/, 'compileSdkVersion = 35');
+  // compileSdkVersion must be 36 for androidx.core:core:1.17.0; targetSdkVersion set to 35 for device runtime compatibility
+  vars = vars.replace(/compileSdkVersion\s*=\s*\d+/, 'compileSdkVersion = 36');
   vars = vars.replace(/targetSdkVersion\s*=\s*\d+/, 'targetSdkVersion = 35');
   await writeFile(variablesPath, vars);
-  console.log(`Ensured Android SDK variables set to stable compile/target API 35.`);
+  console.log(`Ensured Android SDK variables set to compileSdkVersion = 36, targetSdkVersion = 35.`);
 }
