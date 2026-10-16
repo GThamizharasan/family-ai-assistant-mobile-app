@@ -14,10 +14,13 @@ WORKDIR /app
 # Copy package manifests
 COPY package*.json ./
 
-# Remove package-lock inside container to resolve cross-platform optional dependency bug (npm #4828)
+# Remove package-lock to avoid Windows optional dependency pinning in Linux container, then install all dependencies
 RUN rm -f package-lock.json && npm install --include=optional
 
-# Copy application code
+# Explicitly ensure Linux native bindings for Vite, Tailwind CSS (lightningcss), and Rolldown are present
+RUN npm install --no-save lightningcss-linux-x64-gnu @rolldown/binding-linux-x64-gnu @rollup/rollup-linux-x64-gnu || true
+
+# Copy application code (excluding node_modules via .dockerignore)
 COPY . .
 
 # Build client production bundle (Vite React 19 to dist/)

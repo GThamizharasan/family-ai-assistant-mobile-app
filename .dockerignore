@@ -1,10 +1,14 @@
 node_modules
+**/node_modules
 dist
 dev-dist
+build
 .git
 .github
 android
 .gmp_cache
+.vscode
+.idea
 *.log
 npm-debug.log*
 yarn-debug.log*
