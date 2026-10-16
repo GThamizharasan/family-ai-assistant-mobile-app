@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine, isIOSChrome } from '../services/speech';
-import { sendChatMessage } from '../services/api';
+import { sendChatMessage, getApiBaseUrl } from '../services/api';
+
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
@@ -59,7 +60,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [showMicHelp, setShowMicHelp] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const handleUserSpeechRef = useRef<(spokenText: string) => void>(() => {});
-  const isLocalVoiceMode = Capacitor.isNativePlatform() && !import.meta.env.VITE_API_BASE_URL;
+  const isLocalVoiceMode = Capacitor.isNativePlatform() && !getApiBaseUrl();
+
 
   const speakWithAuro = (
     text: string,

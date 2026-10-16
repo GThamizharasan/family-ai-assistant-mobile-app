@@ -1,5 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 
+export const DEFAULT_BACKEND_URL = 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
+
 export function getApiBaseUrl(): string {
   // 1. Runtime configured URL in localStorage (e.g. set from Hub Keys modal)
   if (typeof window !== 'undefined') {
@@ -15,7 +17,8 @@ export function getApiBaseUrl(): string {
     return envUrl;
   }
 
-  return '';
+  // 3. Active Google Cloud Run deployment URL
+  return DEFAULT_BACKEND_URL;
 }
 
 export function setApiBaseUrl(url: string) {

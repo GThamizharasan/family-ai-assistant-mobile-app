@@ -24,7 +24,7 @@ jobs:
 
       - name: Install Dependencies & Build Web App
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' }}
         run: |
           npm install --include=optional --force
           npm run build
