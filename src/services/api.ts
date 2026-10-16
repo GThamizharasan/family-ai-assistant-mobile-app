@@ -1,3 +1,14 @@
+import { Capacitor } from '@capacitor/core';
+
+const nativeApiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL ||
+  'https://ais-dev-v7juadaauum45rl6hebiav-946248252259.europe-west2.run.app'
+).replace(/\/+$/, '');
+
+export function getApiUrl(path: string): string {
+  return Capacitor.isNativePlatform() ? `${nativeApiBaseUrl}${path}` : path;
+}
+
 export async function sendChatMessage(payload: {
   message: string;
   history: { role: string; content: string }[];
@@ -6,7 +17,7 @@ export async function sendChatMessage(payload: {
   currentMood?: string;
   includeSpeechAudio?: boolean;
 }) {
-  const res = await fetch('/api/chat', {
+  const res = await fetch(getApiUrl('/api/chat'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -16,14 +27,14 @@ export async function sendChatMessage(payload: {
 }
 
 export async function transcribeAudioApi(audioBase64: string, mimeType = 'audio/webm') {
-  const res = await fetch('/api/ai/transcribe', {
+  const res = await fetch(getApiUrl('/api/ai/transcribe'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64, mimeType }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to transcribe audio with gemini-3.5-transcribe');
+    throw new Error(err.error || `HTTP ${res.status}: Failed to transcribe audio`);
   }
   return res.json();
 }
@@ -192,5 +203,3 @@ export async function getGcpBillingOptimizationApi(payload: {
   if (!res.ok) throw new Error('GCP billing optimization error');
   return res.json();
 }
-
-

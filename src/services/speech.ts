@@ -412,6 +412,7 @@ export class VoiceAssistantEngine {
         this.audioChunks = [];
 
         if (recordedBlob.size < 1000) {
+          this.onErrorCallback?.('No clear speech was captured. Please try speaking again.');
           return;
         }
 
@@ -422,11 +423,13 @@ export class VoiceAssistantEngine {
           if (result && result.text && result.text.trim()) {
             this.onTranscriptCallback?.(result.text.trim(), true);
           } else {
-            this.onTranscriptCallback?.('', false);
+            this.onErrorCallback?.('No speech was recognized. Please try speaking again.');
           }
         } catch (transcribeErr: any) {
           console.warn('Gemini audio transcription error:', transcribeErr);
-          this.onErrorCallback?.('Failed to transcribe voice. Please try again or type.');
+          const message =
+            transcribeErr instanceof Error ? transcribeErr.message : String(transcribeErr);
+          this.onErrorCallback?.(`Voice transcription failed: ${message}`);
         }
       };
 

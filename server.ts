@@ -45,6 +45,31 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+const nativeAppOrigins = new Set([
+  'capacitor://localhost',
+  'http://localhost',
+  'https://localhost',
+]);
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && nativeAppOrigins.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (origin && !nativeAppOrigins.has(origin)) {
+      return res.sendStatus(403);
+    }
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 // Helper to get GoogleGenAI client with required aistudio-build user agent
 function getAiClient(): GoogleGenAI {
   return new GoogleGenAI({
