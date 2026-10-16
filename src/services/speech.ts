@@ -1,6 +1,7 @@
 // Real-time Voice Recognition (STT), Web Audio Engine & Natural Empathetic Speech Synthesis (TTS)
 import { transcribeAudioApi } from './api';
 import { Capacitor } from '@capacitor/core';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 
 declare global {
   interface Window {
@@ -75,6 +76,8 @@ export class VoiceAssistantEngine {
   private speechDetectedDuringRecord: boolean = false;
   private recordSilenceTimer: any = null;
   private isUsingMediaRecorderFallback: boolean = false;
+  private nativeRecognitionSession = 0;
+  private isNativeRecognitionActive = false;
 
   // Callbacks
   public onTranscriptCallback?: (transcript: string, isFinal: boolean) => void;
@@ -257,6 +260,16 @@ export class VoiceAssistantEngine {
   }
 
   public async requestMicPermission(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const permission = await SpeechRecognition.requestPermissions();
+        return permission.speechRecognition === 'granted';
+      } catch (err) {
+        console.warn('Native speech permission request failed:', err);
+        return false;
+      }
+    }
+
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -301,8 +314,13 @@ export class VoiceAssistantEngine {
     this.latestTranscript = '';
     clearTimeout(this.silenceTimer);
 
+    if (Capacitor.isNativePlatform()) {
+      void this.startNativeSpeechRecognition();
+      return true;
+    }
+
     // Use getUserMedia in Capacitor WebViews so Android's WebView permission flow can grant capture.
-    if (this.recognition && !isIOSChrome() && !Capacitor.isNativePlatform()) {
+    if (this.recognition && !isIOSChrome()) {
       try {
         this.isUsingMediaRecorderFallback = false;
         this.recognition.start();
@@ -319,6 +337,64 @@ export class VoiceAssistantEngine {
       this.onErrorCallback?.(err?.message || 'Mic access failed');
     });
     return true;
+  }
+
+  private async startNativeSpeechRecognition(): Promise<void> {
+    const session = ++this.nativeRecognitionSession;
+
+    try {
+      const { available } = await SpeechRecognition.available();
+      if (!available) {
+        throw new Error('Speech recognition is unavailable. Enable a speech recognition service on your phone.');
+      }
+
+      const permission = await SpeechRecognition.requestPermissions();
+      if (permission.speechRecognition !== 'granted') {
+        this.onErrorCallback?.('not-allowed');
+        return;
+      }
+      if (session !== this.nativeRecognitionSession) return;
+
+      this.isNativeRecognitionActive = true;
+      this.isListening = true;
+      this.onListeningChange?.(true);
+      this.onTranscriptCallback?.('Listening (speak now)...', false);
+
+      const { matches } = await SpeechRecognition.start({
+        language: 'en-US',
+        maxResults: 1,
+        partialResults: false,
+        popup: false,
+      });
+
+      if (session !== this.nativeRecognitionSession) return;
+      const transcript = matches?.[0]?.trim();
+      if (transcript) {
+        this.latestTranscript = transcript;
+        this.onTranscriptCallback?.(transcript, true);
+      } else {
+        this.onErrorCallback?.('no-speech');
+      }
+    } catch (err) {
+      if (session !== this.nativeRecognitionSession) return;
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn('Native speech recognition failed:', err);
+      if (/permission|denied/i.test(message)) {
+        this.onErrorCallback?.('not-allowed');
+      } else if (/not available|recognition service|speech service/i.test(message)) {
+        this.onErrorCallback?.('Speech recognition is unavailable. Install or enable Speech Services by Google on your phone.');
+      } else if (/no match|no speech/i.test(message)) {
+        this.onErrorCallback?.('no-speech');
+      } else {
+        this.onErrorCallback?.(`Speech recognition failed: ${message}`);
+      }
+    } finally {
+      if (session === this.nativeRecognitionSession) {
+        this.isNativeRecognitionActive = false;
+        this.isListening = false;
+        this.onListeningChange?.(false);
+      }
+    }
   }
 
   private async startMediaRecorderListening(): Promise<boolean> {
@@ -480,6 +556,20 @@ export class VoiceAssistantEngine {
   }
 
   public stopListening() {
+    if (Capacitor.isNativePlatform()) {
+      this.nativeRecognitionSession++;
+      const wasActive = this.isNativeRecognitionActive;
+      this.isNativeRecognitionActive = false;
+      this.isListening = false;
+      this.onListeningChange?.(false);
+      if (wasActive) {
+        void SpeechRecognition.stop().catch((err) => {
+          console.warn('Unable to stop native speech recognition:', err);
+        });
+      }
+      return;
+    }
+
     clearTimeout(this.silenceTimer);
     clearTimeout(this.recordSilenceTimer);
     this.stopWebSpeech();

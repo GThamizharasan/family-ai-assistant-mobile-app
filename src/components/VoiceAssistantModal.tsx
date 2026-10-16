@@ -372,8 +372,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         audioBase64: result.audioBase64 || null,
       });
     } catch (err) {
+      console.error('Voice assistant chat request failed:', err);
       setIsThinking(false);
-      const fallbackReply = "I hear you, Thamizh. I've noted that into your encrypted local memory vault.";
+      const fallbackReply =
+        Capacitor.isNativePlatform() &&
+        err instanceof Error &&
+        err.message.includes('Mobile AI backend is not configured')
+          ? 'Voice recognition worked, but the AI backend is not configured for this APK. Configure VITE_API_BASE_URL to a public HTTPS backend and rebuild the app.'
+          : "I couldn't connect to the AI assistant service just now. Please check your connection and try again, or type your message below.";
       addVoiceMessage({
         role: 'assistant',
         content: fallbackReply,

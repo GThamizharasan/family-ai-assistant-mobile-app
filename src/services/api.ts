@@ -1,12 +1,13 @@
 import { Capacitor } from '@capacitor/core';
 
-const nativeApiBaseUrl = (
-  import.meta.env.VITE_API_BASE_URL ||
-  'https://ais-dev-v7juadaauum45rl6hebiav-946248252259.europe-west2.run.app'
-).replace(/\/+$/, '');
+const nativeApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
 export function getApiUrl(path: string): string {
-  return Capacitor.isNativePlatform() ? `${nativeApiBaseUrl}${path}` : path;
+  if (!Capacitor.isNativePlatform()) return path;
+  if (!nativeApiBaseUrl) {
+    throw new Error('Mobile AI backend is not configured. Set VITE_API_BASE_URL to your publicly accessible backend before building the APK.');
+  }
+  return `${nativeApiBaseUrl}${path}`;
 }
 
 export async function sendChatMessage(payload: {
