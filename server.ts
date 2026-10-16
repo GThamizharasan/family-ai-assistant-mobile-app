@@ -72,8 +72,22 @@ app.use((req, res, next) => {
 
 // Helper to get GoogleGenAI client with required aistudio-build user agent
 function getAiClient(): GoogleGenAI {
+  let apiKey = process.env.GEMINI_API_KEY || '';
+  if (!apiKey) {
+    try {
+      const keys = getHubApiKeysFromSqlite();
+      const geminiRecord = keys.find((k) => k.keyName === 'GEMINI_API_KEY');
+      if (geminiRecord?.keyValue) {
+        apiKey = geminiRecord.keyValue;
+        process.env.GEMINI_API_KEY = apiKey;
+      }
+    } catch {
+      // SQLite store may still be initializing
+    }
+  }
+
   return new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY || '',
+    apiKey,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -87,8 +101,27 @@ if (process.env.GEMINI_API_KEY) {
   ai = getAiClient();
 }
 
+function refreshAiClient(): GoogleGenAI | null {
+  if (ai && process.env.GEMINI_API_KEY) return ai;
+  try {
+    const keys = getHubApiKeysFromSqlite();
+    const geminiRecord = keys.find((k) => k.keyName === 'GEMINI_API_KEY');
+    if (geminiRecord?.keyValue) {
+      process.env.GEMINI_API_KEY = geminiRecord.keyValue;
+      ai = getAiClient();
+      return ai;
+    }
+  } catch {}
+  if (process.env.GEMINI_API_KEY) {
+    ai = getAiClient();
+    return ai;
+  }
+  return null;
+}
+
 // API Status & Key Diagnostics (instant, non-blocking)
 app.get('/api/health', (_req, res) => {
+  refreshAiClient();
   const hasKey = !!process.env.GEMINI_API_KEY;
   res.json({
     status: 'ok',
@@ -233,6 +266,8 @@ app.get('/api/camera/snapshot', (req, res) => {
 app.post('/api/chat', async (req, res) => {
   try {
     const { message, history, context, userProfile, currentMood } = req.body;
+
+    refreshAiClient();
 
     if (!ai) {
       return res.json({
@@ -2133,6 +2168,24 @@ async function startServer() {
   // Initialize SQLite Persistent Data Store before handling traffic
   await initSqliteDb();
   console.log('[AuraFamily] SQLite persistent store ready for multi-instance communication.');
+
+  // Auto-restore Hub API Keys from SQLite to process.env and initialize Gemini AI client
+  try {
+    const storedKeys = getHubApiKeysFromSqlite();
+    for (const k of storedKeys) {
+      if (k.keyValue && !process.env[k.keyName]) {
+        process.env[k.keyName] = k.keyValue;
+      }
+    }
+    const geminiRecord = storedKeys.find((k) => k.keyName === 'GEMINI_API_KEY');
+    if (geminiRecord?.keyValue) {
+      process.env.GEMINI_API_KEY = geminiRecord.keyValue;
+      ai = getAiClient();
+      console.log('[AuraFamily] Gemini AI Client successfully restored and active from SQLite store.');
+    }
+  } catch (keyErr) {
+    console.warn('[AuraFamily] Notice restoring API keys from SQLite on boot:', keyErr);
+  }
 
   // Handle Family Relay WebSocket Connections
   familyRelayWss.on('connection', (ws: WebSocket) => {
