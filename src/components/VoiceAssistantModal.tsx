@@ -103,11 +103,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     };
     speechEngine.onErrorCallback = (error) => {
       if (error === 'not-allowed' || error === 'permission-denied') {
-        setMicStatusMessage('Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.');
+        setMicStatusMessage(
+          Capacitor.isNativePlatform()
+            ? 'Microphone access is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone and allow access.'
+            : 'Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.'
+        );
       } else if (error === 'no-speech') {
         // Silent timeout
       } else if (error === 'audio-capture') {
         setMicStatusMessage('No microphone detected. Please connect or enable your microphone.');
+      } else if (error === 'device-busy') {
+        setMicStatusMessage('The microphone is being used by another app. Close other apps using the microphone, then try again.');
       } else {
         setMicStatusMessage(`Microphone status: ${error}. You can also type your message below.`);
       }
@@ -387,15 +393,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       speechEngine.stopSpeaking();
       if (isIOSChrome()) {
         setMicStatusMessage('Apple iOS WebKit restricts speech recognition in Chrome. On iPhone, please use Safari for voice dictation, or type your message below.');
-        return;
-      }
-      const hasPermission = await speechEngine.requestMicPermission();
-      if (!hasPermission) {
-        setMicStatusMessage(
-          Capacitor.isNativePlatform()
-            ? 'Microphone permission is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone, allow access, then try again.'
-            : 'Microphone access is blocked. Use the site permissions control in your browser to allow microphone access, then try again.'
-        );
         return;
       }
       const started = speechEngine.startListening();

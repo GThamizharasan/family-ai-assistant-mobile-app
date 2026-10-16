@@ -1,5 +1,6 @@
 // Real-time Voice Recognition (STT), Web Audio Engine & Natural Empathetic Speech Synthesis (TTS)
 import { transcribeAudioApi } from './api';
+import { Capacitor } from '@capacitor/core';
 
 declare global {
   interface Window {
@@ -300,8 +301,8 @@ export class VoiceAssistantEngine {
     this.latestTranscript = '';
     clearTimeout(this.silenceTimer);
 
-    // Prefer native Web Speech Recognition for instantaneous zero-latency streaming
-    if (this.recognition && !isIOSChrome()) {
+    // Use getUserMedia in Capacitor WebViews so Android's WebView permission flow can grant capture.
+    if (this.recognition && !isIOSChrome() && !Capacitor.isNativePlatform()) {
       try {
         this.isUsingMediaRecorderFallback = false;
         this.recognition.start();
@@ -435,7 +436,15 @@ export class VoiceAssistantEngine {
       console.warn('getUserMedia mic error:', err);
       this.isListening = false;
       this.onListeningChange?.(false);
-      this.onErrorCallback?.('Microphone permission denied or device busy');
+      if (['NotAllowedError', 'PermissionDeniedError', 'SecurityError'].includes(err?.name)) {
+        this.onErrorCallback?.('not-allowed');
+      } else if (['NotFoundError', 'DevicesNotFoundError'].includes(err?.name)) {
+        this.onErrorCallback?.('audio-capture');
+      } else if (['NotReadableError', 'TrackStartError', 'AbortError'].includes(err?.name)) {
+        this.onErrorCallback?.('device-busy');
+      } else {
+        this.onErrorCallback?.(err?.message || 'Microphone capture failed');
+      }
       return false;
     }
   }

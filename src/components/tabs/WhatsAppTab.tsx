@@ -215,11 +215,6 @@ export const WhatsAppTab: React.FC<WhatsAppTabProps> = ({ initialContactId, onOp
         showToast('iOS Chrome restricts speech recognition. Please use Safari on iPhone or type your message.');
         return;
       }
-      const allowed = await speechEngine.requestMicPermission();
-      if (!allowed) {
-        showToast('Please enable microphone access in browser.');
-        return;
-      }
       setIsDictating(true);
       speechEngine.onTranscriptCallback = (transcript, isFinal) => {
         setReplyText(transcript);
@@ -227,6 +222,14 @@ export const WhatsAppTab: React.FC<WhatsAppTabProps> = ({ initialContactId, onOp
           setIsDictating(false);
           speechEngine.stopListening();
         }
+      };
+      speechEngine.onErrorCallback = (error) => {
+        setIsDictating(false);
+        showToast(
+          error === 'not-allowed'
+            ? 'Please allow microphone access in Android Settings or your browser site permissions.'
+            : `Voice dictation failed: ${error}`
+        );
       };
       const started = speechEngine.startListening();
       if (!started) {

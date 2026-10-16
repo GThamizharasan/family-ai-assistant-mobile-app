@@ -5,6 +5,7 @@ const manifestPath = 'android/app/src/main/AndroidManifest.xml';
 const androidNamespace = 'http://schemas.android.com/apk/res/android';
 const requiredPermissions = [
   'android.permission.RECORD_AUDIO',
+  'android.permission.MODIFY_AUDIO_SETTINGS',
   'android.permission.CAMERA',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_FINE_LOCATION',
