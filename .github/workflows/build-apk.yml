@@ -51,11 +51,10 @@ jobs:
           export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
           
           yes | sdkmanager --licenses
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager "platform-tools" "platforms;android-34" "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0"
 
-      - name: Install Capacitor & Add Android Platform
+      - name: Setup Android Platform & Permissions
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync
           node scripts/ensure-android-permissions.mjs

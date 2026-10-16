@@ -37,13 +37,9 @@ export function getApiUrl(path: string): string {
     return `${baseUrl}${cleanPath}`;
   }
 
-  // When running inside Capacitor native Android/iOS
-  if (Capacitor.isNativePlatform()) {
-    throw new Error(
-      'Backend Server URL is not configured. Please open Keys & SQLite in the app and set your Backend Hub URL (e.g., http://192.168.1.X:3000 or https://your-app.run.app).'
-    );
-  }
-
+  // When running inside Capacitor native Android/iOS without a configured backend URL,
+  // return cleanPath safely rather than throwing a synchronous exception.
+  // This allows the app UI to boot up cleanly so the user can configure their Cloud Run URL in Keys & SQLite.
   return cleanPath;
 }
 
@@ -68,6 +64,13 @@ export function getWsUrl(path: string): string {
 }
 
 export async function safeFetchJson<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const baseUrl = getApiBaseUrl();
+  if (Capacitor.isNativePlatform() && !baseUrl) {
+    throw new Error(
+      'Backend Server URL is not configured. Please open Keys & SQLite in the app and set your Backend Hub URL (e.g. your Cloud Run service URL https://...run.app).'
+    );
+  }
+
   const fullUrl = getApiUrl(path);
   let res: Response;
   try {

@@ -1070,19 +1070,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Sync server-authoritative activation codes on mount
   useEffect(() => {
-    fetch(getApiUrl('/api/family/codes'))
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.success && Array.isArray(data.codes)) {
-          setActivationCodes((prev) => {
-            const map = new Map<string, ActivationCode>();
-            prev.forEach((c) => map.set(normalizeFamilyCode(c.code), c));
-            data.codes.forEach((c: ActivationCode) => map.set(normalizeFamilyCode(c.code), c));
-            return Array.from(map.values());
-          });
-        }
-      })
-      .catch(() => {});
+    try {
+      const url = getApiUrl('/api/family/codes');
+      if (!url) return;
+      fetch(url)
+        .then((res) => {
+          if (!res.ok) return null;
+          const ctype = res.headers.get('content-type') || '';
+          if (!ctype.includes('application/json')) return null;
+          return res.json();
+        })
+        .then((data) => {
+          if (data?.success && Array.isArray(data.codes)) {
+            setActivationCodes((prev) => {
+              const map = new Map<string, ActivationCode>();
+              prev.forEach((c) => map.set(normalizeFamilyCode(c.code), c));
+              data.codes.forEach((c: ActivationCode) => map.set(normalizeFamilyCode(c.code), c));
+              return Array.from(map.values());
+            });
+          }
+        })
+        .catch(() => {});
+    } catch {}
   }, []);
 
   const sendIntercomPing = (
