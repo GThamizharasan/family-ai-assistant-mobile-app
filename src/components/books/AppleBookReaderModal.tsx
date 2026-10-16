@@ -38,6 +38,7 @@ import { getPdfFromStorage, safeSetLocalStorage } from '../../utils/pdfStorage';
 import { generateReadablePdfDocumentUrl, extractPdfChaptersAndPages } from '../../utils/pdfHelper';
 import { getPageContent, PageContent } from '../../utils/paginationHelper';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { safeFetchJson } from '../../services/api';
 
 interface AppleBookReaderModalProps {
   book: Book;
@@ -465,7 +466,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
     try {
       const context = `Book: "${safeBook.title}" by ${safeBook.author}. Current Page ${currentPage}: "${pageData.chapterTitle}". Text: ${pageData.paragraphs.join(' ')}`;
-      const res = await fetch('/api/chat', {
+      const data = await safeFetchJson('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -473,7 +474,6 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           currentMood: 'scholarly & insightful',
         }),
       });
-      const data = await res.json();
       const reply = data.reply || 'Here is an insightful perspective based on this page.';
       setAiAnswers((prev) => [{ q, a: reply }, ...prev]);
     } catch {

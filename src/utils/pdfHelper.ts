@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { Book, Chapter } from '../types/book';
 import { savePdfToStorage } from './pdfStorage';
+import { getApiUrl } from '../services/api';
 
 // Configure PDF.js worker safely for Vite / Browser environment
 if (typeof window !== 'undefined' && 'Worker' in window) {
@@ -439,7 +440,7 @@ export async function syncBookToSqlite(
   deviceId = 'web-browser'
 ): Promise<boolean> {
   try {
-    const res = await fetch('/api/family/sync', {
+    const res = await fetch(getApiUrl('/api/family/sync'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

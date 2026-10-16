@@ -10,6 +10,8 @@
  * 7. Create & Edit Images (gemini-nano-banana-2.1)
  */
 
+import { getApiUrl } from './api';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
@@ -118,7 +120,7 @@ export async function transcribeAudio(
   const audioBase64 = await blobToBase64(audioBlob);
   const mimeType = audioBlob.type || 'audio/webm';
 
-  const res = await fetch('/api/ai/transcribe', {
+  const res = await fetch(getApiUrl('/api/ai/transcribe'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64, mimeType, prompt }),
@@ -138,7 +140,7 @@ export async function generateVideoFromText(
   aspectRatio: '16:9' | '9:16' = '16:9',
   resolution: '720p' | '1080p' = '720p'
 ): Promise<{ operationName: string; modelUsed: string; aspectRatio: string }> {
-  const res = await fetch('/api/ai/generate-video', {
+  const res = await fetch(getApiUrl('/api/ai/generate-video'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, aspectRatio, resolution }),
@@ -191,7 +193,7 @@ export async function animateImageToVideo(
     imageBase64 = await blobToBase64(imageSource);
   }
 
-  const res = await fetch('/api/ai/image-to-video', {
+  const res = await fetch(getApiUrl('/api/ai/image-to-video'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ imageBase64, mimeType, prompt, aspectRatio, resolution }),
@@ -209,7 +211,7 @@ export async function animateImageToVideo(
 export async function pollVideoOperation(
   operationName: string
 ): Promise<{ done: boolean; hasVideo: boolean; error?: any }> {
-  const res = await fetch('/api/ai/video-status', {
+  const res = await fetch(getApiUrl('/api/ai/video-status'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ operationName }),
@@ -225,7 +227,7 @@ export async function pollVideoOperation(
 
 // Download/Fetch Video from Backend
 export async function fetchCompletedVideoBlob(operationName: string): Promise<string> {
-  const res = await fetch('/api/ai/video-download', {
+  const res = await fetch(getApiUrl('/api/ai/video-download'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ operationName }),
@@ -250,7 +252,7 @@ export async function sendMultiTurnChat(
     customSystemInstruction?: string;
   } = {}
 ): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string }> {
-  const res = await fetch('/api/ai/chat-multiturn', {
+  const res = await fetch(getApiUrl('/api/ai/chat-multiturn'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -303,7 +305,7 @@ export async function generateMusic(
     }
   }
 
-  const res = await fetch('/api/ai/generate-music', {
+  const res = await fetch(getApiUrl('/api/ai/generate-music'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, mode, imageBase64, mimeType }),
@@ -372,7 +374,7 @@ export async function generateOrEditImage(
     }
   }
 
-  const res = await fetch('/api/ai/image-studio', {
+  const res = await fetch(getApiUrl('/api/ai/image-studio'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -406,7 +408,7 @@ export async function converseLiveTurn(
     audioBase64 = await blobToBase64(audioBlob);
   }
 
-  const res = await fetch('/api/ai/live-converse', {
+  const res = await fetch(getApiUrl('/api/ai/live-converse'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64, mimeType, textPrompt }),

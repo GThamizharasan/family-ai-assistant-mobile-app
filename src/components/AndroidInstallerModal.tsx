@@ -15,6 +15,7 @@ import {
   Play,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { safeFetchJson } from '../services/api';
 
 interface AndroidInstallerModalProps {
   isOpen: boolean;
@@ -46,8 +47,7 @@ export const AndroidInstallerModal: React.FC<AndroidInstallerModalProps> = ({ is
   const checkApiHealth = async () => {
     setApiHealth((prev) => ({ ...prev, loading: true }));
     try {
-      const res = await fetch('/api/health');
-      const data = await res.json();
+      const data = await safeFetchJson('/api/health');
       setApiHealth({
         loading: false,
         connected: data.geminiApiKeyConnected,

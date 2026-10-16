@@ -1,13 +1,93 @@
 import { Capacitor } from '@capacitor/core';
 
-const nativeApiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+export function getApiBaseUrl(): string {
+  // 1. Runtime configured URL in localStorage (e.g. set from Hub Keys modal)
+  if (typeof window !== 'undefined') {
+    const runtimeUrl = localStorage.getItem('aura_api_base_url');
+    if (runtimeUrl && runtimeUrl.trim()) {
+      return runtimeUrl.trim().replace(/\/+$/, '');
+    }
+  }
+
+  // 2. Vite build-time environment variable
+  const envUrl = (import.meta.env.VITE_API_BASE_URL as string || '').trim().replace(/\/+$/, '');
+  if (envUrl) {
+    return envUrl;
+  }
+
+  return '';
+}
+
+export function setApiBaseUrl(url: string) {
+  if (typeof window !== 'undefined') {
+    const clean = url.trim().replace(/\/+$/, '');
+    if (clean) {
+      localStorage.setItem('aura_api_base_url', clean);
+    } else {
+      localStorage.removeItem('aura_api_base_url');
+    }
+  }
+}
 
 export function getApiUrl(path: string): string {
-  if (!Capacitor.isNativePlatform()) return path;
-  if (!nativeApiBaseUrl) {
-    throw new Error('Mobile AI backend is not configured. Set VITE_API_BASE_URL to your publicly accessible backend before building the APK.');
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  const baseUrl = getApiBaseUrl();
+
+  if (baseUrl) {
+    return `${baseUrl}${cleanPath}`;
   }
-  return `${nativeApiBaseUrl}${path}`;
+
+  // When running inside Capacitor native Android/iOS
+  if (Capacitor.isNativePlatform()) {
+    throw new Error(
+      'Backend Server URL is not configured. Please open Keys & SQLite in the app and set your Backend Hub URL (e.g., http://192.168.1.X:3000 or https://your-app.run.app).'
+    );
+  }
+
+  return cleanPath;
+}
+
+export function getWsUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  const baseUrl = getApiBaseUrl();
+
+  if (baseUrl) {
+    const wsBase = baseUrl.replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+    return `${wsBase}${cleanPath}`;
+  }
+
+  if (typeof window !== 'undefined') {
+    if (Capacitor.isNativePlatform()) {
+      return '';
+    }
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}${cleanPath}`;
+  }
+
+  return cleanPath;
+}
+
+export async function safeFetchJson<T = any>(path: string, options?: RequestInit): Promise<T> {
+  const fullUrl = getApiUrl(path);
+  let res: Response;
+  try {
+    res = await fetch(fullUrl, options);
+  } catch (netErr: any) {
+    throw new Error(`Cannot connect to backend server at ${fullUrl}: ${netErr.message || 'Network unreachable'}. Verify your backend server is running.`);
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const rawText = await res.text();
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}: ${rawText.slice(0, 150)}`);
+    }
+    throw new Error(
+      `Received HTML instead of JSON from ${fullUrl}. Ensure your Backend Server URL is set to your running server.ts host (e.g., http://192.168.1.X:3000).`
+    );
+  }
+
+  return res.json();
 }
 
 export async function sendChatMessage(payload: {
@@ -18,39 +98,27 @@ export async function sendChatMessage(payload: {
   currentMood?: string;
   includeSpeechAudio?: boolean;
 }) {
-  const res = await fetch(getApiUrl('/api/chat'), {
+  return safeFetchJson('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Chat service error');
-  return res.json();
 }
 
 export async function transcribeAudioApi(audioBase64: string, mimeType = 'audio/webm') {
-  const res = await fetch(getApiUrl('/api/ai/transcribe'), {
+  return safeFetchJson('/api/ai/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ audioBase64, mimeType }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}: Failed to transcribe audio`);
-  }
-  return res.json();
 }
 
 export async function synthesizeSpeechApi(text: string, voiceName = 'Kore') {
-  const res = await fetch('/api/ai/tts', {
+  return safeFetchJson('/api/ai/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voiceName }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Speech synthesis failed');
-  }
-  return res.json();
 }
 
 export async function summarizeDocumentApi(payload: {
@@ -58,26 +126,22 @@ export async function summarizeDocumentApi(payload: {
   fileContent: string;
   fileType: string;
 }) {
-  const res = await fetch('/api/summarize-document', {
+  return safeFetchJson('/api/summarize-document', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Summarization error');
-  return res.json();
 }
 
 export async function getWritingFeedbackApi(payload: {
   draftText: string;
   targetTone: string;
 }) {
-  const res = await fetch('/api/writing-coach', {
+  return safeFetchJson('/api/writing-coach', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Writing coach error');
-  return res.json();
 }
 
 export async function getBillionaireAdvisoryApi(payload: {
@@ -85,13 +149,11 @@ export async function getBillionaireAdvisoryApi(payload: {
   focusIndustry: string;
   questions: string;
 }) {
-  const res = await fetch('/api/billionaire-advisory', {
+  return safeFetchJson('/api/billionaire-advisory', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Billionaire advisory error');
-  return res.json();
 }
 
 export async function getFinancialInsightsApi(payload: {
@@ -100,13 +162,11 @@ export async function getFinancialInsightsApi(payload: {
   expensesByCategory: Record<string, number>;
   savingsGoal: string;
 }) {
-  const res = await fetch('/api/financial-insights', {
+  return safeFetchJson('/api/financial-insights', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Financial insights error');
-  return res.json();
 }
 
 export async function getWellnessPlanApi(payload: {
@@ -116,43 +176,35 @@ export async function getWellnessPlanApi(payload: {
   activityLevel: string;
   energyScore: number;
 }) {
-  const res = await fetch('/api/wellness-plan', {
+  return safeFetchJson('/api/wellness-plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Wellness plan error');
-  return res.json();
 }
 
 export async function searchGoogleOneApi(query: string) {
-  const res = await fetch('/api/google-search-sync', {
+  return safeFetchJson('/api/google-search-sync', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ query }),
   });
-  if (!res.ok) throw new Error('Google One search error');
-  return res.json();
 }
 
 export async function summarizeEmailsApi(emails: any[]) {
-  const res = await fetch('/api/summarize-emails', {
+  return safeFetchJson('/api/summarize-emails', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ emails }),
   });
-  if (!res.ok) throw new Error('Email summarization error');
-  return res.json();
 }
 
 export async function summarizeCalendarEventsApi(events: any[]) {
-  const res = await fetch('/api/summarize-calendar', {
+  return safeFetchJson('/api/summarize-calendar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ events }),
   });
-  if (!res.ok) throw new Error('Calendar briefing error');
-  return res.json();
 }
 
 export async function getWhatsAppReplyApi(payload: {
@@ -163,13 +215,11 @@ export async function getWhatsAppReplyApi(payload: {
   userEmail?: string;
   tone?: string;
 }) {
-  const res = await fetch('/api/whatsapp-reply', {
+  return safeFetchJson('/api/whatsapp-reply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('WhatsApp AI reply error');
-  return res.json();
 }
 
 export async function summarizeCallApi(payload: {
@@ -180,13 +230,11 @@ export async function summarizeCallApi(payload: {
   relationship?: string;
   userName?: string;
 }) {
-  const res = await fetch('/api/summarize-call', {
+  return safeFetchJson('/api/summarize-call', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('Call summarization error');
-  return res.json();
 }
 
 export async function getGcpBillingOptimizationApi(payload: {
@@ -196,11 +244,9 @@ export async function getGcpBillingOptimizationApi(payload: {
   services?: any[];
   userEmail?: string;
 }) {
-  const res = await fetch('/api/gcp-billing-optimize', {
+  return safeFetchJson('/api/gcp-billing-optimize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error('GCP billing optimization error');
-  return res.json();
 }

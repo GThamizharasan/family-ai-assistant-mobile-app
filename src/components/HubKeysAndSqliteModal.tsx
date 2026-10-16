@@ -19,8 +19,16 @@ import {
   Save,
   MessageSquare,
   Lock,
+  Server,
+  Wifi,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import {
+  getApiUrl,
+  safeFetchJson,
+  getApiBaseUrl,
+  setApiBaseUrl,
+} from '../services/api';
 
 interface HubKeysAndSqliteModalProps {
   isOpen: boolean;
@@ -33,6 +41,11 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
 }) => {
   const { user } = useApp();
   const [activeTab, setActiveTab] = useState<'keys' | 'sqlite'>('keys');
+
+  // Backend Host URL (Essential for Android/Capacitor mobile instances)
+  const [backendUrl, setBackendUrl] = useState('');
+  const [serverPingStatus, setServerPingStatus] = useState<string | null>(null);
+  const [isPingingServer, setIsPingingServer] = useState(false);
 
   // Keys form state
   const [geminiKey, setGeminiKey] = useState('');
@@ -58,6 +71,10 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    // Load Backend Host URL
+    const existingBackendUrl = getApiBaseUrl();
+    setBackendUrl(existingBackendUrl);
+
     // Load from localStorage
     setGoogleMapsKey(
       localStorage.getItem('aura_google_maps_key') ||
@@ -75,11 +92,13 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
     setGcpProjectId(localStorage.getItem('aura_gcp_project_id') || 'gen-lang-client-094624825225');
 
     // Fetch live backend config
-    fetch('/api/config/keys')
-      .then((r) => r.json())
+    safeFetchJson('/api/config/keys')
       .then((data) => {
         if (data.success && Array.isArray(data.keys)) {
-          // prefill keys if available
+          const gKey = data.keys.find((k: any) => k.keyName === 'GEMINI_API_KEY');
+          if (gKey && !geminiKey) {
+            // Keep masked or configured indicator
+          }
         }
       })
       .catch(() => {});
@@ -90,18 +109,38 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
   const loadSqliteData = async () => {
     setIsLoadingSqlite(true);
     try {
-      const [statsRes, commsRes] = await Promise.all([
-        fetch('/api/sqlite/status'),
-        fetch('/api/sqlite/communications?limit=15'),
+      const [stats, comms] = await Promise.all([
+        safeFetchJson('/api/sqlite/status'),
+        safeFetchJson('/api/sqlite/communications?limit=15'),
       ]);
-      const stats = await statsRes.json();
-      const comms = await commsRes.json();
       if (stats.success) setSqliteStats(stats);
       if (comms.success) setSqliteComms(comms.communications || []);
-    } catch (err) {
-      console.warn('Failed to load SQLite telemetry:', err);
+    } catch (err: any) {
+      console.warn('Failed to load SQLite telemetry:', err.message);
     } finally {
       setIsLoadingSqlite(false);
+    }
+  };
+
+  const handleTestServerPing = async () => {
+    setIsPingingServer(true);
+    setServerPingStatus(null);
+    try {
+      if (backendUrl.trim()) {
+        setApiBaseUrl(backendUrl.trim());
+      }
+      const start = Date.now();
+      const data = await safeFetchJson('/api/health');
+      const elapsed = Date.now() - start;
+      setServerPingStatus(
+        `✅ Connected (${elapsed}ms)! Model: ${data.model || 'gemini-3.8-flash'} • Gemini Key in SQLite: ${
+          data.geminiApiKeyConnected ? 'Active' : 'Missing key'
+        }`
+      );
+    } catch (err: any) {
+      setServerPingStatus(`❌ Connection failed: ${err.message}`);
+    } finally {
+      setIsPingingServer(false);
     }
   };
 
@@ -109,7 +148,14 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
     setIsSaving(true);
     setSaveMessage(null);
     try {
-      // 1. Save to localStorage for client-side components
+      // 1. Save Backend Server Host
+      if (backendUrl.trim()) {
+        setApiBaseUrl(backendUrl.trim());
+      } else {
+        setApiBaseUrl('');
+      }
+
+      // 2. Save to localStorage for client-side components
       localStorage.setItem('aura_google_maps_key', googleMapsKey.trim());
       localStorage.setItem('aura_google_client_id', googleClientId.trim());
       localStorage.setItem('aura_gemini_key', geminiKey.trim());
@@ -117,7 +163,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       localStorage.setItem('aura_wa_phone_id', whatsAppPhoneId.trim());
       localStorage.setItem('aura_gcp_project_id', gcpProjectId.trim());
 
-      // 2. Persist each key to SQLite and server process.env via /api/config/keys
+      // 3. Persist each key to SQLite and server process.env via /api/config/keys
       const keysToSave = [
         { keyName: 'GOOGLE_MAPS_API_KEY', keyValue: googleMapsKey.trim(), description: 'Google Maps GPS & Geocoding Key' },
         { keyName: 'GEMINI_API_KEY', keyValue: geminiKey.trim(), description: 'Google Gemini 3.8 AI & Live Voice API Key' },
@@ -128,14 +174,14 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       ];
 
       for (const k of keysToSave) {
-        await fetch('/api/config/keys', {
+        await safeFetchJson('/api/config/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(k),
         });
       }
 
-      setSaveMessage('All API keys saved to SQLite data store & applied immediately!');
+      setSaveMessage('All API keys & Backend URL saved to SQLite store & applied immediately!');
       setTimeout(() => setSaveMessage(null), 4000);
       loadSqliteData();
     } catch (err: any) {
@@ -149,7 +195,28 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
     setIsTestingGemini(true);
     setGeminiTestStatus(null);
     try {
-      const res = await fetch('/api/chat', {
+      if (backendUrl.trim()) {
+        setApiBaseUrl(backendUrl.trim());
+      }
+
+      // Ensure key is saved to SQLite first
+      if (geminiKey.trim()) {
+        try {
+          await safeFetchJson('/api/config/keys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              keyName: 'GEMINI_API_KEY',
+              keyValue: geminiKey.trim(),
+              description: 'Google Gemini 3.8 AI & Live Voice API Key',
+            }),
+          });
+        } catch {
+          // continue
+        }
+      }
+
+      const data = await safeFetchJson('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -157,14 +224,14 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
           userProfile: { email: user.email },
         }),
       });
-      const data = await res.json();
+
       if (data.reply) {
         setGeminiTestStatus(`Gemini Verified: "${data.reply.slice(0, 80)}..."`);
       } else {
         setGeminiTestStatus('Gemini API replied successfully.');
       }
     } catch (err: any) {
-      setGeminiTestStatus(`Gemini response: ${err.message}`);
+      setGeminiTestStatus(`Gemini test notice: ${err.message}`);
     } finally {
       setIsTestingGemini(false);
     }
@@ -173,7 +240,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
   const handleSendTestSqlitePing = async () => {
     setPingMessage(null);
     try {
-      const res = await fetch('/api/family/relay', {
+      const data = await safeFetchJson('/api/family/relay', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -187,7 +254,6 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
           },
         }),
       });
-      const data = await res.json();
       if (data.success) {
         setPingMessage(`Stored in SQLite (commId: ${data.commId}). Relayed to all instances.`);
         loadSqliteData();
@@ -216,7 +282,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Configure Google Maps, Gemini AI, OAuth & SQLite inter-instance communications
+                Configure Backend Host, Gemini AI, Google Maps & SQLite inter-instance store
               </p>
             </div>
           </div>
@@ -239,7 +305,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
             }`}
           >
             <Key className="w-3.5 h-3.5" />
-            <span>API Keys Configuration</span>
+            <span>API Keys & Backend Host</span>
           </button>
           <button
             onClick={() => {
@@ -266,26 +332,37 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
         <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
           {activeTab === 'keys' && (
             <div className="space-y-4">
-              {/* Google Maps API Key Card */}
-              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+              {/* Backend Hub Server URL Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-950 border border-indigo-500/40 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Google Maps API Key</span>
+                  <label className="font-semibold text-white flex items-center gap-1.5">
+                    <Server className="w-4 h-4 text-indigo-400" />
+                    <span>Backend Server Hub URL (Node.js Server Host)</span>
                   </label>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20 font-medium">
-                    Map, Radar & GPS Telemetry
-                  </span>
+                  <button
+                    type="button"
+                    onClick={handleTestServerPing}
+                    disabled={isPingingServer}
+                    className="text-[10px] px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 font-medium transition-colors border border-indigo-500/30 flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-2.5 h-2.5 ${isPingingServer ? 'animate-spin' : ''}`} />
+                    <span>{isPingingServer ? 'Connecting...' : 'Test Server Ping'}</span>
+                  </button>
                 </div>
                 <input
                   type="text"
-                  placeholder="AIzaSy..."
-                  value={googleMapsKey}
-                  onChange={(e) => setGoogleMapsKey(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-blue-500 text-xs"
+                  placeholder="http://192.168.1.100:3000 or https://your-app.run.app"
+                  value={backendUrl}
+                  onChange={(e) => setBackendUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-indigo-500/40 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-400 text-xs"
                 />
-                <p className="text-[11px] text-slate-400">
-                  Used by the Live Family GPS Map, place search, and radar geofencing. Pre-populated with verified key.
+                {serverPingStatus && (
+                  <p className="text-[11px] p-2 rounded-lg bg-slate-950/80 border border-slate-800 font-mono text-slate-200">
+                    {serverPingStatus}
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  <strong>Crucial for Mobile App:</strong> In the Android/iOS app, enter the local Wi-Fi IP of your PC running <code className="text-indigo-300">server.ts</code> (e.g. <code className="text-indigo-300">http://192.168.X.X:3000</code>) or your public cloud URL so the mobile app can reach the SQLite database and Gemini AI.
                 </p>
               </div>
 
@@ -319,7 +396,30 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                   </p>
                 )}
                 <p className="text-[11px] text-slate-400">
-                  Powers Aura conversational AI, Live Voice Companion, document summaries, and billionaire roadmap advisory.
+                  Stored directly in SQLite (<code className="text-purple-300">hub_api_keys</code>). Powers Aura conversational AI, Live Voice Companion, document summaries, and billionaire roadmap advisory.
+                </p>
+              </div>
+
+              {/* Google Maps API Key Card */}
+              <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Google Maps API Key</span>
+                  </label>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20 font-medium">
+                    Map, Radar & GPS Telemetry
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  placeholder="AIzaSy..."
+                  value={googleMapsKey}
+                  onChange={(e) => setGoogleMapsKey(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-blue-500 text-xs"
+                />
+                <p className="text-[11px] text-slate-400">
+                  Used by the Live Family GPS Map, place search, and radar geofencing. Pre-populated with verified key.
                 </p>
               </div>
 
@@ -408,7 +508,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                 className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all active:scale-98"
               >
                 <Save className="w-4 h-4" />
-                <span>{isSaving ? 'Saving to SQLite...' : 'Save All Keys to SQLite & Runtime'}</span>
+                <span>{isSaving ? 'Saving to SQLite...' : 'Save All Keys & Backend Host to SQLite'}</span>
               </button>
             </div>
           )}

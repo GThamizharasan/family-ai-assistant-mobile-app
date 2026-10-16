@@ -10,6 +10,8 @@
  * 5. State synchronization across devices
  */
 
+import { getWsUrl } from './api';
+
 export interface ConnectedPeer {
   deviceId: string;
   deviceName: string;
@@ -183,8 +185,8 @@ class FamilyRelayService {
     }
 
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/family-relay`;
+      const wsUrl = getWsUrl('/ws/family-relay');
+      if (!wsUrl) return;
 
       this.ws = new WebSocket(wsUrl);
 

@@ -1,0 +1,12 @@
+node_modules
+dist
+dev-dist
+.git
+.github
+android
+.gmp_cache
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+test_mjpeg.mjpg

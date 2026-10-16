@@ -41,6 +41,7 @@ import { INITIAL_BOOKS } from '../../data/initialBooks';
 import { AppleBookReaderModal } from '../books/AppleBookReaderModal';
 import { parsePdfFileToBook, syncBookToSqlite } from '../../utils/pdfHelper';
 import { safeSetLocalStorage } from '../../utils/pdfStorage';
+import { safeFetchJson, getApiUrl } from '../../services/api';
 
 export const IBooksLibraryTab: React.FC = () => {
   // Books Collection (stored locally & synced with SQLite)
@@ -126,8 +127,7 @@ export const IBooksLibraryTab: React.FC = () => {
 
   // Load any PDF books synced in SQLite from another device or session
   useEffect(() => {
-    fetch('/api/family/sync?recordType=pdf_book')
-      .then((res) => res.json())
+    safeFetchJson('/api/family/sync?recordType=pdf_book')
       .then((data) => {
         if (data.records && Array.isArray(data.records)) {
           setBooks((prev) => {
@@ -304,7 +304,7 @@ export const IBooksLibraryTab: React.FC = () => {
     setWeaverSuccessMsg(null);
 
     try {
-      const res = await fetch('/api/chat', {
+      const data = await safeFetchJson('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -319,12 +319,9 @@ export const IBooksLibraryTab: React.FC = () => {
         'Design the system, protect your attention, and let compounding do the heavy lifting.',
       ];
 
-      if (res.ok) {
-        const data = await res.json();
-        if (data.reply) {
-          const split = data.reply.split('\n\n').filter((p: string) => p.trim().length > 20);
-          if (split.length >= 2) contentParas = split;
-        }
+      if (data && data.reply) {
+        const split = data.reply.split('\n\n').filter((p: string) => p.trim().length > 20);
+        if (split.length >= 2) contentParas = split;
       }
 
       const newBook: Book = {

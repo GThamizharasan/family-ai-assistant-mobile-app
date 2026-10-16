@@ -58,7 +58,7 @@ import {
   makeNativeDirectCall,
   playRingTone,
 } from '../services/phoneService';
-import { summarizeCallApi, getGcpBillingOptimizationApi } from '../services/api';
+import { summarizeCallApi, getGcpBillingOptimizationApi, getApiUrl } from '../services/api';
 import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
 import { syncRealtimeGcpDetails } from '../services/gcpLiveFetcher';
 import {
@@ -1070,7 +1070,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Sync server-authoritative activation codes on mount
   useEffect(() => {
-    fetch('/api/family/codes')
+    fetch(getApiUrl('/api/family/codes'))
       .then((res) => res.json())
       .then((data) => {
         if (data?.success && Array.isArray(data.codes)) {
@@ -1222,7 +1222,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     // Sync to backend server
     const formattedCode = found?.code || formatFamilyCode(cleanNorm);
-    fetch('/api/family/codes/redeem', {
+    fetch(getApiUrl('/api/family/codes/redeem'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1266,7 +1266,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setActivationCodes((prev) => [newCodeRecord, ...prev.filter((c) => c.code !== code)]);
 
     // Persist to server so remote phone instances immediately receive it
-    fetch('/api/family/codes/generate', {
+    fetch(getApiUrl('/api/family/codes/generate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1349,7 +1349,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
 
     // Notify backend server so all remote instances and devices receive new state
-    fetch('/api/family/codes/redeem', {
+    fetch(getApiUrl('/api/family/codes/redeem'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1374,7 +1374,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           : c
       )
     );
-    fetch('/api/family/codes/reactivate', {
+    fetch(getApiUrl('/api/family/codes/reactivate'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),

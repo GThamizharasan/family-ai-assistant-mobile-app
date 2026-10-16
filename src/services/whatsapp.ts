@@ -1,5 +1,6 @@
 import { WhatsAppContact, WhatsAppMessage, WhatsAppAccountConfig } from '../types';
 import { speechEngine } from './speech';
+import { getApiUrl } from './api';
 
 export const INITIAL_WHATSAPP_CONFIG: WhatsAppAccountConfig = {
   isConnected: true,
@@ -330,7 +331,7 @@ export async function generateAuraWhatsAppReply(
   recommendedAction: string;
 }> {
   try {
-    const res = await fetch('/api/whatsapp-reply', {
+    const res = await fetch(getApiUrl('/api/whatsapp-reply'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -429,7 +430,7 @@ export async function sendWhatsAppViaApiCall(
   channel: string;
 }> {
   try {
-    const res = await fetch('/api/whatsapp/send', {
+    const res = await fetch(getApiUrl('/api/whatsapp/send'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -476,7 +477,7 @@ export async function connectWhatsAppAccountApi(
   channel: string;
 }> {
   try {
-    const res = await fetch('/api/whatsapp/connect', {
+    const res = await fetch(getApiUrl('/api/whatsapp/connect'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -518,7 +519,7 @@ export async function checkWhatsAppApiStatus(): Promise<{
   channel: string;
 }> {
   try {
-    const res = await fetch('/api/whatsapp/status');
+    const res = await fetch(getApiUrl('/api/whatsapp/status'));
     if (res.ok) {
       return await res.json();
     }
