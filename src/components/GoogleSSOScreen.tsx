@@ -77,6 +77,7 @@ export const GoogleSSOScreen: React.FC = () => {
 
   // Direct @react-oauth/google hook for full Workspace scopes
   const googleOAuthDirect = useGoogleLogin({
+    scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/cloud-platform.read-only https://www.googleapis.com/auth/cloud-billing.readonly',
     onSuccess: async (tokenResponse) => {
       setIsSigningIn(true);
       setAuthError(null);
@@ -87,9 +88,9 @@ export const GoogleSSOScreen: React.FC = () => {
         const info = await res.json();
         const userEmail = info.email || primaryEmail;
         const userName = info.name || 'Thamiz';
-        loginWithGoogle(userEmail, userName);
+        loginWithGoogle(userEmail, userName, undefined, tokenResponse.access_token);
       } catch (e) {
-        loginWithGoogle(primaryEmail, 'Thamiz');
+        loginWithGoogle(primaryEmail, 'Thamiz', undefined, tokenResponse.access_token);
       } finally {
         setIsSigningIn(false);
       }
@@ -224,11 +225,6 @@ export const GoogleSSOScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (isNative) {
-                    setIsSigningIn(false);
-                    setShowAccountChooser(true);
-                    return;
-                  }
                   setIsSigningIn(true);
                   setAuthError(null);
                   try {
@@ -239,7 +235,7 @@ export const GoogleSSOScreen: React.FC = () => {
                     setShowAccountChooser(true);
                   }
                 }}
-                disabled={isSigningIn && !isNative}
+                disabled={isSigningIn}
                 className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-black/20 active:scale-98 border border-slate-200 cursor-pointer"
               >
                 <svg viewBox="0 0 24 24" className="w-4 h-4">
@@ -249,7 +245,7 @@ export const GoogleSSOScreen: React.FC = () => {
                   <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
                 </svg>
                 <span>
-                  {isSigningIn && !isNative
+                  {isSigningIn
                     ? 'Authenticating with Google...'
                     : 'Sign In with Google Account'}
                 </span>
@@ -260,8 +256,15 @@ export const GoogleSSOScreen: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setIsSigningIn(false);
-                      setShowAccountChooser(true);
+                      setIsSigningIn(true);
+                      setAuthError(null);
+                      try {
+                        googleOAuthDirect();
+                      } catch (err) {
+                        console.warn(err);
+                        setIsSigningIn(false);
+                        setShowAccountChooser(true);
+                      }
                     }}
                     className="w-full max-w-[340px] py-2.5 px-4 rounded-full bg-slate-950 hover:bg-slate-800 text-white font-medium text-xs transition-all flex items-center justify-center gap-2.5 border border-slate-700 shadow-md active:scale-98 cursor-pointer"
                   >
@@ -448,8 +451,9 @@ export const GoogleSSOScreen: React.FC = () => {
 
             {/* Primary One-Tap Hero Button for Thamiz */}
             <button
+              type="button"
               onClick={() => handleSelectGoogleAccount(primaryEmail, 'Thamiz')}
-              className="w-full p-3.5 rounded-2xl bg-slate-950 border border-blue-500/40 hover:border-blue-400 hover:bg-slate-900 transition-all text-left flex items-center justify-between group active:scale-98"
+              className="w-full p-3 rounded-2xl bg-slate-950 border border-blue-500/40 hover:border-blue-400 hover:bg-slate-900 transition-all text-left flex items-center justify-between group active:scale-98 cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <div className="relative">
@@ -462,7 +466,7 @@ export const GoogleSSOScreen: React.FC = () => {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-white text-xs">Thamiz</span>
+                    <span className="font-bold text-white text-xs">Thamizh</span>
                     <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
                       Primary Head
                     </span>
@@ -474,6 +478,30 @@ export const GoogleSSOScreen: React.FC = () => {
               <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-blue-400 transition-colors" />
             </button>
 
+            {/* Sovereign Co-Master: Digital Tamil World */}
+            <button
+              type="button"
+              onClick={() => handleSelectGoogleAccount('digitaltamilworld@gmail.com', 'Thamiz')}
+              className="w-full p-3 rounded-2xl bg-slate-950 border border-purple-500/40 hover:border-purple-400 hover:bg-slate-900 transition-all text-left flex items-center justify-between group active:scale-98 cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-md border border-purple-400/30 shrink-0">
+                  DT
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-white text-xs">Digital Tamil World</span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                      Workspace Admin
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono block">digitaltamilworld@gmail.com</span>
+                  <span className="text-[10px] text-purple-300 font-medium">Google Workspace & Gemini Connected</span>
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-purple-400 transition-colors" />
+            </button>
+
             {/* Secondary Family Members */}
             <div className="space-y-1.5 pt-0.5">
               <span className="text-[10px] text-slate-500 font-semibold px-1 uppercase tracking-wider block">
@@ -483,8 +511,9 @@ export const GoogleSSOScreen: React.FC = () => {
               {familyMembers.slice(1).map((member) => (
                 <button
                   key={member.id}
+                  type="button"
                   onClick={() => handleSelectGoogleAccount(member.email, member.name)}
-                  className="w-full p-2.5 rounded-xl bg-slate-950/70 hover:bg-slate-950 border border-slate-800 hover:border-slate-700 transition-all text-left flex items-center justify-between group"
+                  className="w-full p-2.5 rounded-xl bg-slate-950/70 hover:bg-slate-950 border border-slate-800 hover:border-slate-700 transition-all text-left flex items-center justify-between group active:scale-98 cursor-pointer"
                 >
                   <div className="flex items-center gap-2.5">
                     <img
@@ -503,6 +532,15 @@ export const GoogleSSOScreen: React.FC = () => {
                   <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-300 transition-colors" />
                 </button>
               ))}
+
+              {/* Quick Switch to Custom / Other Google Account */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('custom')}
+                className="w-full p-2 rounded-xl bg-slate-950/40 hover:bg-slate-800/80 border border-dashed border-slate-800 hover:border-slate-700 transition-all text-center text-[11px] text-blue-400 hover:text-blue-300 font-medium cursor-pointer"
+              >
+                + Switch to Any Other Google Account
+              </button>
             </div>
           </div>
         )}
