@@ -549,14 +549,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return saved !== null ? saved === 'true' : false;
   });
 
-  // Track authentication state: if requireGoogleAuthOnReload is explicitly true, reload prompts Google SSO; otherwise auto-launches as Thamiz
+  // Track authentication state: presents Google SSO screen when no active persisted Google session exists
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     const savedRequire = localStorage.getItem('aura_require_google_auth_reload');
-    const mustRequire = savedRequire === 'true';
-    if (mustRequire) {
+    if (savedRequire === 'true') {
       return false;
     }
-    return true;
+    const persisted = localStorage.getItem('aura_google_auth_persisted');
+    return persisted === 'true';
   });
 
   const setRequireGoogleAuthOnReload = (val: boolean) => {
