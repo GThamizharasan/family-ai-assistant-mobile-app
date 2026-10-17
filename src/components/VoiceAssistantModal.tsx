@@ -20,7 +20,7 @@ import {
   PhoneCall,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { speechEngine, isIOSChrome } from '../services/speech';
+import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 
 
@@ -64,6 +64,22 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [currentEmotion, setCurrentEmotion] = useState('warm & empathetic');
   const [micStatusMessage, setMicStatusMessage] = useState<string | null>(null);
   const [showMicHelp, setShowMicHelp] = useState(false);
+  const [voiceLanguage, setVoiceLanguage] = useState<string>(() => speechEngine.getLanguage());
+  const [showLangMenu, setShowLangMenu] = useState(false);
+
+  const handleSelectLanguage = (code: string) => {
+    speechEngine.setLanguage(code);
+    setVoiceLanguage(code);
+    setShowLangMenu(false);
+    // Restart listening with the new language if currently listening
+    if (isOpen && !isSpeaking && !isThinking) {
+      speechEngine.stopListening(false);
+      setTimeout(() => {
+        speechEngine.startListening();
+      }, 350);
+    }
+  };
+
   const chatEndRef = useRef<HTMLDivElement>(null);
   const handleUserSpeechRef = useRef<(spokenText: string) => void>(() => {});
   const isLocalVoiceMode = Capacitor.isNativePlatform() && !getApiBaseUrl();
@@ -660,6 +676,51 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
               <span className="hidden sm:inline">Test Sound</span>
             </button>
+
+            {/* Language Selector Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowLangMenu(!showLangMenu)}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 cursor-pointer"
+                title="Change Voice Language"
+              >
+                <span>
+                  {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === voiceLanguage)?.flag || '🇮🇳'}{' '}
+                  {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === voiceLanguage)?.nativeName || 'தமிழ்'}
+                </span>
+              </button>
+
+              {showLangMenu && (
+                <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-1.5 z-50">
+                  <span className="text-[10px] text-slate-400 font-semibold px-3 py-1 block uppercase tracking-wider">
+                    Voice Language
+                  </span>
+                  {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
+                    const isSelected = voiceLanguage === lang.code;
+                    return (
+                      <button
+                        key={lang.code}
+                        type="button"
+                        onClick={() => handleSelectLanguage(lang.code)}
+                        className={`w-full px-3 py-1.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600/30 text-indigo-200 font-bold'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span>{lang.flag}</span>
+                          <span>{lang.label}</span>
+                        </span>
+                        {isSelected && <span className="text-emerald-400 text-xs">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => {
                 const next = !isHandsFree;
@@ -857,6 +918,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                     }`}
                     style={{ height: barHeight }}
                   />
+                );
+              })}
+            </div>
+
+            {/* Quick Language Switcher Bar */}
+            <div className="flex items-center justify-center gap-1.5 mt-2.5">
+              {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
+                const isActive = voiceLanguage === lang.code;
+                return (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    onClick={() => handleSelectLanguage(lang.code)}
+                    className={`text-[10.5px] px-2.5 py-1 rounded-full font-medium transition-all flex items-center gap-1 cursor-pointer active:scale-95 ${
+                      isActive
+                        ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30 ring-1 ring-indigo-400'
+                        : 'bg-slate-900/90 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-800'
+                    }`}
+                  >
+                    <span>{lang.flag}</span>
+                    <span>{lang.nativeName}</span>
+                  </button>
                 );
               })}
             </div>

@@ -281,10 +281,15 @@ Your persona combines:
 2. World-class executive coach & billionaire advisor (relentless clarity, high-leverage execution, capital allocation wisdom, disciplined optimism).
 3. Attentive family guardian (cares deeply about family wellbeing, safety, harmonious relationships, and shared financial goals).
 
+LANGUAGE AGILITY & MULTILINGUAL CONVERSATION (TAMIL & ENGLISH):
+- You are fully bilingual and natively fluent in Tamil (தமிழ்), Tanglish (Tamil in Latin/English letters), English, and Hindi.
+- CRITICAL: When the user speaks, greets, or asks in Tamil or Tanglish (e.g., "வணக்கம்", "எப்படி இருக்கீங்க", "சாப்பிட்டியா", "enna panra", "tamil la pesu", etc.), you MUST reply naturally in fluent Tamil (தமிழ்) or conversational Tanglish matching the user's dialect!
+- If the user switches languages between English and Tamil, seamlessly mirror their language immediately with cultural warmth and respect. Never force English when addressed in Tamil.
+
 ${
   isVoiceTurn
-    ? 'CRITICAL VOICE ASSISTANT RULE: The user is speaking via real-time microphone. Your "reply" MUST BE short, natural, warm, and conversational (1 to 2 spoken sentences, max 35 words). Never produce bulleted lists or walls of text in "reply". Put actionable advice in "actionSuggestion".'
-    : 'Provide a thoughtful, articulate, and empathetic reply with clear structure.'
+    ? 'CRITICAL VOICE ASSISTANT RULE: The user is speaking via real-time microphone. Your "reply" MUST BE short, natural, warm, and conversational (1 to 2 spoken sentences, max 35 words). Match the spoken language (Tamil if spoken in Tamil). Never produce bulleted lists or walls of text in "reply". Put actionable advice in "actionSuggestion".'
+    : 'Provide a thoughtful, articulate, and empathetic reply with clear structure in the user\'s language.'
 }
 
 User Profile Context:
@@ -1168,7 +1173,7 @@ app.post('/api/ai/transcribe', async (req, res) => {
             },
           },
           {
-            text: prompt || 'Transcribe this spoken audio accurately verbatim with proper punctuation, capitalization, and formatting.',
+            text: prompt || 'Transcribe this spoken audio accurately verbatim with proper punctuation, capitalization, and formatting. Supports English, Tamil (தமிழ்), Tanglish, and multilingual speech seamlessly. If the speaker speaks Tamil, transcribe accurately in Tamil script or Tanglish.',
           },
         ],
       },
@@ -2405,7 +2410,7 @@ async function startServer() {
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction:
-            'You are Aura, an elite, empathetic, real-time AI companion for Thamizh and family. Keep spoken responses natural, conversational, and concise.',
+            'You are Aura, an elite, empathetic, real-time AI companion for Thamizh and family. Keep spoken responses natural, conversational, and concise. You are fluent in English, Tamil (தமிழ்), and Tanglish. When addressed in Tamil or Tanglish, always respond naturally in Tamil.',
           outputAudioTranscription: {},
           inputAudioTranscription: {},
         },

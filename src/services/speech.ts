@@ -49,6 +49,15 @@ function blobToBase64(blob: Blob | null | undefined): Promise<string> {
   });
 }
 
+export type VoiceLanguage = 'ta-IN' | 'en-US' | 'en-IN' | 'hi-IN';
+
+export const SUPPORTED_VOICE_LANGUAGES = [
+  { code: 'ta-IN', label: 'தமிழ் (Tamil)', flag: '🇮🇳', nativeName: 'தமிழ்' },
+  { code: 'en-US', label: 'English (US)', flag: '🇺🇸', nativeName: 'English' },
+  { code: 'en-IN', label: 'English (India)', flag: '🇮🇳', nativeName: 'Indian English' },
+  { code: 'hi-IN', label: 'हिन्दी (Hindi)', flag: '🇮🇳', nativeName: 'हिन्दी' },
+] as const;
+
 export class VoiceAssistantEngine {
   private recognition: any = null;
   private isListening: boolean = false;
@@ -57,6 +66,10 @@ export class VoiceAssistantEngine {
   private currentAudioElement: HTMLAudioElement | null = null;
   private currentBufferSource: AudioBufferSourceNode | null = null;
   private cachedVoices: SpeechSynthesisVoice[] = [];
+
+  // Active voice language (defaults to Tamil ta-IN for bilingual Tamil/English flow)
+  private currentLanguage: string =
+    (typeof window !== 'undefined' && localStorage.getItem('aura_voice_language')) || 'ta-IN';
 
   // Real-time silence debounce for hands-free natural speaking
   private silenceTimer: any = null;
@@ -93,6 +106,24 @@ export class VoiceAssistantEngine {
   public onErrorCallback?: (error: string) => void;
   public onAudioVolume?: (volume: number) => void;
 
+  public setLanguage(lang: string) {
+    this.currentLanguage = lang || 'ta-IN';
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aura_voice_language', this.currentLanguage);
+      } catch {}
+    }
+    if (this.recognition) {
+      try {
+        this.recognition.lang = this.currentLanguage;
+      } catch {}
+    }
+  }
+
+  public getLanguage(): string {
+    return this.currentLanguage;
+  }
+
   public setContinuousMode(enabled: boolean) {
     this.isContinuousMode = enabled;
     if (!enabled) {
@@ -115,7 +146,7 @@ export class VoiceAssistantEngine {
     return this.isSpeakingNow;
   }
 
-  private scheduleAutoRestart(delayMs = 250) {
+  private scheduleAutoRestart(delayMs = 600) {
     clearTimeout(this.restartTimeout);
     if (!this.isContinuousMode || this.isSpeakingNow || this.isThinkingNow) return;
 
@@ -205,7 +236,7 @@ export class VoiceAssistantEngine {
       this.recognition = new SpeechRecognition();
       this.recognition.continuous = true;
       this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
+      this.recognition.lang = this.currentLanguage;
 
       this.recognition.onstart = () => {
         this.isListening = true;
@@ -235,19 +266,19 @@ export class VoiceAssistantEngine {
 
           // If Web Speech already produced final finalized sentence segments:
           if (finalTranscript.trim().length > 0 && interimTranscript.trim().length === 0) {
-            // User finished this sentence: commit after short natural pause (400ms)
+            // User finished this sentence: commit after natural pause (500ms)
             this.silenceTimer = setTimeout(() => {
               if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
                 this.commitCurrentSpeech();
               }
-            }, 400);
+            }, 500);
           } else {
-            // Interim continuous speech: auto-commit after 850ms of quiet pause
+            // Interim continuous speech: auto-commit after 1000ms of quiet pause
             this.silenceTimer = setTimeout(() => {
               if (!this.isCommitted && this.latestTranscript.trim().length > 1) {
                 this.commitCurrentSpeech();
               }
-            }, 850);
+            }, 1000);
           }
         }
       };
@@ -255,7 +286,7 @@ export class VoiceAssistantEngine {
       this.recognition.onerror = (event: any) => {
         console.warn('Speech recognition status:', event.error);
         if (event.error === 'no-speech') {
-          // Normal silence, keep listening
+          // Normal silence, keep listening smoothly
           return;
         }
 
@@ -289,7 +320,7 @@ export class VoiceAssistantEngine {
           this.commitCurrentSpeech();
         } else {
           if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
-            this.scheduleAutoRestart(200);
+            this.scheduleAutoRestart(800);
           } else {
             this.isListening = false;
             this.onListeningChange?.(false);
@@ -428,8 +459,8 @@ export class VoiceAssistantEngine {
       this.onTranscriptCallback?.('Listening (speak now)...', false);
 
       const { matches } = await SpeechRecognition.start({
-        language: 'en-US',
-        maxResults: 1,
+        language: this.currentLanguage,
+        maxResults: 2,
         partialResults: false,
         popup: false,
       });
@@ -446,7 +477,10 @@ export class VoiceAssistantEngine {
         // Native recognition ended without matches (silence)
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(300);
+          this.consecutiveErrorCount++;
+          // Generous human pause so Android AudioRecord session is never thrashed
+          const restartDelay = Math.min(2500, 1000 + this.consecutiveErrorCount * 400);
+          this.scheduleAutoRestart(restartDelay);
           return;
         } else {
           this.onErrorCallback?.('no-speech');
@@ -464,11 +498,12 @@ export class VoiceAssistantEngine {
         console.warn('Speech Services by Google not available, falling back to MediaRecorder...');
         void this.startMediaRecorderListening();
       } else if (/no match|no speech|timeout/i.test(message)) {
-        // Natural pause/silence from user in hands-free mode -> re-arm seamlessly
-        this.consecutiveErrorCount = 0;
+        // Natural pause/silence from user in hands-free mode -> gentle re-arm without audio glitching
+        this.consecutiveErrorCount++;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(300);
+          const restartDelay = Math.min(2500, 1000 + this.consecutiveErrorCount * 400);
+          this.scheduleAutoRestart(restartDelay);
           return;
         }
         this.onErrorCallback?.('no-speech');
@@ -477,7 +512,7 @@ export class VoiceAssistantEngine {
         this.isNativeRecognitionActive = false;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.consecutiveErrorCount++;
-          const retryDelay = Math.min(1500, 600 + this.consecutiveErrorCount * 250);
+          const retryDelay = Math.min(3000, 1500 + this.consecutiveErrorCount * 500);
           this.scheduleAutoRestart(retryDelay);
           return;
         }
@@ -487,7 +522,8 @@ export class VoiceAssistantEngine {
         this.consecutiveErrorCount++;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           if (this.consecutiveErrorCount <= 4) {
-            this.scheduleAutoRestart(500);
+            const retryDelay = Math.min(2500, 1000 + this.consecutiveErrorCount * 400);
+            this.scheduleAutoRestart(retryDelay);
             return;
           } else {
             console.warn('Native speech failed repeatedly, switching to MediaRecorder fallback...');
@@ -658,6 +694,12 @@ export class VoiceAssistantEngine {
 
   private cleanupMediaStream() {
     clearInterval(this.vadInterval);
+    if (this.analyser) {
+      try {
+        this.analyser.disconnect();
+      } catch {}
+      this.analyser = null;
+    }
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
@@ -793,6 +835,8 @@ export class VoiceAssistantEngine {
     } = {}
   ) {
     this.stopSpeaking();
+    // CRITICAL: Stop microphone so AI voice does not feed back into mic and cause glitches/echo
+    this.stopListening(false);
     this.isSpeakingNow = true;
     clearTimeout(this.restartTimeout);
 
@@ -846,22 +890,33 @@ export class VoiceAssistantEngine {
     utterance.pitch = options.pitch ?? 1.04;
     utterance.rate = options.rate ?? 1.0;
 
-    // Pick best English voice available
+    // Pick best voice: detect if text is Tamil or language is Tamil
+    const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText) || this.currentLanguage.startsWith('ta');
     const voices = this.cachedVoices.length > 0 ? this.cachedVoices : this.synth.getVoices();
-    const preferredVoice =
-      voices.find(
-        (v) =>
-          v.lang.startsWith('en') &&
-          (v.name.includes('Natural') ||
-            v.name.includes('Google') ||
-            v.name.includes('Samantha') ||
-            v.name.includes('Karen') ||
-            v.name.includes('Daniel') ||
-            v.name.includes('Victoria') ||
-            v.name.includes('Serena') ||
-            v.name.includes('Ava') ||
-            v.name.includes('Zira'))
-      ) || voices.find((v) => v.lang.startsWith('en'));
+
+    let preferredVoice: SpeechSynthesisVoice | undefined;
+    if (isTamilText) {
+      preferredVoice =
+        voices.find((v) => v.lang.toLowerCase().replace('_', '-').startsWith('ta')) ||
+        voices.find((v) => v.name.toLowerCase().includes('tamil') || v.name.toLowerCase().includes('தமிழ்'));
+      utterance.lang = preferredVoice?.lang || 'ta-IN';
+    } else {
+      preferredVoice =
+        voices.find(
+          (v) =>
+            v.lang.startsWith('en') &&
+            (v.name.includes('Natural') ||
+              v.name.includes('Google') ||
+              v.name.includes('Samantha') ||
+              v.name.includes('Karen') ||
+              v.name.includes('Daniel') ||
+              v.name.includes('Victoria') ||
+              v.name.includes('Serena') ||
+              v.name.includes('Ava') ||
+              v.name.includes('Zira'))
+        ) || voices.find((v) => v.lang.startsWith('en'));
+      utterance.lang = preferredVoice?.lang || 'en-US';
+    }
 
     if (preferredVoice) {
       utterance.voice = preferredVoice;
