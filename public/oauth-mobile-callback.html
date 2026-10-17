@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Returning to AuraFamily…</title>
+  <style>
+    body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+      background:#090d16; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; text-align:center; padding:16px; }
+    .card { padding:32px 24px; max-width:360px; width:100%; background:rgba(15,23,42,0.92); border:1px solid rgba(255,255,255,0.12); border-radius:24px; box-shadow:0 20px 40px rgba(0,0,0,0.5); }
+    a.btn { display:inline-block; margin-top:20px; padding:14px 28px; border-radius:16px;
+      background:linear-gradient(135deg, #3b82f6, #6366f1); color:#fff; font-weight:700; font-size:14px; text-decoration:none; box-shadow:0 8px 20px rgba(59,130,246,0.4); }
+    p { color:#94a3b8; font-size:14px; margin:12px 0 0; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0; font-size:20px; font-weight:700;">Signed in with Google</h2>
+    <p id="msg">Returning to AuraFamily mobile app…</p>
+    <a id="open" class="btn" href="#">Open AuraFamily App</a>
+  </div>
+  <script>
+    (function () {
+      var raw = (location.hash || '').replace(/^#/, '') + '&' + (location.search || '').replace(/^\?/, '');
+      var params = new URLSearchParams(raw);
+      var keep = new URLSearchParams();
+      ['access_token', 'expires_in', 'state', 'error', 'scope'].forEach(function (k) {
+        if (params.get(k)) keep.set(k, params.get(k));
+      });
+      var q = keep.toString();
+      var intentUrl = 'intent://oauth?' + q +
+        '#Intent;scheme=com.family.ai.assistant;package=com.family.ai.assistant;end';
+      var schemeUrl = 'com.family.ai.assistant://oauth?' + q;
+      var isAndroid = /Android/i.test(navigator.userAgent);
+      var target = isAndroid ? intentUrl : schemeUrl;
+      var openBtn = document.getElementById('open');
+      openBtn.setAttribute('href', target);
+      openBtn.addEventListener('click', function(e) {
+        setTimeout(function() {
+          window.location.href = schemeUrl;
+        }, 300);
+      });
+      if (params.get('error')) {
+        document.getElementById('msg').textContent = 'Google sign-in was cancelled. Tap below to return.';
+      }
+      setTimeout(function () {
+        try {
+          location.replace(target);
+        } catch (e) {
+          location.replace(schemeUrl);
+        }
+      }, 100);
+    })();
+  </script>
+</body>
+</html>

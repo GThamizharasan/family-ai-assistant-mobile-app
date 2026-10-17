@@ -22,6 +22,7 @@ import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
 import { Capacitor } from '@capacitor/core';
 import { parseGoogleIdToken } from '../services/googleAuth';
 import { useApp } from '../context/AppContext';
+import { startMobileGoogleSignIn, listenForMobileGoogleSignIn } from '../services/mobileGoogleAuth';
 
 export const GoogleSSOScreen: React.FC = () => {
   const {
@@ -44,6 +45,7 @@ export const GoogleSSOScreen: React.FC = () => {
   const [showOriginHelp, setShowOriginHelp] = useState(false);
   const [showAccountChooser, setShowAccountChooser] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
+  const [mobileAuthError, setMobileAuthError] = useState<string | null>(null);
 
   const primaryEmail = 'chinna.tamil2000@gmail.com';
   const isNative =
@@ -55,15 +57,44 @@ export const GoogleSSOScreen: React.FC = () => {
         /capacitor|android.*wv|crosswalk/i.test(navigator.userAgent || '')));
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
-  // Watchdog: Ensure isSigningIn never gets stuck if a GIS popup is blocked
+  // Watchdog: Ensure isSigningIn never gets stuck if a GIS popup is blocked (web only)
   React.useEffect(() => {
-    if (isSigningIn) {
+    if (isSigningIn && !isNative) {
       const timer = setTimeout(() => {
         setIsSigningIn(false);
       }, 3500);
       return () => clearTimeout(timer);
     }
-  }, [isSigningIn]);
+  }, [isSigningIn, isNative]);
+
+  // Native (APK) only: receive Google sign-in result from the system browser via deep link
+  React.useEffect(() => {
+    if (!isNative) return;
+    return listenForMobileGoogleSignIn(
+      (r) => {
+        setIsSigningIn(false);
+        setMobileAuthError(null);
+        loginWithGoogle(r.email, r.name, undefined, r.accessToken);
+      },
+      (msg) => {
+        setIsSigningIn(false);
+        setMobileAuthError(msg);
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNative]);
+
+  const startNativeSignIn = async () => {
+    setMobileAuthError(null);
+    setIsSigningIn(true);
+    try {
+      await startMobileGoogleSignIn();
+    } catch (err: any) {
+      console.warn('Native Google sign-in failed to open:', err);
+      setIsSigningIn(false);
+      setMobileAuthError('Could not open Google sign-in. Please make sure Chrome is installed and try again.');
+    }
+  };
 
   const copyToClipboard = (text: string) => {
     try {
@@ -225,6 +256,10 @@ export const GoogleSSOScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  if (isNative) {
+                    void startNativeSignIn();
+                    return;
+                  }
                   setIsSigningIn(true);
                   setAuthError(null);
                   try {
@@ -256,15 +291,7 @@ export const GoogleSSOScreen: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setIsSigningIn(true);
-                      setAuthError(null);
-                      try {
-                        googleOAuthDirect();
-                      } catch (err) {
-                        console.warn(err);
-                        setIsSigningIn(false);
-                        setShowAccountChooser(true);
-                      }
+                      void startNativeSignIn();
                     }}
                     className="w-full max-w-[340px] py-2.5 px-4 rounded-full bg-slate-950 hover:bg-slate-800 text-white font-medium text-xs transition-all flex items-center justify-center gap-2.5 border border-slate-700 shadow-md active:scale-98 cursor-pointer"
                   >
@@ -307,8 +334,7 @@ export const GoogleSSOScreen: React.FC = () => {
                 type="button"
                 onClick={() => {
                   if (isNative) {
-                    setIsSigningIn(false);
-                    setShowAccountChooser(true);
+                    void startNativeSignIn();
                     return;
                   }
                   setIsSigningIn(true);
@@ -328,6 +354,13 @@ export const GoogleSSOScreen: React.FC = () => {
                 <span>Authorize Full Google Workspace & Drive Cloud Scopes</span>
               </button>
             </div>
+
+            {isNative && mobileAuthError && (
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <span>{mobileAuthError}</span>
+              </div>
+            )}
 
             {authError && (
               <div className="space-y-2.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-left">
@@ -408,6 +441,7 @@ export const GoogleSSOScreen: React.FC = () => {
                     {[
                       { label: 'Mobile Android APK', uri: 'https://localhost' },
                       { label: 'Cloud Run Backend', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
+                      { label: 'Mobile OAuth Callback', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/oauth-mobile-callback.html' },
                       { label: 'Local Development', uri: 'http://localhost:5173' },
                     ].map((item) => (
                       <div

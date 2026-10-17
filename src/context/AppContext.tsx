@@ -1167,12 +1167,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const finalAvatar = matched ? matched.avatar : user.avatar;
 
     // Establish active Google token to unlock full Google Workspace (Drive, Gmail, Calendar, Storage)
+    const storedToken = localStorage.getItem('aura_google_access_token');
     const token =
       explicitToken ||
-      localStorage.getItem('aura_google_access_token') ||
-      `live-workspace-${Date.now()}-${btoa(lower).replace(/=/g, '')}`;
-    setGoogleAccessToken(token);
-    localStorage.setItem('aura_google_access_token', token);
+      (storedToken && !storedToken.startsWith('live-workspace-') ? storedToken : null);
+    if (token) {
+      setGoogleAccessToken(token);
+      localStorage.setItem('aura_google_access_token', token);
+    }
 
     // Initialize Gemini 3.8 AI Suite connectivity and cloud backend
     if (!localStorage.getItem('aura_gemini_key')) {
@@ -1207,7 +1209,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsAuthenticated(true);
 
     // Trigger immediate live background sync for Google Workspace and GCP Cloud details
-    void syncLiveGoogleData(token);
+    void syncLiveGoogleData(token || undefined);
   };
 
   // Real Google OAuth pop-up login requesting Gmail, Drive & Calendar tokens
@@ -1225,7 +1227,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const email = result.user.email || 'chinna.tamil2000@gmail.com';
         const name = result.user.displayName || 'Thamiz';
         const avatar = result.user.photoURL || user.avatar;
-        loginWithGoogle(email, name);
+        loginWithGoogle(email, name, undefined, result.accessToken || undefined);
         if (avatar) {
           setUser((prev) => ({ ...prev, avatar }));
         }

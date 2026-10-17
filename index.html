@@ -97,6 +97,29 @@
         }, true);
       })();
     </script>
+    <script>
+      // OAuth Mobile Callback Bounce Handler (handles callbacks if SPA index.html is served)
+      (function() {
+        try {
+          var h = window.location.hash || '';
+          var s = window.location.search || '';
+          if (h.indexOf('access_token=') !== -1 || s.indexOf('access_token=') !== -1) {
+            var raw = h.replace(/^#/, '') + '&' + s.replace(/^\?/, '');
+            var params = new URLSearchParams(raw);
+            var keep = new URLSearchParams();
+            ['access_token', 'expires_in', 'state', 'error', 'scope'].forEach(function (k) {
+              if (params.get(k)) keep.set(k, params.get(k));
+            });
+            var q = keep.toString();
+            var intentUrl = 'intent://oauth?' + q + '#Intent;scheme=com.family.ai.assistant;package=com.family.ai.assistant;end';
+            var schemeUrl = 'com.family.ai.assistant://oauth?' + q;
+            var isAndroid = /Android/i.test(navigator.userAgent);
+            var target = isAndroid ? intentUrl : schemeUrl;
+            window.location.replace(target);
+          }
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>AuraFamily AI - Family Personal Assistant & Life OS</title>
     <meta name="description" content="Comprehensive Family Personal AI Assistant with real-time voice recognition, encrypted life vault, billionaire milestone roadmap, family geofencing & tracking, financial command center, and health & wellness hub." />

@@ -46,7 +46,7 @@ if (existsSync(manifestPath)) {
     applicationNode.setAttributeNS(androidNamespace, 'android:hardwareAccelerated', 'true');
   }
 
-  for (const permission of requiredPermissions) {
+    for (const permission of requiredPermissions) {
     if (existingPermissions.has(permission)) continue;
 
     const permissionNode = document.createElement('uses-permission');
@@ -54,8 +54,60 @@ if (existsSync(manifestPath)) {
     manifest.insertBefore(permissionNode, applicationNode || null);
   }
 
+  // Ensure OAuth deep link intent-filter is configured on MainActivity
+  const activityNode = applicationNode
+    ? Array.from(applicationNode.childNodes).find(
+        (node) =>
+          node.nodeType === 1 &&
+          node.nodeName === 'activity' &&
+          (node.getAttributeNS(androidNamespace, 'name') === '.MainActivity' ||
+            node.getAttributeNS(androidNamespace, 'name')?.includes('MainActivity'))
+      )
+    : null;
+
+  if (activityNode) {
+    const intentFilters = Array.from(activityNode.childNodes).filter(
+      (node) => node.nodeType === 1 && node.nodeName === 'intent-filter'
+    );
+    const hasOauthFilter = intentFilters.some((filter) =>
+      Array.from(filter.childNodes).some(
+        (child) =>
+          child.nodeType === 1 &&
+          child.nodeName === 'data' &&
+          child.getAttributeNS(androidNamespace, 'scheme') === 'com.family.ai.assistant'
+      )
+    );
+
+    if (!hasOauthFilter) {
+      const oauthFilter = document.createElement('intent-filter');
+
+      const action = document.createElement('action');
+      action.setAttributeNS(androidNamespace, 'android:name', 'android.intent.action.VIEW');
+      oauthFilter.appendChild(action);
+
+      const catDefault = document.createElement('category');
+      catDefault.setAttributeNS(androidNamespace, 'android:name', 'android.intent.category.DEFAULT');
+      oauthFilter.appendChild(catDefault);
+
+      const catBrowsable = document.createElement('category');
+      catBrowsable.setAttributeNS(androidNamespace, 'android:name', 'android.intent.category.BROWSABLE');
+      oauthFilter.appendChild(catBrowsable);
+
+      const dataOauth = document.createElement('data');
+      dataOauth.setAttributeNS(androidNamespace, 'android:scheme', 'com.family.ai.assistant');
+      dataOauth.setAttributeNS(androidNamespace, 'android:host', 'oauth');
+      oauthFilter.appendChild(dataOauth);
+
+      const dataScheme = document.createElement('data');
+      dataScheme.setAttributeNS(androidNamespace, 'android:scheme', 'com.family.ai.assistant');
+      oauthFilter.appendChild(dataScheme);
+
+      activityNode.appendChild(oauthFilter);
+    }
+  }
+
   await writeFile(manifestPath, new XMLSerializer().serializeToString(document));
-  console.log(`Ensured Android permissions and cleartext traffic support.`);
+  console.log(`Ensured Android permissions, cleartext traffic, and OAuth deep-link intent filter.`);
 }
 
 if (existsSync(variablesPath)) {
@@ -99,6 +151,12 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) {
             // ignore
         }
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 }
 `;

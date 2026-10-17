@@ -47,6 +47,9 @@ export default defineConfig(() => {
         devOptions: {
           enabled: false,
         },
+        workbox: {
+          navigateFallbackDenylist: [/^\/oauth-mobile-callback/],
+        },
       }),
     ],
     resolve: {
