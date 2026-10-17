@@ -16,6 +16,7 @@ export interface GoogleEmailMessage {
   subject: string;
   from: string;
   date: string;
+  unread?: boolean;
 }
 
 export interface GoogleCalendarEvent {
@@ -45,7 +46,7 @@ export interface GoogleStorageQuota {
   lastUpdated: string;
 }
 
-// Default 2 TB Google One Plan representation for digitaltamilworld@gmail.com
+// Default 2 TB Google One Plan representation for chinna.tamil2000@gmail.com
 export const DEFAULT_2TB_QUOTA: GoogleStorageQuota = {
   limitBytes: 2147483648000, // 2 TB in bytes
   usageBytes: 28450123776,   // ~26.5 GB
@@ -55,7 +56,7 @@ export const DEFAULT_2TB_QUOTA: GoogleStorageQuota = {
   usageGb: 26.5,
   percentUsed: 1.3,
   planName: 'Google One 2 TB AI Premium Plan',
-  userEmail: 'digitaltamilworld@gmail.com',
+  userEmail: 'chinna.tamil2000@gmail.com',
   driveUsedGb: 13.2,
   gmailUsedGb: 7.8,
   photosUsedGb: 4.1,

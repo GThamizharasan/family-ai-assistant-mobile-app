@@ -1179,7 +1179,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (result.accessToken) {
           setGoogleAccessToken(result.accessToken);
         }
-        const email = result.user.email || 'digitaltamilworld@gmail.com';
+        const email = result.user.email || 'chinna.tamil2000@gmail.com';
         const name = result.user.displayName || 'Thamiz';
         const avatar = result.user.photoURL || user.avatar;
         loginWithGoogle(email, name);
@@ -1199,7 +1199,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       console.warn('OAuth pop-up note:', err);
       // Fallback seamlessly to direct session if other network error
-      loginWithGoogle('digitaltamilworld@gmail.com', 'Thamiz');
+      loginWithGoogle('chinna.tamil2000@gmail.com', 'Thamiz');
       return true;
     }
   };

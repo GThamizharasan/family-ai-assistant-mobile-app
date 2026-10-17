@@ -44,7 +44,12 @@ export const GoogleSSOScreen: React.FC = () => {
   const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
 
   const primaryEmail = 'chinna.tamil2000@gmail.com';
-  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform();
+  const isNative =
+    (typeof window !== 'undefined' && Capacitor.isNativePlatform()) ||
+    (typeof window !== 'undefined' &&
+      (window.location.origin === 'https://localhost' ||
+        (window.location.origin === 'http://localhost' && !window.location.port) ||
+        window.location.protocol === 'capacitor:'));
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
   const copyToClipboard = (text: string) => {
@@ -229,35 +234,43 @@ export const GoogleSSOScreen: React.FC = () => {
                   <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.94 0 12s.46 3.84 1.26 5.42l4.02-3.15z"/>
                   <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
                 </svg>
-                <span>{isSigningIn ? 'Authenticating with Google...' : 'Sign In with Google Account'}</span>
+                <span>
+                  {isSigningIn
+                    ? 'Authenticating with Google...'
+                    : isNative
+                    ? '1-Tap Google Sign In (Thamiz)'
+                    : 'Sign In with Google Account'}
+                </span>
               </button>
 
-              <div className="w-full flex justify-center py-0.5">
-                <GoogleLogin
-                  onSuccess={(credentialResponse) => {
-                    setIsSigningIn(false);
-                    setAuthError(null);
-                    if (credentialResponse.credential) {
-                      const payload = parseGoogleIdToken(credentialResponse.credential);
-                      if (payload && payload.email) {
-                        loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
-                        return;
+              {!isNative && (
+                <div className="w-full flex justify-center py-0.5">
+                  <GoogleLogin
+                    onSuccess={(credentialResponse) => {
+                      setIsSigningIn(false);
+                      setAuthError(null);
+                      if (credentialResponse.credential) {
+                        const payload = parseGoogleIdToken(credentialResponse.credential);
+                        if (payload && payload.email) {
+                          loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
+                          return;
+                        }
                       }
-                    }
-                    loginWithGoogle(primaryEmail, 'Thamiz');
-                  }}
-                  onError={() => {
-                    setIsSigningIn(false);
-                    setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted in Google Cloud Console).`);
-                    setShowOriginHelp(true);
-                  }}
-                  theme="filled_black"
-                  shape="pill"
-                  size="large"
-                  text="signin_with"
-                  width="340"
-                />
-              </div>
+                      loginWithGoogle(primaryEmail, 'Thamiz');
+                    }}
+                    onError={() => {
+                      setIsSigningIn(false);
+                      setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted in Google Cloud Console).`);
+                      setShowOriginHelp(true);
+                    }}
+                    theme="filled_black"
+                    shape="pill"
+                    size="large"
+                    text="signin_with"
+                    width="340"
+                  />
+                </div>
+              )}
 
               <button
                 type="button"

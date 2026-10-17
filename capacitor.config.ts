@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'AuraFamily',
   webDir: 'dist',
   server: {
-    url: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app',
+    androidScheme: 'https',
     cleartext: true,
   },
 };

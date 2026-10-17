@@ -124,7 +124,7 @@ export const googleSignIn = async (): Promise<GoogleAuthResult> => {
               });
               const info = await res.json();
               const authUser: GoogleAuthUser = {
-                email: info.email || 'digitaltamilworld@gmail.com',
+                email: info.email || 'chinna.tamil2000@gmail.com',
                 displayName: info.name || 'Thamiz',
                 photoURL: info.picture || null,
                 uid: info.sub || 'google-user-primary',
@@ -134,7 +134,7 @@ export const googleSignIn = async (): Promise<GoogleAuthResult> => {
               return resolve({ user: authUser, accessToken });
             } catch (fetchErr) {
               const fallbackUser: GoogleAuthUser = {
-                email: 'digitaltamilworld@gmail.com',
+                email: 'chinna.tamil2000@gmail.com',
                 displayName: 'Thamiz',
                 photoURL: null,
                 uid: 'google-user-primary',
@@ -156,7 +156,7 @@ export const googleSignIn = async (): Promise<GoogleAuthResult> => {
 
       // Fallback: If GIS script is not loaded or in iframe preview, gracefully authenticate sovereign user
       const defaultUser: GoogleAuthUser = {
-        email: 'digitaltamilworld@gmail.com',
+        email: 'chinna.tamil2000@gmail.com',
         displayName: 'Thamiz',
         photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
         uid: 'google-sovereign-thamiz',

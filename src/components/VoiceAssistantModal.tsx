@@ -46,6 +46,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     gcpBillingConfig,
     updateGcpBudgetLimit,
     toggleGcpControlGuardrail,
+    liveEmails,
+    liveDriveFiles,
+    liveStorageQuota,
+    googleWorkspaceSettings,
+    isGoogleConnected,
+    syncLiveGoogleData,
   } = useApp();
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -318,6 +324,104 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       return;
     }
 
+    // Direct Google Drive / Cloud Files check intent
+    if (
+      (lower.includes('drive') || lower.includes('google drive') || lower.includes('cloud files') || lower.includes('documents in drive')) &&
+      (lower.includes('check') || lower.includes('look through') || lower.includes('read') || lower.includes('list') || lower.includes('show') || lower.includes('files') || lower.includes('storage'))
+    ) {
+      setIsThinking(false);
+      const filesList = liveDriveFiles || [];
+      if (filesList.length === 0) {
+        const noFilesMsg = `Your connected Google Drive (${user.email || 'chinna.tamil2000@gmail.com'}) has no recent files indexed yet. Your cloud sync is active.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: noFilesMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & clear',
+          actionSuggestion: 'Upload files to Drive',
+        });
+        speakWithAuro(noFilesMsg);
+        return;
+      }
+
+      const topFile = filesList[0];
+      const driveMsg = `In your connected Google Drive, you have ${filesList.length} indexed files. The latest is "${topFile.name}" (${topFile.mimeType.split('/').pop() || 'document'}, ${topFile.size || 'synced'}). Your Google One storage is ${liveStorageQuota.usageGb} GB used of ${liveStorageQuota.limitGb} GB.`;
+      addVoiceMessage({
+        role: 'assistant',
+        content: driveMsg,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: `View Drive: "${topFile.name}"`,
+      });
+      speakWithAuro(driveMsg);
+      return;
+    }
+
+    // Direct Gmail / Email check and readout intent
+    const isMailQuery =
+      lower.includes('email') ||
+      lower.includes('gmail') ||
+      lower.includes('inbox') ||
+      lower.includes('messages from google') ||
+      lower.includes('mail');
+
+    const isDirectMailCheck =
+      isMailQuery &&
+      (lower.includes('check') ||
+        lower.includes('read') ||
+        lower.includes('look through') ||
+        lower.includes('unread') ||
+        lower.includes('any new') ||
+        lower.includes('new message') ||
+        lower === 'gmail' ||
+        lower === 'check mail' ||
+        lower === 'check email');
+
+    const isSpecificEmailQuery =
+      lower.includes('summar') ||
+      lower.includes('what did') ||
+      lower.includes('draft') ||
+      lower.includes('reply') ||
+      lower.includes('write') ||
+      lower.includes('search') ||
+      lower.includes('find') ||
+      lower.includes('tell me about');
+
+    if (isDirectMailCheck && !isSpecificEmailQuery) {
+      setIsThinking(false);
+      const emailList = liveEmails || [];
+      const unreadList = emailList.filter((e) => e.unread);
+      const count = unreadList.length;
+
+      if (emailList.length === 0) {
+        const noMailMsg = `Your connected Gmail account (${user.email || 'chinna.tamil2000@gmail.com'}) has no recent messages in the inbox. Everything is clean and organized.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: noMailMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & clear',
+          actionSuggestion: 'Check Google Drive files',
+        });
+        speakWithAuro(noMailMsg);
+        return;
+      }
+
+      const topEmail = unreadList[0] || emailList[0];
+      const summaryText = count > 0
+        ? `You have ${count} unread email${count === 1 ? '' : 's'} in your connected Gmail (${user.email || 'chinna.tamil2000@gmail.com'}). The latest is from ${topEmail.from} regarding "${topEmail.subject}": "${topEmail.snippet}". Would you like me to open your Gmail tab or summarize details?`
+        : `Your Gmail inbox has ${emailList.length} recent messages, with no unread emails. The most recent is from ${topEmail.from} regarding "${topEmail.subject}": "${topEmail.snippet}".`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: summaryText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: `View Gmail: "${topEmail.subject}"`,
+      });
+      speakWithAuro(summaryText);
+      return;
+    }
+
     setIsThinking(true);
     try {
       const historyPayload = chatHistory.slice(-6).map((m) => ({
@@ -350,6 +454,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           projectId: gcpBillingConfig.projectId,
           autoScaleDownEnabled: gcpBillingConfig.controlGuardrails.autoScaleDownOnCap,
         },
+        recentEmailsSummary: (liveEmails || []).slice(0, 6).map((e) => ({
+          from: e.from,
+          subject: e.subject,
+          snippet: e.snippet,
+          date: e.date,
+          unread: e.unread,
+        })),
+        recentDriveFilesSummary: (liveDriveFiles || []).slice(0, 5).map((f) => ({
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          modifiedTime: f.modifiedTime,
+        })),
+        googleStorageQuota: liveStorageQuota,
+        isGoogleConnected,
       };
 
       const result = await sendChatMessage({
@@ -427,6 +546,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   handleUserSpeechRef.current = handleUserSpeech;
 
   const quickPrompts = [
+    { label: 'Check Gmail', text: 'Look through my connected Gmail messages.' },
+    { label: 'Drive & Storage', text: 'Check my Google Drive files and storage.' },
     { label: 'Check WhatsApp', text: 'Read out my latest WhatsApp messages.' },
     { label: 'Reply via Auro', text: 'Send reply' },
     { label: 'Call Selvapriya', text: 'Call Selvapriya.' },
