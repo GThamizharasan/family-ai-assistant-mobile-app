@@ -51,8 +51,19 @@ export const GoogleSSOScreen: React.FC = () => {
     (typeof window !== 'undefined' &&
       (window.location.origin === 'https://localhost' ||
         (window.location.origin === 'http://localhost' && !window.location.port) ||
-        window.location.protocol === 'capacitor:'));
+        window.location.protocol === 'capacitor:' ||
+        /capacitor|android.*wv|crosswalk/i.test(navigator.userAgent || '')));
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
+
+  // Watchdog: Ensure isSigningIn never gets stuck if a GIS popup is blocked
+  React.useEffect(() => {
+    if (isSigningIn) {
+      const timer = setTimeout(() => {
+        setIsSigningIn(false);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [isSigningIn]);
 
   const copyToClipboard = (text: string) => {
     try {
@@ -213,6 +224,11 @@ export const GoogleSSOScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  if (isNative) {
+                    setIsSigningIn(false);
+                    setShowAccountChooser(true);
+                    return;
+                  }
                   setIsSigningIn(true);
                   setAuthError(null);
                   try {
@@ -223,8 +239,8 @@ export const GoogleSSOScreen: React.FC = () => {
                     setShowAccountChooser(true);
                   }
                 }}
-                disabled={isSigningIn}
-                className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-black/20 active:scale-98 border border-slate-200"
+                disabled={isSigningIn && !isNative}
+                className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-black/20 active:scale-98 border border-slate-200 cursor-pointer"
               >
                 <svg viewBox="0 0 24 24" className="w-4 h-4">
                   <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z"/>
@@ -233,41 +249,65 @@ export const GoogleSSOScreen: React.FC = () => {
                   <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
                 </svg>
                 <span>
-                  {isSigningIn
+                  {isSigningIn && !isNative
                     ? 'Authenticating with Google...'
                     : 'Sign In with Google Account'}
                 </span>
               </button>
 
               <div className="w-full flex justify-center py-0.5">
-                <GoogleLogin
-                  onSuccess={(credentialResponse) => {
-                    setIsSigningIn(false);
-                    setAuthError(null);
-                    if (credentialResponse.credential) {
-                      const payload = parseGoogleIdToken(credentialResponse.credential);
-                      if (payload && payload.email) {
-                        loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
-                        return;
+                {isNative ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsSigningIn(false);
+                      setShowAccountChooser(true);
+                    }}
+                    className="w-full max-w-[340px] py-2.5 px-4 rounded-full bg-slate-950 hover:bg-slate-800 text-white font-medium text-xs transition-all flex items-center justify-center gap-2.5 border border-slate-700 shadow-md active:scale-98 cursor-pointer"
+                  >
+                    <svg viewBox="0 0 24 24" className="w-4 h-4">
+                      <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z"/>
+                      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.26 21.36 7.33 24 12 24z"/>
+                      <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.94 0 12s.46 3.84 1.26 5.42l4.02-3.15z"/>
+                      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                    </svg>
+                    <span>Sign in with Google</span>
+                  </button>
+                ) : (
+                  <GoogleLogin
+                    onSuccess={(credentialResponse) => {
+                      setIsSigningIn(false);
+                      setAuthError(null);
+                      if (credentialResponse.credential) {
+                        const payload = parseGoogleIdToken(credentialResponse.credential);
+                        if (payload && payload.email) {
+                          loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
+                          return;
+                        }
                       }
-                    }
-                    loginWithGoogle(primaryEmail, 'Thamiz');
-                  }}
-                  onError={() => {
-                    setIsSigningIn(false);
-                    setShowAccountChooser(true);
-                  }}
-                  theme="filled_black"
-                  shape="pill"
-                  size="large"
-                  text="signin_with"
-                  width="340"
-                />
+                      loginWithGoogle(primaryEmail, 'Thamiz');
+                    }}
+                    onError={() => {
+                      setIsSigningIn(false);
+                      setShowAccountChooser(true);
+                    }}
+                    theme="filled_black"
+                    shape="pill"
+                    size="large"
+                    text="signin_with"
+                    width="340"
+                  />
+                )}
               </div>
 
               <button
                 type="button"
                 onClick={() => {
+                  if (isNative) {
+                    setIsSigningIn(false);
+                    setShowAccountChooser(true);
+                    return;
+                  }
                   setIsSigningIn(true);
                   setAuthError(null);
                   try {
@@ -278,8 +318,8 @@ export const GoogleSSOScreen: React.FC = () => {
                     setIsSigningIn(false);
                   }
                 }}
-                disabled={isSigningIn}
-                className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-800/60"
+                disabled={isSigningIn && !isNative}
+                className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-800/60 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
                 <span>Authorize Full Google Workspace & Drive Cloud Scopes</span>
@@ -724,7 +764,7 @@ export const GoogleSSOScreen: React.FC = () => {
                   setShowAccountChooser(false);
                   setActiveTab('custom');
                 }}
-                className="w-full p-2.5 rounded-xl bg-slate-950/40 hover:bg-slate-800 border border-dashed border-slate-700 flex items-center gap-3 text-left text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                className="w-full p-2.5 rounded-xl bg-slate-950/40 hover:bg-slate-800 border border-dashed border-slate-700 flex items-center gap-3 text-left text-xs text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
               >
                 <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 shrink-0">
                   <Users className="w-4 h-4" />
@@ -733,6 +773,20 @@ export const GoogleSSOScreen: React.FC = () => {
                   <span className="font-medium block">Use another Google Account</span>
                   <span className="text-[10px] text-slate-500">Sign in with any other Google email</span>
                 </div>
+              </button>
+            </div>
+
+            {/* Launch Cloud Run Web Hub */}
+            <div className="pt-1 border-t border-slate-800 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  window.open('https://aura-family-hub-2cgg5gpa7a-nw.a.run.app', '_system');
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-950/80 hover:bg-slate-800 border border-slate-800 text-xs text-blue-400 hover:text-blue-300 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
+                <span>Launch Cloud Run Web Hub in Chrome</span>
               </button>
             </div>
 
