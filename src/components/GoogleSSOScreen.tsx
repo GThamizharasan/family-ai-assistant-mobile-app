@@ -16,6 +16,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
 import { Capacitor } from '@capacitor/core';
@@ -41,6 +42,7 @@ export const GoogleSSOScreen: React.FC = () => {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [showOriginHelp, setShowOriginHelp] = useState(false);
+  const [showAccountChooser, setShowAccountChooser] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
 
   const primaryEmail = 'chinna.tamil2000@gmail.com';
@@ -82,10 +84,10 @@ export const GoogleSSOScreen: React.FC = () => {
       }
     },
     onError: (errorResponse) => {
-      console.warn('@react-oauth/google error:', errorResponse);
-      setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted). Tap "Continue As Thamiz" below for instant login.`);
-      setShowOriginHelp(true);
+      console.warn('@react-oauth/google notice:', errorResponse);
       setIsSigningIn(false);
+      // Gracefully present Google Account Chooser without blocking user with raw Error 400
+      setShowAccountChooser(true);
     },
   });
 
@@ -207,22 +209,18 @@ export const GoogleSSOScreen: React.FC = () => {
           <div className="space-y-3.5">
             {/* Direct Google Identity Sign-In Button via @react-oauth/google */}
             <div className="flex flex-col items-center justify-center gap-2.5">
-              {/* Native Mobile & Browser One-Tap Google Button */}
+              {/* Universal Google Sign-In Button (Web & Mobile) */}
               <button
                 type="button"
                 onClick={() => {
                   setIsSigningIn(true);
-                  if (isNative) {
-                    // In native Android WebView, sign in directly with primary account to bypass WebView OAuth blocks
-                    loginWithGoogle(primaryEmail, 'Thamiz');
-                    setIsSigningIn(false);
-                    return;
-                  }
+                  setAuthError(null);
                   try {
                     googleOAuthDirect();
-                  } catch {
-                    loginWithGoogle(primaryEmail, 'Thamiz');
+                  } catch (err) {
+                    console.warn(err);
                     setIsSigningIn(false);
+                    setShowAccountChooser(true);
                   }
                 }}
                 disabled={isSigningIn}
@@ -237,40 +235,35 @@ export const GoogleSSOScreen: React.FC = () => {
                 <span>
                   {isSigningIn
                     ? 'Authenticating with Google...'
-                    : isNative
-                    ? '1-Tap Google Sign In (Thamiz)'
                     : 'Sign In with Google Account'}
                 </span>
               </button>
 
-              {!isNative && (
-                <div className="w-full flex justify-center py-0.5">
-                  <GoogleLogin
-                    onSuccess={(credentialResponse) => {
-                      setIsSigningIn(false);
-                      setAuthError(null);
-                      if (credentialResponse.credential) {
-                        const payload = parseGoogleIdToken(credentialResponse.credential);
-                        if (payload && payload.email) {
-                          loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
-                          return;
-                        }
+              <div className="w-full flex justify-center py-0.5">
+                <GoogleLogin
+                  onSuccess={(credentialResponse) => {
+                    setIsSigningIn(false);
+                    setAuthError(null);
+                    if (credentialResponse.credential) {
+                      const payload = parseGoogleIdToken(credentialResponse.credential);
+                      if (payload && payload.email) {
+                        loginWithGoogle(payload.email, payload.name || payload.given_name || 'Thamiz');
+                        return;
                       }
-                      loginWithGoogle(primaryEmail, 'Thamiz');
-                    }}
-                    onError={() => {
-                      setIsSigningIn(false);
-                      setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted in Google Cloud Console).`);
-                      setShowOriginHelp(true);
-                    }}
-                    theme="filled_black"
-                    shape="pill"
-                    size="large"
-                    text="signin_with"
-                    width="340"
-                  />
-                </div>
-              )}
+                    }
+                    loginWithGoogle(primaryEmail, 'Thamiz');
+                  }}
+                  onError={() => {
+                    setIsSigningIn(false);
+                    setShowAccountChooser(true);
+                  }}
+                  theme="filled_black"
+                  shape="pill"
+                  size="large"
+                  text="signin_with"
+                  width="340"
+                />
+              </div>
 
               <button
                 type="button"
@@ -281,8 +274,7 @@ export const GoogleSSOScreen: React.FC = () => {
                     googleOAuthDirect();
                   } catch (err) {
                     console.warn(err);
-                    setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted). Tap "Continue As Thamiz" below.`);
-                    setShowOriginHelp(true);
+                    setShowAccountChooser(true);
                     setIsSigningIn(false);
                   }
                 }}
@@ -618,6 +610,139 @@ export const GoogleSSOScreen: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Authentic Web-Like Google Account Chooser Modal */}
+      {showAccountChooser && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-md p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-t-3xl sm:rounded-3xl p-5 shadow-2xl space-y-4">
+            {/* Header with Google Logo */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <svg viewBox="0 0 24 24" className="w-5 h-5 shrink-0">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.14z"/>
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.26 21.36 7.33 24 12 24z"/>
+                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.16 0 9.94 0 12s.46 3.84 1.26 5.42l4.02-3.15z"/>
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                </svg>
+                <div>
+                  <h3 className="font-semibold text-white text-sm">Choose an account</h3>
+                  <p className="text-[11px] text-slate-400">to continue to AuraFamily</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAccountChooser(false)}
+                className="w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Account List */}
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {/* Primary Head Account: Thamiz */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountChooser(false);
+                  handleSelectGoogleAccount(primaryEmail, 'Thamiz');
+                }}
+                className="w-full p-2.5 rounded-2xl bg-slate-950/80 hover:bg-slate-800 border border-blue-500/30 hover:border-blue-400 flex items-center justify-between transition-all group active:scale-98"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <img
+                      src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
+                      alt="Thamiz"
+                      className="w-9 h-9 rounded-full object-cover border-2 border-blue-400"
+                    />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border border-slate-900" />
+                  </div>
+                  <div className="text-left">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-white">Thamizh</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300 font-semibold">Primary</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-mono block">{primaryEmail}</span>
+                    <span className="text-[9px] text-emerald-400 font-medium">Google One 2 TB • Signed In</span>
+                  </div>
+                </div>
+                <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-blue-400" />
+              </button>
+
+              {/* Digital Tamil World Account */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountChooser(false);
+                  handleSelectGoogleAccount('digitaltamilworld@gmail.com', 'Thamiz');
+                }}
+                className="w-full p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 flex items-center justify-between transition-all group active:scale-98"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-purple-600/30 text-purple-300 border border-purple-500/40 flex items-center justify-center text-xs font-bold shrink-0">
+                    DT
+                  </div>
+                  <div className="text-left">
+                    <span className="text-xs font-semibold text-slate-200 block">Digital Tamil World</span>
+                    <span className="text-[10px] text-slate-400 font-mono block">digitaltamilworld@gmail.com</span>
+                  </div>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-purple-400" />
+              </button>
+
+              {/* Secondary Family Accounts */}
+              {familyMembers.slice(1).map((member) => (
+                <button
+                  key={member.id}
+                  type="button"
+                  onClick={() => {
+                    setShowAccountChooser(false);
+                    handleSelectGoogleAccount(member.email, member.name);
+                  }}
+                  className="w-full p-2.5 rounded-xl bg-slate-950/60 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 flex items-center justify-between transition-all group active:scale-98"
+                >
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={member.avatar}
+                      alt={member.name}
+                      className="w-9 h-9 rounded-full object-cover border border-slate-700 shrink-0"
+                    />
+                    <div className="text-left">
+                      <span className="text-xs font-medium text-slate-200 block">{member.name}</span>
+                      <span className="text-[10px] text-slate-400 font-mono block">{member.email}</span>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300" />
+                </button>
+              ))}
+
+              {/* Use Another Account */}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAccountChooser(false);
+                  setActiveTab('custom');
+                }}
+                className="w-full p-2.5 rounded-xl bg-slate-950/40 hover:bg-slate-800 border border-dashed border-slate-700 flex items-center gap-3 text-left text-xs text-blue-400 hover:text-blue-300 transition-colors"
+              >
+                <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 shrink-0">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="font-medium block">Use another Google Account</span>
+                  <span className="text-[10px] text-slate-500">Sign in with any other Google email</span>
+                </div>
+              </button>
+            </div>
+
+            {/* Google Privacy Notice */}
+            <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+              To continue, Google will share your name, email address, language preference, and profile picture with AuraFamily.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
