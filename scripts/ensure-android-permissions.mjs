@@ -66,3 +66,43 @@ if (existsSync(variablesPath)) {
   await writeFile(variablesPath, vars);
   console.log(`Ensured Android SDK variables set to compileSdkVersion = 36, targetSdkVersion = 35.`);
 }
+
+const mainActivityPath = 'android/app/src/main/java/com/family/ai/assistant/MainActivity.java';
+if (existsSync(mainActivityPath)) {
+  const mainActivityContent = `package com.family.ai.assistant;
+
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        try {
+            WebView webView = this.getBridge().getWebView();
+            if (webView != null) {
+                WebSettings settings = webView.getSettings();
+                settings.setJavaScriptEnabled(true);
+                settings.setJavaScriptCanOpenWindowsAutomatically(true);
+                settings.setSupportMultipleWindows(true);
+
+                String ua = settings.getUserAgentString();
+                if (ua != null) {
+                    String newUa = ua.replace("; wv", "")
+                                     .replace("; wv;", ";")
+                                     .replaceAll("Version/\\\\d+\\\\.\\\\d+\\\\s*", "");
+                    settings.setUserAgentString(newUa);
+                }
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+    }
+}
+`;
+  await writeFile(mainActivityPath, mainActivityContent);
+  console.log('Ensured MainActivity.java configured for multi-window OAuth popups and clean user-agent.');
+}
+

@@ -209,7 +209,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 const INITIAL_USER: UserProfile = {
   id: 'usr-primary-001',
   name: 'Thamizh',
-  email: 'digitaltamilworld@gmail.com',
+  email: 'chinna.tamil2000@gmail.com',
   phone: '+91 98408 05665',
   role: 'primary',
   avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
@@ -234,7 +234,7 @@ const INITIAL_FAMILY: FamilyMember[] = [
     name: 'Thamizh (Primary)',
     relationship: 'Self (Head)',
     role: 'primary',
-    email: 'digitaltamilworld@gmail.com',
+    email: 'chinna.tamil2000@gmail.com',
     phone: '+91 98408 05665',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
@@ -1131,16 +1131,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   // Google Single Sign-On (SSO) login handler
-  const loginWithGoogle = (email = 'digitaltamilworld@gmail.com', name?: string, newRole?: UserRole) => {
+  const loginWithGoogle = (email = 'chinna.tamil2000@gmail.com', name?: string, newRole?: UserRole) => {
     sessionStorage.setItem('aura_google_auth_session', 'true');
     localStorage.setItem('aura_google_auth_persisted', 'true');
 
-    const matched = familyMembers.find((m) => m.email.toLowerCase() === email.toLowerCase());
+    const lower = email.toLowerCase();
+    const matched = familyMembers.find((m) => m.email.toLowerCase() === lower);
+    const isOwner = lower.includes('chinna') || lower.includes('digitaltamilworld') || lower.includes('tamil');
     const finalRole: UserRole =
       newRole ||
       (matched
         ? matched.role
-        : email.toLowerCase().includes('digitaltamilworld')
+        : isOwner
         ? 'primary'
         : 'secondary');
 
@@ -1148,7 +1150,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       name ||
       (matched
         ? matched.name
-        : email.toLowerCase().includes('digitaltamilworld')
+        : isOwner
         ? 'Thamiz'
         : email.split('@')[0]);
 

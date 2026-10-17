@@ -43,9 +43,9 @@ export const GoogleSSOScreen: React.FC = () => {
   const [showOriginHelp, setShowOriginHelp] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
 
-  const primaryEmail = 'digitaltamilworld@gmail.com';
+  const primaryEmail = 'chinna.tamil2000@gmail.com';
   const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform();
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://localhost';
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
   const copyToClipboard = (text: string) => {
     try {
