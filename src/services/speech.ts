@@ -79,12 +79,59 @@ export class VoiceAssistantEngine {
   private nativeRecognitionSession = 0;
   private isNativeRecognitionActive = false;
 
+  // Continuous conversation loop state
+  private isContinuousMode: boolean = true;
+  private isSpeakingNow: boolean = false;
+  private isThinkingNow: boolean = false;
+  private restartTimeout: any = null;
+  private consecutiveErrorCount: number = 0;
+
   // Callbacks
   public onTranscriptCallback?: (transcript: string, isFinal: boolean) => void;
   public onSpeakingChange?: (isSpeaking: boolean) => void;
   public onListeningChange?: (isListening: boolean) => void;
   public onErrorCallback?: (error: string) => void;
   public onAudioVolume?: (volume: number) => void;
+
+  public setContinuousMode(enabled: boolean) {
+    this.isContinuousMode = enabled;
+    if (!enabled) {
+      clearTimeout(this.restartTimeout);
+    }
+  }
+
+  public setThinkingState(isThinking: boolean) {
+    this.isThinkingNow = isThinking;
+    if (isThinking) {
+      clearTimeout(this.restartTimeout);
+    }
+  }
+
+  public getIsListening(): boolean {
+    return this.isListening;
+  }
+
+  public getIsSpeaking(): boolean {
+    return this.isSpeakingNow;
+  }
+
+  private scheduleAutoRestart(delayMs = 250) {
+    clearTimeout(this.restartTimeout);
+    if (!this.isContinuousMode || this.isSpeakingNow || this.isThinkingNow) return;
+
+    this.restartTimeout = setTimeout(() => {
+      if (!this.isContinuousMode || this.isSpeakingNow || this.isThinkingNow) return;
+      if (Capacitor.isNativePlatform()) {
+        void this.startNativeSpeechRecognition();
+      } else if (this.recognition && !isIOSChrome()) {
+        try {
+          this.recognition.start();
+        } catch {
+          // already started or retry later
+        }
+      }
+    }, delayMs);
+  }
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -241,8 +288,12 @@ export class VoiceAssistantEngine {
         if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
           this.commitCurrentSpeech();
         } else {
-          this.isListening = false;
-          this.onListeningChange?.(false);
+          if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
+            this.scheduleAutoRestart(200);
+          } else {
+            this.isListening = false;
+            this.onListeningChange?.(false);
+          }
         }
       };
     } catch (e) {
@@ -312,7 +363,9 @@ export class VoiceAssistantEngine {
     this.stopSpeaking();
     this.isCommitted = false;
     this.latestTranscript = '';
+    this.consecutiveErrorCount = 0;
     clearTimeout(this.silenceTimer);
+    clearTimeout(this.restartTimeout);
 
     if (Capacitor.isNativePlatform()) {
       void this.startNativeSpeechRecognition();
@@ -340,6 +393,9 @@ export class VoiceAssistantEngine {
   }
 
   private async startNativeSpeechRecognition(): Promise<void> {
+    clearTimeout(this.restartTimeout);
+    if (this.isSpeakingNow || this.isThinkingNow) return;
+
     const session = ++this.nativeRecognitionSession;
 
     try {
@@ -350,8 +406,17 @@ export class VoiceAssistantEngine {
 
       const permission = await SpeechRecognition.requestPermissions();
       if (permission.speechRecognition !== 'granted') {
+        this.isContinuousMode = false;
         this.onErrorCallback?.('not-allowed');
         return;
+      }
+      if (session !== this.nativeRecognitionSession) return;
+
+      if (this.isNativeRecognitionActive) {
+        try {
+          await SpeechRecognition.stop();
+        } catch {}
+        await new Promise((r) => setTimeout(r, 100));
       }
       if (session !== this.nativeRecognitionSession) return;
 
@@ -370,23 +435,58 @@ export class VoiceAssistantEngine {
       if (session !== this.nativeRecognitionSession) return;
       const transcript = matches?.[0]?.trim();
       if (transcript) {
+        this.consecutiveErrorCount = 0;
         this.latestTranscript = transcript;
+        this.isNativeRecognitionActive = false;
         this.onTranscriptCallback?.(transcript, true);
+        return;
       } else {
-        this.onErrorCallback?.('no-speech');
+        // Native recognition ended without matches (silence)
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
+          this.isNativeRecognitionActive = false;
+          this.scheduleAutoRestart(200);
+          return;
+        } else {
+          this.onErrorCallback?.('no-speech');
+        }
       }
     } catch (err) {
       if (session !== this.nativeRecognitionSession) return;
       const message = err instanceof Error ? err.message : String(err);
-      console.warn('Native speech recognition failed:', err);
+      console.warn('Native speech recognition status/notice:', message);
+
       if (/permission|denied/i.test(message)) {
+        this.isContinuousMode = false;
         this.onErrorCallback?.('not-allowed');
-      } else if (/not available|recognition service|speech service/i.test(message)) {
+      } else if (/not available|recognition service not/i.test(message)) {
+        this.isContinuousMode = false;
         this.onErrorCallback?.('Speech recognition is unavailable. Install or enable Speech Services by Google on your phone.');
-      } else if (/no match|no speech/i.test(message)) {
+      } else if (/no match|no speech|timeout/i.test(message)) {
+        // Natural pause/silence from user in hands-free mode -> re-arm seamlessly
+        this.consecutiveErrorCount = 0;
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
+          this.isNativeRecognitionActive = false;
+          this.scheduleAutoRestart(200);
+          return;
+        }
         this.onErrorCallback?.('no-speech');
+      } else if (/busy|audio recording/i.test(message)) {
+        // Audio focus collision or device busy -> wait for audio focus release and retry
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow && this.consecutiveErrorCount < 5) {
+          this.consecutiveErrorCount++;
+          this.isNativeRecognitionActive = false;
+          this.scheduleAutoRestart(650);
+          return;
+        }
+        this.onErrorCallback?.('device-busy');
       } else {
-        this.onErrorCallback?.(`Speech recognition failed: ${message}`);
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow && this.consecutiveErrorCount < 3) {
+          this.consecutiveErrorCount++;
+          this.isNativeRecognitionActive = false;
+          this.scheduleAutoRestart(500);
+          return;
+        }
+        this.onErrorCallback?.(`Speech recognition notice: ${message}`);
       }
     } finally {
       if (session === this.nativeRecognitionSession) {
@@ -555,7 +655,14 @@ export class VoiceAssistantEngine {
     }
   }
 
-  public stopListening() {
+  public stopListening(userInitiated = false) {
+    if (userInitiated) {
+      this.isContinuousMode = false;
+    }
+    clearTimeout(this.restartTimeout);
+    clearTimeout(this.silenceTimer);
+    clearTimeout(this.recordSilenceTimer);
+
     if (Capacitor.isNativePlatform()) {
       this.nativeRecognitionSession++;
       const wasActive = this.isNativeRecognitionActive;
@@ -604,9 +711,11 @@ export class VoiceAssistantEngine {
         source.connect(this.audioContext.destination);
 
         this.currentBufferSource = source;
+        this.isSpeakingNow = true;
         this.onSpeakingChange?.(true);
 
         source.onended = () => {
+          this.isSpeakingNow = false;
           this.onSpeakingChange?.(false);
           this.currentBufferSource = null;
           onEnd?.();
@@ -632,17 +741,23 @@ export class VoiceAssistantEngine {
       const audio = new Audio(blobUrl);
       this.currentAudioElement = audio;
 
-      audio.onplay = () => this.onSpeakingChange?.(true);
+      audio.onplay = () => {
+        this.isSpeakingNow = true;
+        this.onSpeakingChange?.(true);
+      };
       audio.onended = () => {
+        this.isSpeakingNow = false;
         this.onSpeakingChange?.(false);
         this.currentAudioElement = null;
         URL.revokeObjectURL(blobUrl);
         onEnd?.();
       };
       audio.onerror = () => {
+        this.isSpeakingNow = false;
         this.onSpeakingChange?.(false);
         this.currentAudioElement = null;
         URL.revokeObjectURL(blobUrl);
+        onEnd?.();
       };
 
       await audio.play();
@@ -669,10 +784,15 @@ export class VoiceAssistantEngine {
     } = {}
   ) {
     this.stopSpeaking();
+    this.isSpeakingNow = true;
+    clearTimeout(this.restartTimeout);
 
     // 1. If high-fidelity Gemini 3.8 TTS audio was provided, play it
     if (options.audioBase64) {
-      this.playAudioBase64(options.audioBase64, options.onEnd).then((success) => {
+      this.playAudioBase64(options.audioBase64, () => {
+        this.isSpeakingNow = false;
+        options.onEnd?.();
+      }).then((success) => {
         if (!success) {
           this.speakBrowserSynthesis(text, options);
         }
@@ -693,6 +813,7 @@ export class VoiceAssistantEngine {
     } = {}
   ) {
     if (!this.synth) {
+      this.isSpeakingNow = false;
       options.onEnd?.();
       return;
     }
@@ -707,6 +828,7 @@ export class VoiceAssistantEngine {
       .trim();
 
     if (!cleanText) {
+      this.isSpeakingNow = false;
       options.onEnd?.();
       return;
     }
@@ -740,6 +862,7 @@ export class VoiceAssistantEngine {
     const finish = () => {
       if (hasEnded) return;
       hasEnded = true;
+      this.isSpeakingNow = false;
       this.onSpeakingChange?.(false);
       this.currentUtterance = null;
       if (typeof window !== 'undefined') {
@@ -751,15 +874,13 @@ export class VoiceAssistantEngine {
     // Watchdog to prevent Chrome from stalling utterances
     const maxDuration = Math.max(3000, cleanText.length * 90);
     const watchdogTimer = setTimeout(() => {
-      if (!hasEnded && this.synth) {
-        if (this.synth.speaking) {
+      if (!hasEnded) {
+        if (this.synth) {
           try {
-            this.synth.pause();
-            this.synth.resume();
+            this.synth.cancel();
           } catch (e) {}
-        } else {
-          finish();
         }
+        finish();
       }
     }, maxDuration);
 
@@ -769,6 +890,7 @@ export class VoiceAssistantEngine {
     };
 
     utterance.onstart = () => {
+      this.isSpeakingNow = true;
       this.onSpeakingChange?.(true);
     };
 
@@ -811,6 +933,7 @@ export class VoiceAssistantEngine {
   }
 
   public stopSpeaking() {
+    this.isSpeakingNow = false;
     if (this.currentBufferSource) {
       try {
         this.currentBufferSource.stop();

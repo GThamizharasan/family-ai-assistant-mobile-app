@@ -68,6 +68,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const handleUserSpeechRef = useRef<(spokenText: string) => void>(() => {});
   const isLocalVoiceMode = Capacitor.isNativePlatform() && !getApiBaseUrl();
 
+  const isHandsFreeRef = useRef(isHandsFree);
+  const isOpenRef = useRef(isOpen);
+  const isSpeakingRef = useRef(isSpeaking);
+  const isThinkingRef = useRef(isThinking);
+
+  useEffect(() => {
+    isHandsFreeRef.current = isHandsFree;
+    speechEngine.setContinuousMode(isHandsFree && isOpen);
+  }, [isHandsFree, isOpen]);
+
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  useEffect(() => {
+    isThinkingRef.current = isThinking;
+    speechEngine.setThinkingState(isThinking);
+  }, [isThinking]);
 
   const speakWithAuro = (
     text: string,
@@ -78,7 +100,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       audioBase64?: string | null;
     } = {}
   ) => {
-    if (isMuted) return;
+    if (isMuted) {
+      if (isHandsFreeRef.current && isOpenRef.current) {
+        setTimeout(() => {
+          if (isHandsFreeRef.current && isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+            speechEngine.startListening();
+          }
+        }, 500);
+      }
+      return;
+    }
+
     speechEngine.unlockAudio();
     speechEngine.speak(text, {
       pitch: options.pitch ?? user.preferences?.voicePitch ?? 1.04,
@@ -86,10 +118,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       emotion: options.emotion,
       audioBase64: options.audioBase64,
       onEnd: () => {
-        if (isHandsFree) {
+        // Continuous hands-free loop: automatically restart listening after Auro speaks
+        if (isHandsFreeRef.current && isOpenRef.current) {
           setTimeout(() => {
-            speechEngine.startListening();
-          }, 450);
+            if (isHandsFreeRef.current && isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+              speechEngine.startListening();
+            }
+          }, 650);
         }
       },
     });
@@ -123,13 +158,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             : 'Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.'
         );
       } else if (error === 'no-speech') {
-        // Silent timeout
+        // Silent timeout: ignore during conversational turns
       } else if (error === 'audio-capture') {
         setMicStatusMessage('No microphone detected. Please connect or enable your microphone.');
       } else if (error === 'device-busy') {
-        setMicStatusMessage('The microphone is being used by another app. Close other apps using the microphone, then try again.');
+        setMicStatusMessage('The microphone is being initialized. Please wait a moment.');
       } else {
-        setMicStatusMessage(`Microphone status: ${error}. You can also type your message below.`);
+        setMicStatusMessage(`Microphone notice: ${error}. You can also type your message below.`);
       }
     };
 
@@ -143,16 +178,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   }, [isLocalVoiceMode]);
 
   useEffect(() => {
+    isOpenRef.current = isOpen;
     if (isOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       speechEngine.unlockAudio();
+      speechEngine.setContinuousMode(isHandsFreeRef.current);
       // Automatically activate speech listening for real-time conversation
       const startTimer = setTimeout(() => {
-        speechEngine.startListening();
-      }, 350);
+        if (isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+          speechEngine.startListening();
+        }
+      }, 400);
       return () => clearTimeout(startTimer);
     } else {
-      speechEngine.stopListening();
+      speechEngine.setContinuousMode(false);
+      speechEngine.stopListening(true);
       speechEngine.stopSpeaking();
       setMicStatusMessage(null);
       setShowMicHelp(false);
@@ -163,7 +203,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     if (!spokenText || !spokenText.trim()) return;
     speechEngine.unlockAudio();
     setLiveTranscript('');
-    speechEngine.stopListening();
+    speechEngine.stopListening(false);
 
     const userMsg = {
       role: 'user' as const,
@@ -518,12 +558,22 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   };
 
   const toggleMic = async () => {
+    if (isSpeaking) {
+      // Barge-in: User tapped mic while Auro is speaking -> stop speech and start listening
+      speechEngine.stopSpeaking();
+      speechEngine.unlockAudio();
+      speechEngine.setContinuousMode(isHandsFreeRef.current);
+      speechEngine.startListening();
+      return;
+    }
+
     if (isListening) {
-      speechEngine.stopListening();
+      speechEngine.stopListening(true);
     } else {
       speechEngine.unlockAudio();
       setMicStatusMessage(null);
       speechEngine.stopSpeaking();
+      speechEngine.setContinuousMode(isHandsFreeRef.current);
       if (isIOSChrome()) {
         setMicStatusMessage('Apple iOS WebKit restricts speech recognition in Chrome. On iPhone, please use Safari for voice dictation, or type your message below.');
         return;
@@ -597,7 +647,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               <span className="hidden sm:inline">Test Sound</span>
             </button>
             <button
-              onClick={() => setIsHandsFree(!isHandsFree)}
+              onClick={() => {
+                const next = !isHandsFree;
+                setIsHandsFree(next);
+                isHandsFreeRef.current = next;
+                speechEngine.setContinuousMode(next);
+                if (next && !isListening && !isSpeaking && !isThinking) {
+                  speechEngine.startListening();
+                } else if (!next && isListening) {
+                  speechEngine.stopListening(true);
+                }
+              }}
               className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
                 isHandsFree
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/40'
