@@ -132,7 +132,7 @@ interface AppContextType {
   liveStorageQuota: GoogleStorageQuota;
   syncLiveGoogleData: () => Promise<void>;
   signInWithGoogleOAuth: () => Promise<boolean>;
-  loginWithGoogle: (email?: string, name?: string, role?: UserRole, explicitToken?: string) => void;
+  loginWithGoogle: (email?: string, name?: string, role?: UserRole) => void;
   loginWithActivationCode: (code: string) => { success: boolean; message: string };
   signOutGoogle: () => void;
   requireGoogleAuthOnReload: boolean;
@@ -587,13 +587,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   };
 
-  // In-memory & persisted access token for Google Workspace APIs (Drive, Gmail, Calendar)
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('aura_google_access_token') || null;
-    }
-    return null;
-  });
+  // In-memory access token for Google Workspace APIs (Drive, Gmail, Calendar)
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
   const [liveEmails, setLiveEmails] = useState<GoogleEmailMessage[]>(FALLBACK_GMAIL_MESSAGES);
   const [liveDriveFiles, setLiveDriveFiles] = useState<GoogleDriveFile[]>(FALLBACK_DRIVE_FILES);
   const [liveStorageQuota, setLiveStorageQuota] = useState<GoogleStorageQuota>(DEFAULT_2TB_QUOTA);
@@ -1135,8 +1130,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setUser((prev) => ({ ...prev, role: newRole }));
   };
 
-  // Google Single Sign-On (SSO) login handler - unlocks app with full Google Workspace & Gemini connectivity
-  const loginWithGoogle = (email = 'chinna.tamil2000@gmail.com', name?: string, newRole?: UserRole, explicitToken?: string) => {
+  // Google Single Sign-On (SSO) login handler
+  const loginWithGoogle = (email = 'chinna.tamil2000@gmail.com', name?: string, newRole?: UserRole) => {
     sessionStorage.setItem('aura_google_auth_session', 'true');
     localStorage.setItem('aura_google_auth_persisted', 'true');
 
@@ -1156,44 +1151,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       (matched
         ? matched.name
         : isOwner
-        ? (lower.includes('digitaltamilworld') ? 'Digital Tamil World' : 'Thamiz')
+        ? 'Thamiz'
         : email.split('@')[0]);
 
     const finalAvatar = matched ? matched.avatar : user.avatar;
 
-    // Establish active Google token to unlock full Google Workspace (Drive, Gmail, Calendar, Storage)
-    const token =
-      explicitToken ||
-      localStorage.getItem('aura_google_access_token') ||
-      `live-workspace-${Date.now()}-${btoa(lower).replace(/=/g, '')}`;
-    setGoogleAccessToken(token);
-    localStorage.setItem('aura_google_access_token', token);
-
-    // Initialize Gemini 3.8 AI Suite connectivity and cloud backend
-    if (!localStorage.getItem('aura_gemini_key')) {
-      const defaultGeminiKey = (import.meta.env.VITE_GEMINI_API_KEY as string) || '';
-      if (defaultGeminiKey) {
-        localStorage.setItem('aura_gemini_key', defaultGeminiKey);
-      }
-    }
-    if (!localStorage.getItem('aura_api_base_url')) {
-      localStorage.setItem('aura_api_base_url', 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app');
-    }
-
-    const updatedUser: UserProfile = {
-      ...user,
+    setUser((prev) => ({
+      ...prev,
       email,
       name: finalName,
       role: finalRole,
       avatar: finalAvatar,
-    };
-    setUser(updatedUser);
-    localStorage.setItem('aura_user', JSON.stringify(updatedUser));
+    }));
     setRoleState(finalRole);
     setIsAuthenticated(true);
-
-    // Trigger immediate live background sync for Google Workspace and GCP Cloud details
-    void syncLiveGoogleData(token);
   };
 
   // Real Google OAuth pop-up login requesting Gmail, Drive & Calendar tokens
@@ -1279,7 +1250,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const signOutGoogle = async () => {
     sessionStorage.removeItem('aura_google_auth_session');
     localStorage.removeItem('aura_google_auth_persisted');
-    localStorage.removeItem('aura_google_access_token');
     setGoogleAccessToken(null);
     setLiveEmails(FALLBACK_GMAIL_MESSAGES);
     setLiveDriveFiles(FALLBACK_DRIVE_FILES);
