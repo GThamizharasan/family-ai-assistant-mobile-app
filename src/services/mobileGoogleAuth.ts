@@ -8,8 +8,39 @@ import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { getCachedClientId } from './googleAuth';
 
-export const MOBILE_OAUTH_REDIRECT_URI =
-  'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/oauth-mobile-callback.html';
+export const DEFAULT_MOBILE_OAUTH_REDIRECT_URI =
+  'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
+
+export const MOBILE_REDIRECT_PRESETS = [
+  { label: 'Cloud Run Root (Recommended)', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
+  { label: 'Cloud Run Root With Slash', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/' },
+  { label: 'Dedicated Callback HTML', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/oauth-mobile-callback.html' },
+] as const;
+
+const REDIRECT_URI_KEY = 'aura_mobile_oauth_redirect_uri';
+
+export function getMobileOAuthRedirectUri(): string {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    const saved = localStorage.getItem(REDIRECT_URI_KEY);
+    if (saved && saved.trim()) return saved.trim();
+  }
+  return (
+    import.meta.env.VITE_MOBILE_OAUTH_REDIRECT_URI ||
+    DEFAULT_MOBILE_OAUTH_REDIRECT_URI
+  );
+}
+
+export function setMobileOAuthRedirectUri(uri: string): void {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    if (uri && uri.trim()) {
+      localStorage.setItem(REDIRECT_URI_KEY, uri.trim());
+    } else {
+      localStorage.removeItem(REDIRECT_URI_KEY);
+    }
+  }
+}
+
+export const MOBILE_OAUTH_REDIRECT_URI = DEFAULT_MOBILE_OAUTH_REDIRECT_URI;
 
 const MOBILE_SCOPES = [
   'openid',
@@ -26,9 +57,11 @@ export async function startMobileGoogleSignIn(): Promise<void> {
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
   localStorage.setItem(STATE_KEY, state);
 
+  const redirectUri = getMobileOAuthRedirectUri();
+
   const params = new URLSearchParams({
     client_id: getCachedClientId(),
-    redirect_uri: MOBILE_OAUTH_REDIRECT_URI,
+    redirect_uri: redirectUri,
     response_type: 'token',
     scope: MOBILE_SCOPES,
     include_granted_scopes: 'true',

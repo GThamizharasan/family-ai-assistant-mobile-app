@@ -22,7 +22,13 @@ import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
 import { Capacitor } from '@capacitor/core';
 import { parseGoogleIdToken } from '../services/googleAuth';
 import { useApp } from '../context/AppContext';
-import { startMobileGoogleSignIn, listenForMobileGoogleSignIn } from '../services/mobileGoogleAuth';
+import {
+  startMobileGoogleSignIn,
+  listenForMobileGoogleSignIn,
+  getMobileOAuthRedirectUri,
+  setMobileOAuthRedirectUri,
+  MOBILE_REDIRECT_PRESETS,
+} from '../services/mobileGoogleAuth';
 
 export const GoogleSSOScreen: React.FC = () => {
   const {
@@ -46,6 +52,12 @@ export const GoogleSSOScreen: React.FC = () => {
   const [showAccountChooser, setShowAccountChooser] = useState(false);
   const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
   const [mobileAuthError, setMobileAuthError] = useState<string | null>(null);
+  const [mobileRedirectUri, setMobileRedirectUriState] = useState<string>(() => getMobileOAuthRedirectUri());
+
+  const handleSelectRedirectUri = (uri: string) => {
+    setMobileOAuthRedirectUri(uri);
+    setMobileRedirectUriState(uri);
+  };
 
   const primaryEmail = 'chinna.tamil2000@gmail.com';
   const isNative =
@@ -366,6 +378,53 @@ export const GoogleSSOScreen: React.FC = () => {
               </div>
             )}
 
+            {isMobile && (
+              <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 text-[11px] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                    Mobile OAuth Redirect URI
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyToClipboard(mobileRedirectUri)}
+                    className="text-blue-400 hover:text-blue-300 flex items-center gap-1 text-[10px] font-medium"
+                  >
+                    {copiedOrigin === mobileRedirectUri ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>{copiedOrigin === mobileRedirectUri ? 'Copied URI' : 'Copy URI'}</span>
+                  </button>
+                </div>
+                <code className="text-emerald-400 font-mono text-[10.5px] block break-all font-semibold bg-slate-900/90 p-2 rounded-lg border border-slate-800">
+                  {mobileRedirectUri}
+                </code>
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-slate-400">Target URI:</span>
+                  <div className="flex items-center gap-1.5">
+                    {MOBILE_REDIRECT_PRESETS.map((p) => {
+                      const isActive = mobileRedirectUri === p.uri;
+                      return (
+                        <button
+                          key={p.uri}
+                          type="button"
+                          onClick={() => handleSelectRedirectUri(p.uri)}
+                          className={`text-[9px] px-2 py-1 rounded font-medium transition-all cursor-pointer ${
+                            isActive
+                              ? 'bg-blue-600 text-white shadow-sm font-bold'
+                              : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                          }`}
+                        >
+                          {p.label.includes('Root') ? 'Cloud Run Root' : 'Callback HTML'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <p className="text-[9.5px] text-slate-500 leading-tight">
+                  Must match an <strong>Authorized redirect URI</strong> in your Google Cloud Console OAuth Client.
+                </p>
+              </div>
+            )}
+
             {authError && (
               <div className="space-y-2.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-left">
                 <div className="flex items-start gap-2">
@@ -415,15 +474,15 @@ export const GoogleSSOScreen: React.FC = () => {
               >
                 <span className="flex items-center gap-1.5 font-medium">
                   <Shield className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Fix "Error 400: origin_mismatch" in Google Cloud</span>
+                  <span>Fix "Error 400: redirect_uri_mismatch" in Google Cloud</span>
                 </span>
                 <span className="text-[10px] text-blue-400 font-semibold">{showOriginHelp ? 'Hide' : 'Show Steps'}</span>
               </button>
 
               {showOriginHelp && (
-                <div className="pt-2 border-t border-slate-800 space-y-2 text-slate-300 text-[11px] leading-relaxed">
+                <div className="pt-2 border-t border-slate-800 space-y-2.5 text-slate-300 text-[11px] leading-relaxed">
                   <p className="text-slate-400">
-                    To authorize direct Google Cloud popups, register these origins in your Google Cloud OAuth Client ID:
+                    In your Google Cloud Console OAuth 2.0 Web Client, register these settings:
                   </p>
                   <ol className="list-decimal list-inside space-y-1 text-slate-400 text-[10px]">
                     <li>
@@ -438,15 +497,17 @@ export const GoogleSSOScreen: React.FC = () => {
                       </a>
                     </li>
                     <li>Select your OAuth 2.0 Web Client ID: <span className="font-mono text-slate-200">600050762948...</span></li>
-                    <li>Under <strong>Authorized JavaScript origins</strong>, add:</li>
                   </ol>
 
+                  {/* Section A: Authorized JavaScript origins */}
                   <div className="space-y-1 pt-1">
+                    <span className="text-[10px] font-semibold text-slate-300 block">
+                      1. Under <strong>Authorized JavaScript origins</strong>:
+                    </span>
                     {[
-                      { label: 'Mobile Android APK', uri: 'https://localhost' },
-                      { label: 'Cloud Run Backend', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
-                      { label: 'Mobile OAuth Callback', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/oauth-mobile-callback.html' },
-                      { label: 'Local Development', uri: 'http://localhost:5173' },
+                      { label: 'Cloud Run Backend Origin', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
+                      { label: 'Mobile Android APK Origin', uri: 'https://localhost' },
+                      { label: 'Local Development Origin', uri: 'http://localhost:5173' },
                     ].map((item) => (
                       <div
                         key={item.uri}
@@ -459,7 +520,7 @@ export const GoogleSSOScreen: React.FC = () => {
                         <button
                           type="button"
                           onClick={() => copyToClipboard(item.uri)}
-                          className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
+                          className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
                         >
                           {copiedOrigin === item.uri ? (
                             <Check className="w-3 h-3 text-emerald-400" />
@@ -472,8 +533,42 @@ export const GoogleSSOScreen: React.FC = () => {
                     ))}
                   </div>
 
-                  <p className="text-[10px] text-slate-400 italic">
-                    Also add the same URIs under <strong>Authorized redirect URIs</strong>, then click <strong>Save</strong>. (Propagation takes ~2-5 mins).
+                  {/* Section B: Authorized redirect URIs */}
+                  <div className="space-y-1 pt-1.5">
+                    <span className="text-[10px] font-semibold text-slate-300 block">
+                      2. Under <strong>Authorized redirect URIs</strong>:
+                    </span>
+                    {[
+                      { label: 'Cloud Run Root (Active Mobile Redirect)', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
+                      { label: 'Mobile OAuth Callback Page', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app/oauth-mobile-callback.html' },
+                      { label: 'Local Development Redirect', uri: 'http://localhost:5173' },
+                    ].map((item) => (
+                      <div
+                        key={item.uri}
+                        className="flex items-center justify-between bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-800/80 font-mono text-[10px]"
+                      >
+                        <div>
+                          <span className="text-slate-400 text-[9px] block">{item.label}</span>
+                          <span className="text-emerald-400">{item.uri}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(item.uri)}
+                          className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors cursor-pointer"
+                        >
+                          {copiedOrigin === item.uri ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                          <span>{copiedOrigin === item.uri ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-[10px] text-amber-300/90 italic pt-1">
+                    Click <strong>Save</strong> in Google Cloud Console. Changes propagate to Google OAuth servers in 1-2 minutes.
                   </p>
                 </div>
               )}

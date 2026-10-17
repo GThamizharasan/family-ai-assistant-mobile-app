@@ -115,7 +115,42 @@
             var schemeUrl = 'com.family.ai.assistant://oauth?' + q;
             var isAndroid = /Android/i.test(navigator.userAgent);
             var target = isAndroid ? intentUrl : schemeUrl;
-            window.location.replace(target);
+
+            // Render interactive bounce card in case automatic intent redirect is blocked by Chrome
+            var showOverlay = function() {
+              if (document.getElementById('oauth-mobile-bounce-overlay')) return;
+              var div = document.createElement('div');
+              div.id = 'oauth-mobile-bounce-overlay';
+              div.style.cssText = 'position:fixed;inset:0;background:#090d16;z-index:9999999;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif;padding:16px;';
+              div.innerHTML = '<div style="padding:32px 24px;max-width:360px;width:100%;background:rgba(15,23,42,0.95);border:1px solid rgba(255,255,255,0.15);border-radius:24px;text-align:center;box-shadow:0 20px 40px rgba(0,0,0,0.6);">' +
+                '<h2 style="margin:0;font-size:20px;font-weight:700;color:#f8fafc;">Signed in with Google</h2>' +
+                '<p id="bounce-msg" style="color:#94a3b8;font-size:14px;margin:12px 0 0;">Returning to AuraFamily mobile app…</p>' +
+                '<a id="bounce-btn" href="' + target + '" style="display:inline-block;margin-top:20px;padding:14px 28px;border-radius:16px;background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;font-weight:700;font-size:14px;text-decoration:none;box-shadow:0 8px 20px rgba(59,130,246,0.4);">Open AuraFamily App</a>' +
+              '</div>';
+              if (document.body) {
+                document.body.appendChild(div);
+              } else if (document.documentElement) {
+                document.documentElement.appendChild(div);
+              }
+              var btn = div.querySelector('#bounce-btn');
+              if (btn) {
+                btn.addEventListener('click', function() {
+                  setTimeout(function() { window.location.href = schemeUrl; }, 300);
+                });
+              }
+            };
+
+            if (document.body || document.documentElement) {
+              showOverlay();
+            } else {
+              window.addEventListener('DOMContentLoaded', showOverlay);
+            }
+
+            try {
+              window.location.replace(target);
+            } catch (e) {
+              window.location.replace(schemeUrl);
+            }
           }
         } catch (e) {}
       })();
