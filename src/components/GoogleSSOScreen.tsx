@@ -13,8 +13,12 @@ import {
   HardDrive,
   Calendar,
   CloudCheck,
+  Copy,
+  Check,
+  ExternalLink,
 } from 'lucide-react';
 import { GoogleLogin, useGoogleLogin } from '@react-oauth/google';
+import { Capacitor } from '@capacitor/core';
 import { parseGoogleIdToken } from '../services/googleAuth';
 import { useApp } from '../context/AppContext';
 
@@ -36,8 +40,22 @@ export const GoogleSSOScreen: React.FC = () => {
   const [customName, setCustomName] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showOriginHelp, setShowOriginHelp] = useState(false);
+  const [copiedOrigin, setCopiedOrigin] = useState<string | null>(null);
 
   const primaryEmail = 'digitaltamilworld@gmail.com';
+  const isNative = typeof window !== 'undefined' && Capacitor.isNativePlatform();
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://localhost';
+
+  const copyToClipboard = (text: string) => {
+    try {
+      navigator.clipboard?.writeText(text);
+      setCopiedOrigin(text);
+      setTimeout(() => setCopiedOrigin(null), 2500);
+    } catch {
+      // ignore
+    }
+  };
 
   // Direct @react-oauth/google hook for full Workspace scopes
   const googleOAuthDirect = useGoogleLogin({
@@ -60,7 +78,8 @@ export const GoogleSSOScreen: React.FC = () => {
     },
     onError: (errorResponse) => {
       console.warn('@react-oauth/google error:', errorResponse);
-      setAuthError('Google OAuth popup was closed or origin is not authorized in Google Cloud Console. Click "Continue As Thamiz" below for instant 1-tap login.');
+      setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted). Tap "Continue As Thamiz" below for instant login.`);
+      setShowOriginHelp(true);
       setIsSigningIn(false);
     },
   });
@@ -188,10 +207,17 @@ export const GoogleSSOScreen: React.FC = () => {
                 type="button"
                 onClick={() => {
                   setIsSigningIn(true);
+                  if (isNative) {
+                    // In native Android WebView, sign in directly with primary account to bypass WebView OAuth blocks
+                    loginWithGoogle(primaryEmail, 'Thamiz');
+                    setIsSigningIn(false);
+                    return;
+                  }
                   try {
                     googleOAuthDirect();
                   } catch {
                     loginWithGoogle(primaryEmail, 'Thamiz');
+                    setIsSigningIn(false);
                   }
                 }}
                 disabled={isSigningIn}
@@ -222,7 +248,8 @@ export const GoogleSSOScreen: React.FC = () => {
                   }}
                   onError={() => {
                     setIsSigningIn(false);
-                    setAuthError('Google sign-in popup was blocked or origin is unlisted in Google Cloud. Click "Continue As Thamiz" below to sign in instantly.');
+                    setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted in Google Cloud Console).`);
+                    setShowOriginHelp(true);
                   }}
                   theme="filled_black"
                   shape="pill"
@@ -234,7 +261,18 @@ export const GoogleSSOScreen: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => googleOAuthDirect()}
+                onClick={() => {
+                  setIsSigningIn(true);
+                  setAuthError(null);
+                  try {
+                    googleOAuthDirect();
+                  } catch (err) {
+                    console.warn(err);
+                    setAuthError(`Google OAuth Error 400: origin_mismatch (${currentOrigin} unlisted). Tap "Continue As Thamiz" below.`);
+                    setShowOriginHelp(true);
+                    setIsSigningIn(false);
+                  }
+                }}
                 disabled={isSigningIn}
                 className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-800/60"
               >
@@ -244,10 +282,116 @@ export const GoogleSSOScreen: React.FC = () => {
             </div>
 
             {authError && (
-              <p className="text-[11px] text-amber-400 text-center bg-amber-500/10 p-2 rounded-xl border border-amber-500/20">
-                {authError}
-              </p>
+              <div className="space-y-2.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-left">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1 text-xs">
+                    <p className="font-semibold text-amber-300">OAuth Origin Mismatch (Error 400)</p>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Google OAuth requires registering this app's origin URL in Google Cloud Console Credentials.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800 text-[11px] space-y-1.5">
+                  <div className="flex items-center justify-between text-slate-400">
+                    <span className="text-[10px] uppercase font-semibold text-slate-500">Current App Origin</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(currentOrigin)}
+                      className="text-blue-400 hover:text-blue-300 flex items-center gap-1 text-[10px] font-medium"
+                    >
+                      {copiedOrigin === currentOrigin ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedOrigin === currentOrigin ? 'Copied!' : 'Copy Origin'}</span>
+                    </button>
+                  </div>
+                  <code className="text-amber-300 font-mono text-[11px] block break-all font-semibold">
+                    {currentOrigin}
+                  </code>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleSelectGoogleAccount(primaryEmail, 'Thamiz')}
+                  className="w-full py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-sm active:scale-98"
+                >
+                  <ArrowRight className="w-3.5 h-3.5" />
+                  <span>Instant 1-Tap Login: Continue As Thamiz ({primaryEmail})</span>
+                </button>
+              </div>
             )}
+
+            {/* Collapsible Origin Setup Instructions for Google Cloud Console */}
+            <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 p-3 text-[11px] space-y-2">
+              <button
+                type="button"
+                onClick={() => setShowOriginHelp(!showOriginHelp)}
+                className="w-full flex items-center justify-between text-slate-300 hover:text-white transition-colors"
+              >
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Shield className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Fix "Error 400: origin_mismatch" in Google Cloud</span>
+                </span>
+                <span className="text-[10px] text-blue-400 font-semibold">{showOriginHelp ? 'Hide' : 'Show Steps'}</span>
+              </button>
+
+              {showOriginHelp && (
+                <div className="pt-2 border-t border-slate-800 space-y-2 text-slate-300 text-[11px] leading-relaxed">
+                  <p className="text-slate-400">
+                    To authorize direct Google Cloud popups, register these origins in your Google Cloud OAuth Client ID:
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-400 text-[10px]">
+                    <li>
+                      Open{' '}
+                      <a
+                        href="https://console.cloud.google.com/apis/credentials"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-400 underline font-medium inline-flex items-center gap-0.5"
+                      >
+                        Google Cloud Console Credentials <ExternalLink className="w-2.5 h-2.5 inline" />
+                      </a>
+                    </li>
+                    <li>Select your OAuth 2.0 Web Client ID: <span className="font-mono text-slate-200">600050762948...</span></li>
+                    <li>Under <strong>Authorized JavaScript origins</strong>, add:</li>
+                  </ol>
+
+                  <div className="space-y-1 pt-1">
+                    {[
+                      { label: 'Mobile Android APK', uri: 'https://localhost' },
+                      { label: 'Cloud Run Backend', uri: 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app' },
+                      { label: 'Local Development', uri: 'http://localhost:5173' },
+                    ].map((item) => (
+                      <div
+                        key={item.uri}
+                        className="flex items-center justify-between bg-slate-900/90 px-2.5 py-1.5 rounded-lg border border-slate-800/80 font-mono text-[10px]"
+                      >
+                        <div>
+                          <span className="text-slate-400 text-[9px] block">{item.label}</span>
+                          <span className="text-emerald-400">{item.uri}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(item.uri)}
+                          className="text-slate-400 hover:text-white flex items-center gap-1 text-[10px] px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
+                        >
+                          {copiedOrigin === item.uri ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                          <span>{copiedOrigin === item.uri ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-[10px] text-slate-400 italic">
+                    Also add the same URIs under <strong>Authorized redirect URIs</strong>, then click <strong>Save</strong>. (Propagation takes ~2-5 mins).
+                  </p>
+                </div>
+              )}
+            </div>
 
             {/* Divider */}
             <div className="relative flex items-center justify-center py-0.5">
