@@ -5,6 +5,7 @@
 // token back into the app via the deep link: com.family.ai.assistant://oauth?access_token=...
 import { Browser } from '@capacitor/browser';
 import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { getCachedClientId } from './googleAuth';
 
 export const MOBILE_OAUTH_REDIRECT_URI =
@@ -37,19 +38,64 @@ export async function startMobileGoogleSignIn(): Promise<void> {
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
 
+  // Method 1: Capacitor Browser plugin (Chrome Custom Tab in native APK)
+  let opened = false;
   try {
-    await Browser.open({
-      url: authUrl,
-      presentationStyle: 'popover',
-    });
-  } catch (err) {
-    console.warn('Browser.open notice, attempting window.open fallback:', err);
-    try {
-      window.open(authUrl, '_system');
-    } catch (wErr) {
-      console.error('All native browser open methods failed:', wErr);
-      throw err;
+    if (Capacitor.isPluginAvailable('Browser')) {
+      await Browser.open({ url: authUrl });
+      opened = true;
+      return;
     }
+  } catch (err) {
+    console.warn('Capacitor Browser.open notice:', err);
+  }
+
+  // Method 2: Android intent URI to force system browser
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  if (!opened && isAndroid) {
+    try {
+      const intentUrl = `intent://accounts.google.com/o/oauth2/v2/auth?${params.toString()}#Intent;scheme=https;action=android.intent.action.VIEW;end`;
+      window.location.href = intentUrl;
+      opened = true;
+      return;
+    } catch (iErr) {
+      console.warn('Android Intent launch notice:', iErr);
+    }
+  }
+
+  // Method 3: window.open with _system
+  if (!opened) {
+    try {
+      const win = window.open(authUrl, '_system');
+      if (win) {
+        opened = true;
+        return;
+      }
+    } catch (wErr) {
+      console.warn('window.open notice:', wErr);
+    }
+  }
+
+  // Method 4: Programmatic link element with target="_system" and target="_blank"
+  if (!opened) {
+    try {
+      const a = document.createElement('a');
+      a.href = authUrl;
+      a.target = '_system';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      opened = true;
+      return;
+    } catch (aErr) {
+      console.warn('Anchor click fallback notice:', aErr);
+    }
+  }
+
+  // Method 5: Direct window navigation fallback
+  if (!opened) {
+    window.location.assign(authUrl);
   }
 }
 

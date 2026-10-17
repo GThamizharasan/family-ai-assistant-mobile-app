@@ -401,7 +401,9 @@ export class VoiceAssistantEngine {
     try {
       const { available } = await SpeechRecognition.available();
       if (!available) {
-        throw new Error('Speech recognition is unavailable. Enable a speech recognition service on your phone.');
+        console.warn('Native speech recognition is unavailable, switching to MediaRecorder voice capture...');
+        void this.startMediaRecorderListening();
+        return;
       }
 
       const permission = await SpeechRecognition.requestPermissions();
@@ -416,7 +418,7 @@ export class VoiceAssistantEngine {
         try {
           await SpeechRecognition.stop();
         } catch {}
-        await new Promise((r) => setTimeout(r, 100));
+        await new Promise((r) => setTimeout(r, 120));
       }
       if (session !== this.nativeRecognitionSession) return;
 
@@ -444,7 +446,7 @@ export class VoiceAssistantEngine {
         // Native recognition ended without matches (silence)
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(200);
+          this.scheduleAutoRestart(300);
           return;
         } else {
           this.onErrorCallback?.('no-speech');
@@ -459,37 +461,44 @@ export class VoiceAssistantEngine {
         this.isContinuousMode = false;
         this.onErrorCallback?.('not-allowed');
       } else if (/not available|recognition service not/i.test(message)) {
-        this.isContinuousMode = false;
-        this.onErrorCallback?.('Speech recognition is unavailable. Install or enable Speech Services by Google on your phone.');
+        console.warn('Speech Services by Google not available, falling back to MediaRecorder...');
+        void this.startMediaRecorderListening();
       } else if (/no match|no speech|timeout/i.test(message)) {
         // Natural pause/silence from user in hands-free mode -> re-arm seamlessly
         this.consecutiveErrorCount = 0;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(200);
+          this.scheduleAutoRestart(300);
           return;
         }
         this.onErrorCallback?.('no-speech');
       } else if (/busy|audio recording/i.test(message)) {
         // Audio focus collision or device busy -> wait for audio focus release and retry
-        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow && this.consecutiveErrorCount < 5) {
+        this.isNativeRecognitionActive = false;
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.consecutiveErrorCount++;
-          this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(650);
+          const retryDelay = Math.min(1500, 600 + this.consecutiveErrorCount * 250);
+          this.scheduleAutoRestart(retryDelay);
           return;
         }
         this.onErrorCallback?.('device-busy');
       } else {
-        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow && this.consecutiveErrorCount < 3) {
-          this.consecutiveErrorCount++;
-          this.isNativeRecognitionActive = false;
-          this.scheduleAutoRestart(500);
-          return;
+        this.isNativeRecognitionActive = false;
+        this.consecutiveErrorCount++;
+        if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
+          if (this.consecutiveErrorCount <= 4) {
+            this.scheduleAutoRestart(500);
+            return;
+          } else {
+            console.warn('Native speech failed repeatedly, switching to MediaRecorder fallback...');
+            void this.startMediaRecorderListening();
+            return;
+          }
         }
         this.onErrorCallback?.(`Speech recognition notice: ${message}`);
       }
     } finally {
-      if (session === this.nativeRecognitionSession) {
+      if (session === this.nativeRecognitionSession && !this.restartTimeout) {
         this.isNativeRecognitionActive = false;
         this.isListening = false;
         this.onListeningChange?.(false);
@@ -871,8 +880,9 @@ export class VoiceAssistantEngine {
       options.onEnd?.();
     };
 
-    // Watchdog to prevent Chrome from stalling utterances
-    const maxDuration = Math.max(3000, cleanText.length * 90);
+    // Watchdog to prevent Chrome/Android WebView from stalling utterances
+    const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
+    const maxDuration = Math.max(2500, Math.min(30000, wordCount * 500 + 1800));
     const watchdogTimer = setTimeout(() => {
       if (!hasEnded) {
         if (this.synth) {

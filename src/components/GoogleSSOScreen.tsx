@@ -55,21 +55,25 @@ export const GoogleSSOScreen: React.FC = () => {
         (window.location.origin === 'http://localhost' && !window.location.port) ||
         window.location.protocol === 'capacitor:' ||
         /capacitor|android.*wv|crosswalk/i.test(navigator.userAgent || '')));
+  const isMobile =
+    isNative ||
+    (typeof navigator !== 'undefined' &&
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || ''));
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
-  // Watchdog: Ensure isSigningIn never gets stuck if a GIS popup is blocked (web only)
+  // Watchdog: Ensure isSigningIn never gets stuck if a GIS popup is blocked (desktop web only)
   React.useEffect(() => {
-    if (isSigningIn && !isNative) {
+    if (isSigningIn && !isMobile) {
       const timer = setTimeout(() => {
         setIsSigningIn(false);
       }, 3500);
       return () => clearTimeout(timer);
     }
-  }, [isSigningIn, isNative]);
+  }, [isSigningIn, isMobile]);
 
-  // Native (APK) only: receive Google sign-in result from the system browser via deep link
+  // Mobile (APK & Mobile deep-link): receive Google sign-in result from the system browser via deep link
   React.useEffect(() => {
-    if (!isNative) return;
+    if (!isMobile) return;
     return listenForMobileGoogleSignIn(
       (r) => {
         setIsSigningIn(false);
@@ -82,7 +86,7 @@ export const GoogleSSOScreen: React.FC = () => {
       }
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isNative]);
+  }, [isMobile]);
 
   const startNativeSignIn = async () => {
     setMobileAuthError(null);
@@ -256,7 +260,7 @@ export const GoogleSSOScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (isNative) {
+                  if (isMobile) {
                     void startNativeSignIn();
                     return;
                   }
@@ -287,7 +291,7 @@ export const GoogleSSOScreen: React.FC = () => {
               </button>
 
               <div className="w-full flex justify-center py-0.5">
-                {isNative ? (
+                {isMobile ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -333,7 +337,7 @@ export const GoogleSSOScreen: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (isNative) {
+                  if (isMobile) {
                     void startNativeSignIn();
                     return;
                   }
@@ -347,7 +351,7 @@ export const GoogleSSOScreen: React.FC = () => {
                     setIsSigningIn(false);
                   }
                 }}
-                disabled={isSigningIn && !isNative}
+                disabled={isSigningIn && !isMobile}
                 className="text-[11px] text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center justify-center gap-1.5 py-1 px-3 rounded-lg hover:bg-slate-800/60 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
@@ -355,7 +359,7 @@ export const GoogleSSOScreen: React.FC = () => {
               </button>
             </div>
 
-            {isNative && mobileAuthError && (
+            {isMobile && mobileAuthError && (
               <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <span>{mobileAuthError}</span>

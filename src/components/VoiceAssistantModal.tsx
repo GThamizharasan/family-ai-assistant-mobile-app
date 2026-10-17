@@ -124,7 +124,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             if (isHandsFreeRef.current && isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
               speechEngine.startListening();
             }
-          }, 650);
+          }, 850);
         }
       },
     });
@@ -158,13 +158,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             : 'Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.'
         );
       } else if (error === 'no-speech') {
-        // Silent timeout: ignore during conversational turns
+        // Silent timeout: ignore during conversational turns, auto-restart is active
       } else if (error === 'audio-capture') {
         setMicStatusMessage('No microphone detected. Please connect or enable your microphone.');
       } else if (error === 'device-busy') {
-        setMicStatusMessage('The microphone is being initialized. Please wait a moment.');
+        setMicStatusMessage('Microphone calibrating...');
+        if (isHandsFreeRef.current && isOpenRef.current) {
+          setTimeout(() => {
+            if (isHandsFreeRef.current && isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+              speechEngine.startListening();
+            }
+          }, 850);
+        }
       } else {
         setMicStatusMessage(`Microphone notice: ${error}. You can also type your message below.`);
+        if (isHandsFreeRef.current && isOpenRef.current) {
+          setTimeout(() => {
+            if (isHandsFreeRef.current && isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+              speechEngine.startListening();
+            }
+          }, 1200);
+        }
       }
     };
 
