@@ -20,7 +20,7 @@ import { HealthWellnessTab } from './components/tabs/HealthWellnessTab';
 import { MoodJournalTab } from './components/tabs/MoodJournalTab';
 import { WritingCoachTab } from './components/tabs/WritingCoachTab';
 import { MemoryVaultTab } from './components/tabs/MemoryVaultTab';
-import { GoogleOneTab } from './components/tabs/GoogleOneTab';
+import { GoogleOneTab, ActiveServiceTab } from './components/tabs/GoogleOneTab';
 import { SmartDevicesTab } from './components/tabs/SmartDevicesTab';
 import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
 import { WhatsAppTab } from './components/tabs/WhatsAppTab';
@@ -33,9 +33,7 @@ import { ActiveCallModal } from './components/ActiveCallModal';
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
   const [currentTab, setCurrentTab] = useState<TabKey>('home');
-  const [googleSubTab, setGoogleSubTab] = useState<
-    'overview' | 'gmail' | 'drive' | 'calendar' | 'googleone' | 'gcp-billing' | 'settings'
-  >('overview');
+  const [googleSubTab, setGoogleSubTab] = useState<ActiveServiceTab>('overview');
   const [activeWhatsAppContactId, setActiveWhatsAppContactId] = useState<string | undefined>(undefined);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);

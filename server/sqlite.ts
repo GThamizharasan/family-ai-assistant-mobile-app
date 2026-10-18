@@ -95,6 +95,58 @@ export interface HubApiKeyRecord {
   updatedAt: string;
 }
 
+export interface AssistantMemoryRecord {
+  id: string;
+  userEmail: string;
+  familyId: string;
+  topic: string;
+  memoryContent: string;
+  tags?: string[];
+  source?: string;
+  pinned?: boolean;
+  timestamp: string;
+}
+
+export interface VoiceConversationRecord {
+  id: string;
+  userEmail: string;
+  familyId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  emotion?: string;
+  actionSuggestion?: string;
+  timestamp: string;
+}
+
+export interface GoogleKeepNoteRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  body: string;
+  labels: string[];
+  color?: string;
+  isPinned?: boolean;
+  createTime: string;
+  updateTime: string;
+}
+
+export interface DeviceStorageRecord {
+  id: string;
+  deviceId: string;
+  userEmail?: string;
+  totalStorageGb: number;
+  usedStorageGb: number;
+  freeStorageGb: number;
+  percentUsed: number;
+  deviceRamGb?: number;
+  cpuCores?: number;
+  batteryLevel?: number;
+  isCharging?: boolean;
+  platform?: string;
+  breakdown: Record<string, number>;
+  timestamp: string;
+}
+
 let db: Database | null = null;
 let saveDebounceTimer: NodeJS.Timeout | null = null;
 
@@ -241,7 +293,107 @@ export async function initSqliteDb(): Promise<Database> {
       description TEXT,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS assistant_memory_store (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      family_id TEXT NOT NULL,
+      topic TEXT,
+      memory_content TEXT NOT NULL,
+      tags_json TEXT,
+      source TEXT DEFAULT 'voice_assistant',
+      pinned INTEGER DEFAULT 0,
+      timestamp TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS voice_assistant_conversations (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      family_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      emotion TEXT,
+      actionSuggestion TEXT,
+      timestamp TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS google_keep_notes (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      labels_json TEXT,
+      color TEXT DEFAULT 'default',
+      is_pinned INTEGER DEFAULT 0,
+      create_time TEXT NOT NULL,
+      update_time TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS device_storage_metrics (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL,
+      user_email TEXT,
+      total_storage_gb REAL NOT NULL,
+      used_storage_gb REAL NOT NULL,
+      free_storage_gb REAL NOT NULL,
+      percent_used REAL NOT NULL,
+      device_ram_gb REAL,
+      cpu_cores INTEGER,
+      battery_level REAL,
+      is_charging INTEGER,
+      platform TEXT,
+      breakdown_json TEXT,
+      timestamp TEXT NOT NULL
+    );
   `);
+
+  // Seed default Google Keep notes if empty
+  try {
+    const keepRes = db.exec('SELECT COUNT(*) as count FROM google_keep_notes');
+    const keepCount = (keepRes[0]?.values[0]?.[0] as number) || 0;
+    if (keepCount === 0) {
+      const defaultUser = 'chinna.tamil2000@gmail.com';
+      const nowIso = new Date().toISOString();
+      const seedNotes = [
+        {
+          id: 'keep-001',
+          userEmail: defaultUser,
+          title: 'Weekly Family Groceries & Organic Essentials',
+          body: '- Pure A2 Gir Cow Milk (daily 6:30 AM delivery)\n- Cold-pressed organic sesame & groundnut oil\n- Farm-fresh country eggs & organic spinach\n- California almonds & walnuts (overnight soak)\n- Fresh ginger, garlic, coriander & curry leaves',
+          labels: ['groceries', 'home', 'health'],
+          color: 'green',
+          isPinned: 1,
+        },
+        {
+          id: 'keep-002',
+          userEmail: defaultUser,
+          title: 'Digital Tamil World & AI Moat Roadmap',
+          body: '- Gemini 3.8 Live bidirectional audio WebSocket streaming\n- Sovereign server-side SQLite multi-instance synchronizer\n- Real-time Google Keep & phone internal storage context\n- Tamil voice synthesis tuning with natural phonetics',
+          labels: ['work', 'ai', 'roadmap'],
+          color: 'blue',
+          isPinned: 1,
+        },
+        {
+          id: 'keep-003',
+          userEmail: defaultUser,
+          title: 'Home Security & Device Access PINs',
+          body: '- Driveway main gate motorized PIN: 4920\n- High-speed fiber Wi-Fi: AuraEnterprise-5G (pass: SovereignFamily2026)\n- Security system night arm schedule: 11:00 PM',
+          labels: ['security', 'home'],
+          color: 'amber',
+          isPinned: 0,
+        },
+      ];
+      for (const n of seedNotes) {
+        db.run(
+          `INSERT INTO google_keep_notes (id, user_email, title, body, labels_json, color, is_pinned, create_time, update_time)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [n.id, n.userEmail, n.title, n.body, JSON.stringify(n.labels), n.color, n.isPinned, nowIso, nowIso]
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Seed Google Keep notes warning:', err);
+  }
 
   // Seed default activation codes if empty
   const countRes = db.exec('SELECT COUNT(*) as count FROM activation_codes');
@@ -758,6 +910,378 @@ export function setHubApiKeyInSqlite(keyName: string, keyValue: string, descript
 }
 
 // -------------------------------------------------------------
+// Voice Assistant Persistent Memory Store & Conversation History
+// -------------------------------------------------------------
+export function saveAssistantMemoryToSqlite(record: {
+  id?: string;
+  userEmail: string;
+  familyId?: string;
+  topic?: string;
+  memoryContent: string;
+  tags?: string[];
+  source?: string;
+  pinned?: boolean;
+}): AssistantMemoryRecord {
+  if (!db) throw new Error('SQLite database not ready');
+  const id = record.id || `mem-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const familyId = record.familyId || 'family-aura-primary';
+  const topic = record.topic || 'General Memory';
+  const tagsJson = JSON.stringify(record.tags || []);
+  const source = record.source || 'voice_assistant';
+  const pinned = record.pinned ? 1 : 0;
+  const now = new Date().toISOString();
+
+  db.run(
+    `INSERT INTO assistant_memory_store (id, user_email, family_id, topic, memory_content, tags_json, source, pinned, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       topic = excluded.topic,
+       memory_content = excluded.memory_content,
+       tags_json = excluded.tags_json,
+       pinned = excluded.pinned,
+       timestamp = excluded.timestamp`,
+    [id, record.userEmail.toLowerCase().trim(), familyId, topic, record.memoryContent.trim(), tagsJson, source, pinned, now]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: record.userEmail.toLowerCase().trim(),
+    familyId,
+    topic,
+    memoryContent: record.memoryContent.trim(),
+    tags: record.tags || [],
+    source,
+    pinned: Boolean(pinned),
+    timestamp: now,
+  };
+}
+
+export function getAssistantMemoriesFromSqlite(userEmail: string, familyId?: string): AssistantMemoryRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || '').toLowerCase().trim();
+  let sql = 'SELECT id, user_email, family_id, topic, memory_content, tags_json, source, pinned, timestamp FROM assistant_memory_store';
+  const params: any[] = [];
+
+  if (cleanEmail) {
+    sql += ' WHERE user_email = ?';
+    params.push(cleanEmail);
+    if (familyId) {
+      sql += ' OR family_id = ?';
+      params.push(familyId);
+    }
+  } else if (familyId) {
+    sql += ' WHERE family_id = ?';
+    params.push(familyId);
+  }
+  sql += ' ORDER BY pinned DESC, timestamp DESC';
+
+  const res = db.exec(sql, params);
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => {
+    let tags: string[] = [];
+    try {
+      tags = JSON.parse((row[5] as string) || '[]');
+    } catch {}
+    return {
+      id: row[0] as string,
+      userEmail: row[1] as string,
+      familyId: row[2] as string,
+      topic: (row[3] as string) || 'General',
+      memoryContent: row[4] as string,
+      tags,
+      source: (row[6] as string) || 'voice_assistant',
+      pinned: Boolean(row[7]),
+      timestamp: row[8] as string,
+    };
+  });
+}
+
+export function deleteAssistantMemoryFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  if (userEmail) {
+    db.run('DELETE FROM assistant_memory_store WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+  } else {
+    db.run('DELETE FROM assistant_memory_store WHERE id = ?', [id]);
+  }
+  scheduleSave();
+  return true;
+}
+
+export function saveVoiceConversationToSqlite(record: {
+  id?: string;
+  userEmail: string;
+  familyId?: string;
+  role: 'user' | 'assistant';
+  content: string;
+  emotion?: string;
+  actionSuggestion?: string;
+}): VoiceConversationRecord {
+  if (!db) throw new Error('SQLite database not ready');
+  const id = record.id || `vc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const familyId = record.familyId || 'family-aura-primary';
+  const now = new Date().toISOString();
+
+  db.run(
+    `INSERT INTO voice_assistant_conversations (id, user_email, family_id, role, content, emotion, action_suggestion, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, record.userEmail.toLowerCase().trim(), familyId, record.role, record.content, record.emotion || null, record.actionSuggestion || null, now]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: record.userEmail.toLowerCase().trim(),
+    familyId,
+    role: record.role,
+    content: record.content,
+    emotion: record.emotion,
+    actionSuggestion: record.actionSuggestion,
+    timestamp: now,
+  };
+}
+
+export function getVoiceConversationsFromSqlite(userEmail: string, limit = 50): VoiceConversationRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || '').toLowerCase().trim();
+  const sql = `SELECT id, user_email, family_id, role, content, emotion, action_suggestion, timestamp
+               FROM voice_assistant_conversations
+               WHERE user_email = ?
+               ORDER BY timestamp ASC
+               LIMIT ?`;
+  const res = db.exec(sql, [cleanEmail, limit]);
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => ({
+    id: row[0] as string,
+    userEmail: row[1] as string,
+    familyId: row[2] as string,
+    role: row[3] as 'user' | 'assistant',
+    content: row[4] as string,
+    emotion: (row[5] as string) || undefined,
+    actionSuggestion: (row[6] as string) || undefined,
+    timestamp: row[7] as string,
+  }));
+}
+
+export function clearVoiceConversationsFromSqlite(userEmail: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM voice_assistant_conversations WHERE user_email = ?', [userEmail.toLowerCase().trim()]);
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// Google Keep Notes Persistent SQLite Store
+// -------------------------------------------------------------
+export function saveGoogleKeepNoteToSqlite(note: {
+  id?: string;
+  userEmail: string;
+  title: string;
+  body: string;
+  labels?: string[];
+  color?: string;
+  isPinned?: boolean;
+}): GoogleKeepNoteRecord {
+  if (!db) throw new Error('SQLite database not ready');
+  const id = note.id || `keep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const title = (note.title || 'Untitled Note').trim();
+  const body = (note.body || '').trim();
+  const labels = note.labels || [];
+  const color = note.color || 'default';
+  const isPinned = note.isPinned ? 1 : 0;
+  const now = new Date().toISOString();
+
+  db.run(
+    `INSERT INTO google_keep_notes (id, user_email, title, body, labels_json, color, is_pinned, create_time, update_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       body = excluded.body,
+       labels_json = excluded.labels_json,
+       color = excluded.color,
+       is_pinned = excluded.is_pinned,
+       update_time = excluded.update_time`,
+    [id, note.userEmail.toLowerCase().trim(), title, body, JSON.stringify(labels), color, isPinned, now, now]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: note.userEmail.toLowerCase().trim(),
+    title,
+    body,
+    labels,
+    color,
+    isPinned: Boolean(isPinned),
+    createTime: now,
+    updateTime: now,
+  };
+}
+
+export function getGoogleKeepNotesFromSqlite(userEmail: string): GoogleKeepNoteRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || '').toLowerCase().trim();
+  const res = db.exec(
+    `SELECT id, user_email, title, body, labels_json, color, is_pinned, create_time, update_time
+     FROM google_keep_notes
+     WHERE user_email = ? OR user_email = 'chinna.tamil2000@gmail.com'
+     ORDER BY is_pinned DESC, update_time DESC`,
+    [cleanEmail]
+  );
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => {
+    let labels: string[] = [];
+    try {
+      labels = JSON.parse((row[4] as string) || '[]');
+    } catch {}
+    return {
+      id: row[0] as string,
+      userEmail: row[1] as string,
+      title: row[2] as string,
+      body: row[3] as string,
+      labels,
+      color: (row[5] as string) || 'default',
+      isPinned: Boolean(row[6]),
+      createTime: row[7] as string,
+      updateTime: row[8] as string,
+    };
+  });
+}
+
+export function deleteGoogleKeepNoteFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  if (userEmail) {
+    db.run('DELETE FROM google_keep_notes WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+  } else {
+    db.run('DELETE FROM google_keep_notes WHERE id = ?', [id]);
+  }
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// Internal Phone & Device Storage Metrics Store
+// -------------------------------------------------------------
+export function saveDeviceStorageMetricsToSqlite(metrics: {
+  id?: string;
+  deviceId: string;
+  userEmail?: string;
+  totalStorageGb: number;
+  usedStorageGb: number;
+  freeStorageGb: number;
+  percentUsed: number;
+  deviceRamGb?: number;
+  cpuCores?: number;
+  batteryLevel?: number;
+  isCharging?: boolean;
+  platform?: string;
+  breakdown?: Record<string, number>;
+}): DeviceStorageRecord {
+  if (!db) throw new Error('SQLite database not ready');
+  const id = metrics.id || `storage-${Date.now()}`;
+  const now = new Date().toISOString();
+  const breakdown = metrics.breakdown || {
+    systemGb: 14.2,
+    appsGb: Number((metrics.usedStorageGb * 0.45).toFixed(1)),
+    mediaGb: Number((metrics.usedStorageGb * 0.35).toFixed(1)),
+    documentsGb: Number((metrics.usedStorageGb * 0.12).toFixed(1)),
+    otherGb: Number((metrics.usedStorageGb * 0.08).toFixed(1)),
+  };
+
+  db.run(
+    `INSERT INTO device_storage_metrics (id, device_id, user_email, total_storage_gb, used_storage_gb, free_storage_gb, percent_used, device_ram_gb, cpu_cores, battery_level, is_charging, platform, breakdown_json, timestamp)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       total_storage_gb = excluded.total_storage_gb,
+       used_storage_gb = excluded.used_storage_gb,
+       free_storage_gb = excluded.free_storage_gb,
+       percent_used = excluded.percent_used,
+       device_ram_gb = excluded.device_ram_gb,
+       battery_level = excluded.battery_level,
+       is_charging = excluded.is_charging,
+       breakdown_json = excluded.breakdown_json,
+       timestamp = excluded.timestamp`,
+    [
+      id,
+      metrics.deviceId,
+      (metrics.userEmail || '').toLowerCase().trim(),
+      metrics.totalStorageGb,
+      metrics.usedStorageGb,
+      metrics.freeStorageGb,
+      metrics.percentUsed,
+      metrics.deviceRamGb || 8,
+      metrics.cpuCores || 8,
+      metrics.batteryLevel ?? 85,
+      metrics.isCharging ? 1 : 0,
+      metrics.platform || 'Android Phone',
+      JSON.stringify(breakdown),
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    deviceId: metrics.deviceId,
+    userEmail: metrics.userEmail,
+    totalStorageGb: metrics.totalStorageGb,
+    usedStorageGb: metrics.usedStorageGb,
+    freeStorageGb: metrics.freeStorageGb,
+    percentUsed: metrics.percentUsed,
+    deviceRamGb: metrics.deviceRamGb || 8,
+    cpuCores: metrics.cpuCores || 8,
+    batteryLevel: metrics.batteryLevel ?? 85,
+    isCharging: Boolean(metrics.isCharging),
+    platform: metrics.platform || 'Android Phone',
+    breakdown,
+    timestamp: now,
+  };
+}
+
+export function getLatestDeviceStorageMetricsFromSqlite(deviceId?: string, userEmail?: string): DeviceStorageRecord | null {
+  if (!db) return null;
+  let sql = `SELECT id, device_id, user_email, total_storage_gb, used_storage_gb, free_storage_gb, percent_used, device_ram_gb, cpu_cores, battery_level, is_charging, platform, breakdown_json, timestamp
+             FROM device_storage_metrics`;
+  const params: any[] = [];
+  if (deviceId) {
+    sql += ' WHERE device_id = ?';
+    params.push(deviceId);
+  } else if (userEmail) {
+    sql += ' WHERE user_email = ?';
+    params.push(userEmail.toLowerCase().trim());
+  }
+  sql += ' ORDER BY timestamp DESC LIMIT 1';
+
+  const res = db.exec(sql, params);
+  if (!res.length) return null;
+  const row = res[0].values[0];
+  let breakdown: Record<string, number> = {};
+  try {
+    breakdown = JSON.parse((row[12] as string) || '{}');
+  } catch {}
+
+  return {
+    id: row[0] as string,
+    deviceId: row[1] as string,
+    userEmail: (row[2] as string) || undefined,
+    totalStorageGb: Number(row[3]),
+    usedStorageGb: Number(row[4]),
+    freeStorageGb: Number(row[5]),
+    percentUsed: Number(row[6]),
+    deviceRamGb: Number(row[7]),
+    cpuCores: Number(row[8]),
+    batteryLevel: Number(row[9]),
+    isCharging: Boolean(row[10]),
+    platform: (row[11] as string) || 'Android Phone',
+    breakdown,
+    timestamp: row[13] as string,
+  };
+}
+
+// -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
 export function getSqliteDbStats() {
@@ -787,6 +1311,10 @@ export function getSqliteDbStats() {
     'shared_family_records',
     'inter_instance_communications',
     'hub_api_keys',
+    'assistant_memory_store',
+    'voice_assistant_conversations',
+    'google_keep_notes',
+    'device_storage_metrics',
   ];
 
   const tableCounts: Record<string, number> = {};

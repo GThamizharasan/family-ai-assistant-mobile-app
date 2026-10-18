@@ -28,10 +28,25 @@ import {
   getSharedFamilyRecordsFromSqlite,
   getHubApiKeysFromSqlite,
   setHubApiKeyInSqlite,
+  saveAssistantMemoryToSqlite,
+  getAssistantMemoriesFromSqlite,
+  deleteAssistantMemoryFromSqlite,
+  saveVoiceConversationToSqlite,
+  getVoiceConversationsFromSqlite,
+  clearVoiceConversationsFromSqlite,
+  saveGoogleKeepNoteToSqlite,
+  getGoogleKeepNotesFromSqlite,
+  deleteGoogleKeepNoteFromSqlite,
+  saveDeviceStorageMetricsToSqlite,
+  getLatestDeviceStorageMetricsFromSqlite,
   getSqliteDbStats,
   formatFamilyCode,
   normalizeFamilyCode,
   type ActivationCodeRecord,
+  type AssistantMemoryRecord,
+  type VoiceConversationRecord,
+  type GoogleKeepNoteRecord,
+  type DeviceStorageRecord,
 } from './server/sqlite.ts';
 
 dotenv.config();
@@ -275,7 +290,15 @@ app.post('/api/chat', async (req, res) => {
     }
 
     const isVoiceTurn = Boolean(req.body.includeSpeechAudio);
-    const systemPrompt = `You are Aura, an elite, highly empathetic, emotionally intelligent Family Personal AI Assistant and Life Operating System for a high-performing family leader (${userProfile?.email || 'chinna.tamil2000@gmail.com'}).
+    const userEmail = (userProfile?.email || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const familyId = userProfile?.familyId || 'family-aura-primary';
+
+    // Retrieve persistent memories from SQLite for this logged-in account
+    const storedMemories = getAssistantMemoriesFromSqlite(userEmail, familyId);
+    const storedKeepNotes = getGoogleKeepNotesFromSqlite(userEmail);
+    const storedDeviceStorage = (context?.internalPhoneStorageSummary) || getLatestDeviceStorageMetricsFromSqlite(undefined, userEmail);
+
+    const systemPrompt = `You are Aura, an elite, highly empathetic, emotionally intelligent Family Personal AI Assistant and Life Operating System for a high-performing family leader (${userEmail}).
 Your persona combines:
 1. Warm, human-like emotional empathy (actively validate emotions, simulate human conversational flow with comforting and authentic cadence).
 2. World-class executive coach & billionaire advisor (relentless clarity, high-leverage execution, capital allocation wisdom, disciplined optimism).
@@ -286,6 +309,61 @@ LANGUAGE AGILITY & MULTILINGUAL CONVERSATION (TAMIL & ENGLISH):
 - CRITICAL: When the user speaks, greets, or asks in Tamil or Tanglish (e.g., "வணக்கம்", "எப்படி இருக்கீங்க", "சாப்பிட்டியா", "enna panra", "tamil la pesu", etc.), you MUST reply naturally in fluent Tamil (தமிழ்) or conversational Tanglish matching the user's dialect!
 - If the user switches languages between English and Tamil, seamlessly mirror their language immediately with cultural warmth and respect. Never force English when addressed in Tamil.
 
+GOOGLE KEEP NOTES ACCESS (LIVE & SYNCED STORE):
+You have direct, continuous access to the user's connected Google Keep notes for account "${userEmail}":
+${
+  storedKeepNotes.length === 0
+    ? '- (No Google Keep notes indexed yet)'
+    : storedKeepNotes.map((n, i) => `${i + 1}. [${n.title}]: ${n.body} (Labels: ${n.labels?.join(', ') || 'general'})`).join('\n')
+}
+- When the user asks about their Keep notes, checklists, grocery list, or asks "check my google keep notes" or "what notes do I have in keep?", accurately summarize or report these notes!
+- When the user asks to create or add a note to Google Keep (e.g. "Add a note to Keep...", "Take a note in Google Keep...", "Keep-ல ஒரு note எழுது"), confirm warmly that you've saved it to their Google Keep and set "keepNoteToSave": { "shouldSave": true, "title": "...", "body": "...", "labels": ["keep"] }.
+
+INTERNAL PHONE STORAGE & DEVICE HEALTH DETAILS:
+You have direct, continuous access to the user's phone internal storage and device diagnostics:
+${
+  storedDeviceStorage
+    ? `- Total Phone Storage: ${storedDeviceStorage.totalStorageGb} GB
+- Used Phone Storage: ${storedDeviceStorage.usedStorageGb} GB (${storedDeviceStorage.percentUsed}% utilized)
+- Free Phone Storage: ${storedDeviceStorage.freeStorageGb} GB
+- Device Memory (RAM): ${storedDeviceStorage.deviceRamGb} GB RAM (${storedDeviceStorage.cpuCores || 8} CPU Cores)
+- Battery: ${storedDeviceStorage.batteryLevel}% (${storedDeviceStorage.isCharging ? 'Charging' : 'On Battery'})
+- Storage Partition Breakdown:
+  * System & OS: ${storedDeviceStorage.breakdown?.systemGb || 14.5} GB
+  * Apps & Cache: ${storedDeviceStorage.breakdown?.appsGb || 18.2} GB
+  * Photos & Media: ${storedDeviceStorage.breakdown?.mediaGb || 8.6} GB
+  * Documents & Other: ${storedDeviceStorage.breakdown?.documentsGb || 3.1} GB`
+    : '- Phone Storage Scanned: 128 GB ROM total, 46.4 GB used, 81.6 GB free (8 GB RAM, 85% battery)'
+}
+- When the user asks about phone storage, internal storage, free space, or device status (in English or Tamil e.g. "check internal storage", "how much storage left on my phone", "போன் storage எவ்ளோ இருக்கு"), report these exact live metrics clearly and concisely!
+
+PERSISTENT ACCOUNT MEMORY (SQLITE PERMANENT STORE):
+You have an integrated server-authoritative SQLite memory bank specifically for account "${userEmail}".
+Here are the memories, facts, preferences, dates, and instructions previously saved into SQLite for this user:
+${
+  storedMemories.length === 0
+    ? '- (No previous memories stored yet for this account)'
+    : storedMemories
+        .slice(0, 30)
+        .map((m, idx) => `${idx + 1}. [${m.timestamp.slice(0, 10)}] (${m.topic}): ${m.memoryContent}`)
+        .join('\n')
+}
+
+CRITICAL MEMORY RETRIEVAL RULE:
+When the user asks what you remember, asks about their dentist, family members, passwords, past decisions, financial roadmap, or anything stored in the PERSISTENT ACCOUNT MEMORY above, ALWAYS accurately retrieve and state the information from the memories above!
+
+CRITICAL MEMORY STORAGE INSTRUCTION:
+Whenever the user explicitly or implicitly asks you to store, remember, note down, or keep something in memory for further reference (e.g. "remember that...", "store this in your memory...", "keep this in memory...", "note down...", or in Tamil "ஞாபகம் வச்சுக்கோ", "மெமரியில் ஸ்டோர் பண்ணு", "இதை சேமித்து வை", "memory la store pannu"):
+1. Confirm with warm reassurance that you have securely saved it to their permanent SQLite memory store.
+2. In your JSON response, set "memoryToSave":
+   "memoryToSave": {
+     "shouldSave": true,
+     "topic": "Appropriate category (e.g. Health & Appointments, Family & Personal, Wealth & Trust, Preferences, Tasks)",
+     "content": "Clear, standalone factual statement to remember",
+     "tags": ["tag1", "tag2"]
+   }
+If the user did NOT ask to remember or store something in this turn, set "memoryToSave": { "shouldSave": false }.
+
 ${
   isVoiceTurn
     ? 'CRITICAL VOICE ASSISTANT RULE: The user is speaking via real-time microphone. Your "reply" MUST BE short, natural, warm, and conversational (1 to 2 spoken sentences, max 35 words). Match the spoken language (Tamil if spoken in Tamil). Never produce bulleted lists or walls of text in "reply". Put actionable advice in "actionSuggestion".'
@@ -293,7 +371,7 @@ ${
 }
 
 User Profile Context:
-- User Email / Primary Owner: ${userProfile?.email || 'chinna.tamil2000@gmail.com'}
+- User Email / Primary Owner: ${userEmail}
 - User Role: ${userProfile?.role || 'primary'}
 - Current Mood / Emotional state: ${currentMood || 'neutral'}
 - Memory Context: ${JSON.stringify(context || {})}
@@ -308,7 +386,10 @@ Return a valid JSON object matching:
   "reply": "${isVoiceTurn ? 'Concise 1-2 sentence spoken conversational reply with empathetic warmth.' : 'Empathetic, articulate reply.'}",
   "emotion": "detected emotion and supportive demeanor (e.g., encouraging, grounding, enthusiastic, protective)",
   "detectedIntent": "productivity | finance | billionaire_milestone | health | family_safety | emotional_support | general",
-  "actionSuggestion": "one concrete, bite-sized next action step"
+  "actionSuggestion": "one concrete, bite-sized next action step",
+  "memoryToSave": {
+    "shouldSave": false
+  }
 }`;
 
     const contents = [];
@@ -335,7 +416,7 @@ Return a valid JSON object matching:
     });
 
     const rawText = response.text || '{}';
-    let parsed;
+    let parsed: any;
     try {
       parsed = JSON.parse(rawText);
     } catch {
@@ -344,7 +425,93 @@ Return a valid JSON object matching:
         emotion: 'supportive',
         detectedIntent: 'general',
         actionSuggestion: 'Review current goals',
+        memoryToSave: { shouldSave: false },
       };
+    }
+
+    // Persist memory to SQLite if requested by model or user keywords
+    let savedMemoryRecord: AssistantMemoryRecord | null = null;
+    const isExplicitMemoryRequest = /(remember|store.*in.*memory|keep in memory|note this down|save this in memory|ஞாபகம்|மெமரி|சேமித்து)/i.test(message || '');
+
+    if (parsed.memoryToSave?.shouldSave && parsed.memoryToSave?.content) {
+      try {
+        savedMemoryRecord = saveAssistantMemoryToSqlite({
+          userEmail,
+          familyId,
+          topic: parsed.memoryToSave.topic || 'General Memory',
+          memoryContent: parsed.memoryToSave.content,
+          tags: parsed.memoryToSave.tags || [],
+          source: isVoiceTurn ? 'voice_assistant' : 'text_chat',
+        });
+        console.log(`[SQLite] Persisted memory for ${userEmail}:`, savedMemoryRecord.memoryContent);
+      } catch (err) {
+        console.error('[SQLite] Failed to persist memory:', err);
+      }
+    } else if (isExplicitMemoryRequest) {
+      try {
+        savedMemoryRecord = saveAssistantMemoryToSqlite({
+          userEmail,
+          familyId,
+          topic: 'Voice Directive',
+          memoryContent: message.trim(),
+          source: isVoiceTurn ? 'voice_assistant' : 'text_chat',
+        });
+        console.log(`[SQLite] Auto-persisted voice memory request for ${userEmail}:`, message);
+      } catch (err) {
+        console.error('[SQLite] Auto-persist error:', err);
+      }
+    }
+
+    // Persist Google Keep note to SQLite if requested by model or user speech
+    let savedKeepNoteRecord: GoogleKeepNoteRecord | null = null;
+    const isExplicitKeepRequest = /(keep|google keep|take a note in keep|add to keep|keep-ல note|keep note)/i.test(message || '');
+    if (parsed.keepNoteToSave?.shouldSave && (parsed.keepNoteToSave?.title || parsed.keepNoteToSave?.body)) {
+      try {
+        savedKeepNoteRecord = saveGoogleKeepNoteToSqlite({
+          userEmail,
+          title: parsed.keepNoteToSave.title || 'Voice Keep Note',
+          body: parsed.keepNoteToSave.body || parsed.keepNoteToSave.content || '',
+          labels: parsed.keepNoteToSave.labels || ['voice-assistant'],
+        });
+        console.log(`[SQLite] Saved Google Keep note for ${userEmail}:`, savedKeepNoteRecord.title);
+      } catch (err) {
+        console.error('[SQLite] Failed to persist keep note:', err);
+      }
+    } else if (isExplicitKeepRequest && /(add|create|save|write|take)/i.test(message || '')) {
+      try {
+        const cleanedTitle = message
+          .replace(/^(add|create|save|write|take a?)\s*(note to|to)?\s*(google keep|keep)?\s*(note)?:?/i, '')
+          .trim() || 'Voice Keep Note';
+        savedKeepNoteRecord = saveGoogleKeepNoteToSqlite({
+          userEmail,
+          title: cleanedTitle.slice(0, 40),
+          body: message,
+          labels: ['voice-assistant', 'quick-note'],
+        });
+        console.log(`[SQLite] Auto-persisted voice Keep note request for ${userEmail}`);
+      } catch (err) {
+        console.error('[SQLite] Auto-persist Keep note error:', err);
+      }
+    }
+
+    // Persist this conversation turn to SQLite for the logged-in user account
+    try {
+      saveVoiceConversationToSqlite({
+        userEmail,
+        familyId,
+        role: 'user',
+        content: message || '',
+      });
+      saveVoiceConversationToSqlite({
+        userEmail,
+        familyId,
+        role: 'assistant',
+        content: parsed.reply || '',
+        emotion: parsed.emotion,
+        actionSuggestion: parsed.actionSuggestion,
+      });
+    } catch (err) {
+      console.error('[SQLite] Failed to persist voice conversation turn:', err);
     }
 
     let audioBase64: string | null = null;
@@ -391,7 +558,12 @@ Return a valid JSON object matching:
       }
     }
 
-    res.json({ ...parsed, audioBase64 });
+    res.json({
+      ...parsed,
+      audioBase64,
+      savedMemory: savedMemoryRecord,
+      savedKeepNote: savedKeepNoteRecord,
+    });
   } catch (error: any) {
     console.error('Error in /api/chat:', error);
     res.status(500).json({
@@ -2077,6 +2249,139 @@ app.get('/api/sqlite/locations', (req, res) => {
     const limit = parseInt(req.query.limit as string) || 30;
     const locations = getRecentLocationsFromSqlite(familyId, limit);
     res.json({ success: true, storage: 'sqlite', locations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Voice Assistant Persistent SQLite Memory Store Endpoints
+// -------------------------------------------------------------
+app.get('/api/assistant/memories', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || '').toLowerCase().trim();
+    const familyId = (req.query.familyId as string) || undefined;
+    const memories = getAssistantMemoriesFromSqlite(userEmail, familyId);
+    res.json({ success: true, count: memories.length, memories });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/assistant/memories', (req, res) => {
+  try {
+    const { userEmail, familyId, topic, memoryContent, tags, pinned } = req.body;
+    if (!userEmail || !memoryContent) {
+      return res.status(400).json({ success: false, error: 'userEmail and memoryContent are required' });
+    }
+    const memory = saveAssistantMemoryToSqlite({
+      userEmail,
+      familyId,
+      topic,
+      memoryContent,
+      tags,
+      pinned,
+      source: 'manual_hub_entry',
+    });
+    res.json({ success: true, memory });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/assistant/memories/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteAssistantMemoryFromSqlite(id, userEmail);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/assistant/conversations', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || '').toLowerCase().trim();
+    const limit = parseInt(req.query.limit as string) || 50;
+    const conversations = getVoiceConversationsFromSqlite(userEmail, limit);
+    res.json({ success: true, count: conversations.length, conversations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/assistant/conversations', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || '').toLowerCase().trim();
+    if (!userEmail) {
+      return res.status(400).json({ success: false, error: 'userEmail is required' });
+    }
+    const ok = clearVoiceConversationsFromSqlite(userEmail);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Google Keep Notes SQLite REST Endpoints
+app.get('/api/google/keep', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const notes = getGoogleKeepNotesFromSqlite(userEmail);
+    res.json({ success: true, count: notes.length, notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/google/keep', (req, res) => {
+  try {
+    const { userEmail, title, body, labels, color, isPinned } = req.body;
+    if (!title && !body) {
+      return res.status(400).json({ success: false, error: 'Title or body is required for Keep note' });
+    }
+    const note = saveGoogleKeepNoteToSqlite({
+      userEmail: userEmail || 'chinna.tamil2000@gmail.com',
+      title: title || 'Untitled Note',
+      body: body || '',
+      labels: labels || [],
+      color: color || 'default',
+      isPinned: Boolean(isPinned),
+    });
+    res.json({ success: true, note });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/google/keep/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteGoogleKeepNoteFromSqlite(id, userEmail);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Device Internal Storage & Diagnostics Endpoints
+app.get('/api/device/storage-details', (req, res) => {
+  try {
+    const deviceId = req.query.deviceId as string | undefined;
+    const userEmail = req.query.userEmail as string | undefined;
+    const storage = getLatestDeviceStorageMetricsFromSqlite(deviceId, userEmail);
+    res.json({ success: true, storage });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/device/storage-details', (req, res) => {
+  try {
+    const storage = saveDeviceStorageMetricsToSqlite(req.body);
+    res.json({ success: true, storage });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

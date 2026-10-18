@@ -256,3 +256,73 @@ export async function getGcpBillingOptimizationApi(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// -------------------------------------------------------------
+// Voice Assistant Persistent SQLite Memory Store APIs
+// -------------------------------------------------------------
+export interface AssistantMemoryItem {
+  id: string;
+  userEmail: string;
+  familyId: string;
+  topic: string;
+  memoryContent: string;
+  tags?: string[];
+  source?: string;
+  pinned?: boolean;
+  timestamp: string;
+}
+
+export async function fetchAssistantMemoriesApi(
+  userEmail: string,
+  familyId?: string
+): Promise<{ success: boolean; count: number; memories: AssistantMemoryItem[] }> {
+  const url = `/api/assistant/memories?userEmail=${encodeURIComponent(userEmail)}${
+    familyId ? `&familyId=${encodeURIComponent(familyId)}` : ''
+  }`;
+  return safeFetchJson(url);
+}
+
+export async function saveAssistantMemoryApi(payload: {
+  userEmail: string;
+  familyId?: string;
+  topic?: string;
+  memoryContent: string;
+  tags?: string[];
+  pinned?: boolean;
+}): Promise<{ success: boolean; memory: AssistantMemoryItem }> {
+  return safeFetchJson('/api/assistant/memories', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAssistantMemoryApi(
+  id: string,
+  userEmail: string
+): Promise<{ success: boolean }> {
+  return safeFetchJson(
+    `/api/assistant/memories/${encodeURIComponent(id)}?userEmail=${encodeURIComponent(userEmail)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
+
+export async function fetchVoiceConversationsApi(
+  userEmail: string,
+  limit = 50
+): Promise<{ success: boolean; count: number; conversations: any[] }> {
+  return safeFetchJson(
+    `/api/assistant/conversations?userEmail=${encodeURIComponent(userEmail)}&limit=${limit}`
+  );
+}
+
+export async function clearVoiceConversationsApi(userEmail: string): Promise<{ success: boolean }> {
+  return safeFetchJson(
+    `/api/assistant/conversations?userEmail=${encodeURIComponent(userEmail)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}

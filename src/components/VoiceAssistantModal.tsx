@@ -18,6 +18,13 @@ import {
   CheckCircle,
   MessageSquare,
   PhoneCall,
+  Brain,
+  Bookmark,
+  Trash2,
+  Plus,
+  Smartphone,
+  FileText,
+  HardDrive,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
@@ -34,6 +41,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     user,
     chatHistory,
     addVoiceMessage,
+    assistantMemories,
+    loadAssistantMemories,
+    saveAssistantMemory,
+    deleteAssistantMemory,
+    liveKeepNotes,
+    addGoogleKeepNote,
+    internalStorageDetails,
+    refreshInternalPhoneStorage,
     tasks,
     netWorth,
     familyMembers,
@@ -66,6 +81,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [showMicHelp, setShowMicHelp] = useState(false);
   const [voiceLanguage, setVoiceLanguage] = useState<string>(() => speechEngine.getLanguage());
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
+  const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
+  const [savedKeepNoteNotice, setSavedKeepNoteNotice] = useState<string | null>(null);
+  const [showDeviceStorageNotice, setShowDeviceStorageNotice] = useState(false);
+  const [newMemTopic, setNewMemTopic] = useState('');
+  const [newMemContent, setNewMemContent] = useState('');
+  const [isAddingMem, setIsAddingMem] = useState(false);
 
   const handleSelectLanguage = (code: string) => {
     speechEngine.setLanguage(code);
@@ -213,6 +235,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
       speechEngine.unlockAudio();
       speechEngine.setContinuousMode(isHandsFreeRef.current);
+      loadAssistantMemories();
       // Automatically activate speech listening for real-time conversation
       const startTimer = setTimeout(() => {
         if (isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
@@ -427,6 +450,110 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       return;
     }
 
+    // Direct Google Keep notes check / read out / add intent
+    const isKeepQuery =
+      lower.includes('keep') ||
+      lower.includes('google keep') ||
+      lower.includes('keep note') ||
+      lower.includes('keep-ல');
+
+    if (isKeepQuery) {
+      // Check if user is asking to CREATE / ADD a note in Keep
+      const isCreateKeep =
+        lower.startsWith('add note to keep') ||
+        lower.startsWith('add to keep') ||
+        lower.startsWith('create keep note') ||
+        lower.startsWith('take a note in keep') ||
+        lower.startsWith('note down in keep') ||
+        lower.includes('keep-ல note பண்ணு') ||
+        lower.includes('keep-ல ஒரு note எழுது');
+
+      if (isCreateKeep) {
+        setIsThinking(false);
+        const noteBody = spokenText
+          .replace(/^(add note to keep|add to keep|create keep note|take a note in keep|note down in keep|keep-ல note பண்ணு|keep-ல ஒரு note எழுது):?\s*/i, '')
+          .trim();
+        const noteTitle = noteBody.split('\n')[0].slice(0, 35) || 'Voice Keep Note';
+        if (noteBody) {
+          addGoogleKeepNote(noteTitle, noteBody, ['voice-note', 'keep']);
+          const confirmKeep = `I have added your note "${noteTitle}" to Google Keep notes. It is synchronized with your Google account.`;
+          addVoiceMessage({
+            role: 'assistant',
+            content: confirmKeep,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'organized & helpful',
+            actionSuggestion: `Google Keep: "${noteTitle}"`,
+          });
+          speakWithAuro(confirmKeep);
+          return;
+        }
+      }
+
+      // Check / Readout Google Keep notes
+      if (
+        lower.includes('check') ||
+        lower.includes('read') ||
+        lower.includes('what are') ||
+        lower.includes('list') ||
+        lower.includes('show') ||
+        lower.includes('grocery') ||
+        lower.includes('notes')
+      ) {
+        setIsThinking(false);
+        const notesList = liveKeepNotes || [];
+        if (notesList.length === 0) {
+          const noKeepMsg = `Your connected Google Keep notes (${user.email || 'chinna.tamil2000@gmail.com'}) has no active notes yet. Say "Add to Keep: buy groceries" to create one.`;
+          addVoiceMessage({
+            role: 'assistant',
+            content: noKeepMsg,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'warm & clear',
+            actionSuggestion: 'Create first Keep note',
+          });
+          speakWithAuro(noKeepMsg);
+          return;
+        }
+
+        const topNote = notesList[0];
+        const keepReport = `In your Google Keep, you have ${notesList.length} notes. The top note is "${topNote.title}": "${topNote.body.slice(0, 160)}". Say "Add to Keep" anytime to record a new note.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: keepReport,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'attentive & clear',
+          actionSuggestion: `View Keep: "${topNote.title}"`,
+        });
+        speakWithAuro(keepReport);
+        return;
+      }
+    }
+
+    // Direct Internal Phone Storage & Device Health intent
+    if (
+      lower.includes('internal storage') ||
+      lower.includes('phone storage') ||
+      lower.includes('device storage') ||
+      lower.includes('storage on my phone') ||
+      lower.includes('how much free storage') ||
+      lower.includes('storage left') ||
+      lower.includes('phone memory') ||
+      lower.includes('போன் storage') ||
+      lower.includes('storage check பண்ணு')
+    ) {
+      setIsThinking(false);
+      const st = internalStorageDetails || (await refreshInternalPhoneStorage());
+      const storageMsg = `Your phone has ${st.freeStorageGb} GB of free internal storage remaining out of ${st.totalStorageGb} GB (${st.usedStorageGb} GB used, which is ${st.percentUsed}% utilized). Memory: ${st.deviceRamGb} GB RAM. Battery: ${st.batteryLevel}% (${st.isCharging ? 'Charging' : 'Discharging'}). Storage breakdown: Apps use ${st.breakdown.appsGb} GB, Media uses ${st.breakdown.mediaGb} GB, and System uses ${st.breakdown.systemGb} GB. Your phone internal storage health is optimal.`;
+      addVoiceMessage({
+        role: 'assistant',
+        content: storageMsg,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'analytical & disciplined',
+        actionSuggestion: `${st.freeStorageGb} GB free of ${st.totalStorageGb} GB`,
+      });
+      speakWithAuro(storageMsg);
+      return;
+    }
+
     // Direct Gmail / Email check and readout intent
     const isMailQuery =
       lower.includes('email') ||
@@ -538,6 +665,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           modifiedTime: f.modifiedTime,
         })),
         googleStorageQuota: liveStorageQuota,
+        googleKeepNotesSummary: (liveKeepNotes || []).slice(0, 8).map((k) => ({
+          title: k.title,
+          body: k.body,
+          labels: k.labels,
+        })),
+        internalPhoneStorageSummary: internalStorageDetails,
         isGoogleConnected,
       };
 
@@ -554,6 +687,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       const replyText = result.reply || "I'm right here with you.";
       const emotionText = result.emotion || 'supportive';
       setCurrentEmotion(emotionText);
+
+      // Check if Auro extracted and stored an explicit memory in SQLite
+      if (result.savedMemory) {
+        const memTopic = result.savedMemory.topic || 'New note';
+        setSavedMemoryNotice(memTopic);
+        setTimeout(() => setSavedMemoryNotice(null), 5000);
+        loadAssistantMemories();
+      }
+
+      // Check if a Google Keep note was saved
+      if (result.savedKeepNote) {
+        const keepTitle = result.savedKeepNote.title || 'Note';
+        setSavedKeepNoteNotice(keepTitle);
+        setTimeout(() => setSavedKeepNoteNotice(null), 5000);
+      }
 
       const aiMsg = {
         role: 'assistant' as const,
@@ -626,6 +774,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   handleUserSpeechRef.current = handleUserSpeech;
 
   const quickPrompts = [
+    { label: '📝 Google Keep Notes', text: 'Check my Google Keep notes and read my grocery list.' },
+    { label: '📝 Add Keep Note', text: 'Add note to Google Keep: Organic apples, oat milk, and cold brew coffee.' },
+    { label: '📱 Phone Storage Status', text: 'How much free internal storage do I have on my phone?' },
+    { label: '📱 போன் Storage', text: 'போன் storage எவ்ளோ இருக்கு, free space சொல்லு.' },
+    { label: '🧠 Remember house PIN', text: 'Auro, please remember that our house gate PIN is 4920 and trash pickup is on Tuesday morning.' },
+    { label: '🧠 What do you remember?', text: 'What notes or details have you saved in memory for my account?' },
     { label: 'Check Gmail', text: 'Look through my connected Gmail messages.' },
     { label: 'Drive & Storage', text: 'Check my Google Drive files and storage.' },
     { label: 'Check WhatsApp', text: 'Read out my latest WhatsApp messages.' },
@@ -633,7 +787,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     { label: 'Call Selvapriya', text: 'Call Selvapriya.' },
     { label: 'Cloud Spend & Billing', text: 'Check my Google Cloud usage and billing spend.' },
     { label: 'Set GCP Budget $250', text: 'Set Google Cloud budget to 250.' },
-    { label: 'Import Phone Contacts', text: 'Show me my synced phone contacts and how to import more from my phone.' },
   ];
 
   if (!isOpen) return null;
@@ -721,6 +874,43 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               )}
             </div>
 
+            {/* Persistent SQLite Memory Bank Header Button */}
+            <button
+              onClick={() => setShowMemoryDrawer(!showMemoryDrawer)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
+                showMemoryDrawer
+                  ? 'bg-purple-600/30 text-purple-200 border-purple-500/50 shadow-md shadow-purple-950/40'
+                  : 'bg-purple-500/10 text-purple-300 border-purple-500/20 hover:bg-purple-500/20'
+              }`}
+              title="View & manage persistent SQLite memories stored for your account"
+            >
+              <Brain className="w-3.5 h-3.5 text-purple-400" />
+              <span className="hidden sm:inline">Memory</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-purple-500/30 text-purple-200 font-bold font-mono">
+                {assistantMemories.length}
+              </span>
+            </button>
+
+            {/* Internal Phone Storage Diagnostics Button */}
+            <button
+              onClick={async () => {
+                await refreshInternalPhoneStorage();
+                setShowDeviceStorageNotice(!showDeviceStorageNotice);
+              }}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
+                showDeviceStorageNotice
+                  ? 'bg-emerald-600/30 text-emerald-200 border-emerald-500/50 shadow-md shadow-emerald-950/40'
+                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20'
+              }`}
+              title="View live phone internal storage & hardware health"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Phone Storage</span>
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/30 text-emerald-200 font-bold font-mono">
+                {internalStorageDetails ? `${internalStorageDetails.freeStorageGb}GB` : 'ROM'}
+              </span>
+            </button>
+
             <button
               onClick={() => {
                 const next = !isHandsFree;
@@ -738,7 +928,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/40'
                   : 'bg-slate-800 text-slate-400 border-slate-700'
               }`}
-              title={isHandsFree ? 'Hands-Free Loop Active: Aura auto-listens after speaking' : 'Tap to enable Hands-Free Conversation'}
+              title={isHandsFree ? 'Hands-Free Loop Active: Auro auto-listens after speaking' : 'Tap to enable Hands-Free Conversation'}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${isHandsFree ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
               <span>{isHandsFree ? 'Hands-Free' : 'Push-to-Talk'}</span>
@@ -772,6 +962,202 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             </button>
           </div>
         </div>
+
+        {/* Saved Memory Notice Banner */}
+        {savedMemoryNotice && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-purple-950/80 via-slate-900 to-purple-950/80 border-b border-purple-500/40 text-purple-200 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-purple-300 shrink-0 animate-bounce" />
+              <span>
+                <strong className="text-white">Stored in SQLite Memory Bank:</strong> {savedMemoryNotice}
+              </span>
+            </div>
+            <button
+              onClick={() => setSavedMemoryNotice(null)}
+              className="text-purple-300 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Saved Keep Note Notice Banner */}
+        {savedKeepNoteNotice && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-amber-950/80 via-slate-900 to-amber-950/80 border-b border-amber-500/40 text-amber-200 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Bookmark className="w-4 h-4 text-amber-400 shrink-0 animate-bounce" />
+              <span>
+                <strong className="text-white">Saved to Google Keep:</strong> {savedKeepNoteNotice}
+              </span>
+            </div>
+            <button
+              onClick={() => setSavedKeepNoteNotice(null)}
+              className="text-amber-300 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Device Internal Storage Drawer */}
+        {showDeviceStorageNotice && (
+          <div className="p-4 bg-slate-900 border-b border-emerald-500/30 text-xs text-slate-300 space-y-3 max-h-72 overflow-y-auto animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-emerald-400" />
+                <span className="font-bold text-white text-xs">Internal Phone Storage & Health</span>
+                {internalStorageDetails && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                    {internalStorageDetails.percentUsed}% Used
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setShowDeviceStorageNotice(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {internalStorageDetails && (
+              <div className="space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400">Total ROM: {internalStorageDetails.totalStorageGb} GB</span>
+                  <span className="text-emerald-300 font-bold font-mono">{internalStorageDetails.freeStorageGb} GB Free</span>
+                </div>
+                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                    style={{ width: `${internalStorageDetails.percentUsed}%` }}
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[11px] pt-1">
+                  <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                    <span className="text-slate-400 block">System</span>
+                    <strong className="text-white">{internalStorageDetails.breakdown.systemGb} GB</strong>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                    <span className="text-slate-400 block">Apps</span>
+                    <strong className="text-white">{internalStorageDetails.breakdown.appsGb} GB</strong>
+                  </div>
+                  <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                    <span className="text-slate-400 block">Media</span>
+                    <strong className="text-white">{internalStorageDetails.breakdown.mediaGb} GB</strong>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                  <span>RAM: <strong className="text-slate-200">{internalStorageDetails.deviceRamGb} GB</strong></span>
+                  <span>Battery: <strong className="text-slate-200">{internalStorageDetails.batteryLevel}% {internalStorageDetails.isCharging ? '⚡' : ''}</strong></span>
+                  <button
+                    onClick={() => handleUserSpeech('Analyze my internal phone storage and recommend clean-up options.')}
+                    className="text-emerald-400 hover:underline font-semibold"
+                  >
+                    Ask Auro &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Persistent Memory Bank Drawer */}
+        {showMemoryDrawer && (
+          <div className="p-4 bg-slate-900 border-b border-purple-500/30 text-xs text-slate-300 space-y-3 max-h-72 overflow-y-auto animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-purple-400" />
+                <span className="font-bold text-white text-xs">Persistent Account Memory (SQLite)</span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono">
+                  {user.email || 'chinna.tamil2000@gmail.com'}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowMemoryDrawer(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Details saved to Auro's memory during voice discussions. Auro automatically recalls these notes in every conversation.
+            </p>
+
+            {/* Quick Add Memory Form */}
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!newMemTopic.trim() || !newMemContent.trim()) return;
+                setIsAddingMem(true);
+                await saveAssistantMemory(newMemTopic.trim(), newMemContent.trim(), ['voice-manual-entry']);
+                setNewMemTopic('');
+                setNewMemContent('');
+                setIsAddingMem(false);
+              }}
+              className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2"
+            >
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Topic / Keyword (e.g. Wi-Fi PIN)"
+                  value={newMemTopic}
+                  onChange={(e) => setNewMemTopic(e.target.value)}
+                  className="w-1/2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-400"
+                />
+                <input
+                  type="text"
+                  placeholder="Memory details to remember..."
+                  value={newMemContent}
+                  onChange={(e) => setNewMemContent(e.target.value)}
+                  className="w-1/2 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-400"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isAddingMem || !newMemTopic.trim() || !newMemContent.trim()}
+                className="w-full py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-medium text-[11px] flex items-center justify-center gap-1 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{isAddingMem ? 'Saving to SQLite...' : 'Save Note to Memory Bank'}</span>
+              </button>
+            </form>
+
+            {/* Stored Memory Items List */}
+            <div className="space-y-1.5">
+              {assistantMemories.length === 0 ? (
+                <div className="p-3 text-center text-slate-500 text-[11px] rounded-xl bg-slate-950 border border-slate-800">
+                  No memories saved yet. Say <em>"Auro, remember that..."</em> or <em>"Auro, இதை memory-ல store பண்ணு..."</em> to save items here!
+                </div>
+              ) : (
+                assistantMemories.map((mem) => (
+                  <div
+                    key={mem.id}
+                    className="p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-start justify-between gap-2"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-semibold text-purple-300 text-xs">{mem.topic}</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-mono">
+                          {mem.source || 'voice-assistant'}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(mem.timestamp).toLocaleDateString()} {new Date(mem.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p className="text-slate-200 text-xs leading-relaxed">{mem.memoryContent}</p>
+                    </div>
+                    <button
+                      onClick={() => deleteAssistantMemory(mem.id)}
+                      className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+                      title="Delete this memory"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Microphone Help & Permission Guide Dropdown */}
         {showMicHelp && (

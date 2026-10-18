@@ -37,13 +37,23 @@ import {
   GoogleDriveFile,
   GoogleEmailMessage,
   GoogleStorageQuota,
+  GoogleKeepNote,
   FALLBACK_GMAIL_MESSAGES,
   FALLBACK_DRIVE_FILES,
+  FALLBACK_KEEP_NOTES,
   DEFAULT_2TB_QUOTA,
   fetchGoogleDriveFiles,
   fetchGmailMessages,
   fetchGoogleDriveStorageQuota,
+  fetchGoogleKeepNotes,
+  createGoogleKeepNote,
+  deleteGoogleKeepNote,
 } from '../services/googleWorkspace';
+import {
+  detectInternalPhoneStorage,
+  getDefaultPhoneStorage,
+  type InternalPhoneStorageDetails,
+} from '../services/deviceStorage';
 import {
   INITIAL_WHATSAPP_CONFIG,
   INITIAL_WHATSAPP_CONTACTS,
@@ -58,7 +68,17 @@ import {
   makeNativeDirectCall,
   playRingTone,
 } from '../services/phoneService';
-import { summarizeCallApi, getGcpBillingOptimizationApi, getApiUrl } from '../services/api';
+import {
+  summarizeCallApi,
+  getGcpBillingOptimizationApi,
+  getApiUrl,
+  fetchAssistantMemoriesApi,
+  saveAssistantMemoryApi,
+  deleteAssistantMemoryApi,
+  fetchVoiceConversationsApi,
+  clearVoiceConversationsApi,
+  type AssistantMemoryItem,
+} from '../services/api';
 import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
 import { syncRealtimeGcpDetails } from '../services/gcpLiveFetcher';
 import {
@@ -130,6 +150,12 @@ interface AppContextType {
   liveEmails: GoogleEmailMessage[];
   liveDriveFiles: GoogleDriveFile[];
   liveStorageQuota: GoogleStorageQuota;
+  liveKeepNotes: GoogleKeepNote[];
+  syncGoogleKeepNotes: () => Promise<void>;
+  addGoogleKeepNote: (title: string, body: string, labels?: string[], color?: string) => Promise<GoogleKeepNote | null>;
+  removeGoogleKeepNote: (id: string) => Promise<boolean>;
+  internalStorageDetails: InternalPhoneStorageDetails | null;
+  refreshInternalPhoneStorage: () => Promise<InternalPhoneStorageDetails>;
   syncLiveGoogleData: () => Promise<void>;
   signInWithGoogleOAuth: () => Promise<boolean>;
   loginWithGoogle: (email?: string, name?: string, role?: UserRole, explicitToken?: string) => void;
@@ -189,6 +215,12 @@ interface AppContextType {
   chatHistory: VoiceMessage[];
   addVoiceMessage: (msg: Omit<VoiceMessage, 'id'>) => void;
   clearChatHistory: () => void;
+  // Voice Assistant Persistent SQLite Memory Store
+  assistantMemories: AssistantMemoryItem[];
+  isLoadingMemories: boolean;
+  loadAssistantMemories: () => Promise<void>;
+  saveAssistantMemory: (topic: string, content: string, tags?: string[]) => Promise<void>;
+  deleteAssistantMemory: (id: string) => Promise<void>;
   // Google One & Sync
   isOnline: boolean;
   googleOneStorageUsedGb: number;
@@ -605,10 +637,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setIsSyncingGoogle(true);
     try {
-      const [msgs, files, quota] = await Promise.allSettled([
+      const [msgs, files, quota, keepNotes, storageDetails] = await Promise.allSettled([
         fetchGmailMessages(token),
         fetchGoogleDriveFiles(token),
-        fetchGoogleDriveStorageQuota(token, user.email),
+        fetchGoogleDriveStorageQuota(token, user?.email),
+        fetchGoogleKeepNotes(token, user?.email),
+        detectInternalPhoneStorage(user?.email),
       ]);
 
       if (msgs.status === 'fulfilled' && msgs.value && msgs.value.length > 0) {
@@ -619,6 +653,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       if (quota.status === 'fulfilled' && quota.value) {
         setLiveStorageQuota(quota.value);
+      }
+      if (keepNotes.status === 'fulfilled' && keepNotes.value && keepNotes.value.length > 0) {
+        setLiveKeepNotes(keepNotes.value);
+        localStorage.setItem('aura_keep_notes', JSON.stringify(keepNotes.value));
+      }
+      if (storageDetails.status === 'fulfilled' && storageDetails.value) {
+        setInternalStorageDetails(storageDetails.value);
       }
 
       // Also trigger real-time Google Cloud Billing & Resource Manager sync
@@ -654,6 +695,84 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
     return INITIAL_USER;
   });
+
+  // Google Keep Notes & Internal Phone Storage Live State
+  const [liveKeepNotes, setLiveKeepNotes] = useState<GoogleKeepNote[]>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aura_keep_notes');
+      if (saved) {
+        try {
+          return JSON.parse(saved);
+        } catch {}
+      }
+    }
+    return FALLBACK_KEEP_NOTES;
+  });
+  const [internalStorageDetails, setInternalStorageDetails] = useState<InternalPhoneStorageDetails | null>(() =>
+    getDefaultPhoneStorage()
+  );
+
+  const syncGoogleKeepNotes = async (explicitToken?: string) => {
+    try {
+      const notes = await fetchGoogleKeepNotes(explicitToken || googleAccessToken || undefined, user?.email);
+      if (notes && notes.length > 0) {
+        setLiveKeepNotes(notes);
+        localStorage.setItem('aura_keep_notes', JSON.stringify(notes));
+      }
+    } catch (e) {
+      console.warn('Keep notes sync warning:', e);
+    }
+  };
+
+  const addGoogleKeepNote = async (title: string, body: string, labels?: string[], color?: string) => {
+    try {
+      const note = await createGoogleKeepNote({
+        title,
+        body,
+        labels,
+        color,
+        userEmail: user?.email,
+      });
+      if (note) {
+        setLiveKeepNotes((prev) => [note, ...prev.filter((n) => n.id !== note.id)]);
+        return note;
+      }
+    } catch (e) {
+      console.error('Failed to add Google Keep note:', e);
+    }
+    return null;
+  };
+
+  const removeGoogleKeepNote = async (id: string) => {
+    try {
+      const ok = await deleteGoogleKeepNote(id, user?.email);
+      if (ok) {
+        setLiveKeepNotes((prev) => prev.filter((n) => n.id !== id));
+        return true;
+      }
+    } catch (e) {
+      console.error('Failed to delete Google Keep note:', e);
+    }
+    return false;
+  };
+
+  const refreshInternalPhoneStorage = async () => {
+    try {
+      const details = await detectInternalPhoneStorage(user?.email);
+      setInternalStorageDetails(details);
+      return details;
+    } catch {
+      const def = getDefaultPhoneStorage();
+      setInternalStorageDetails(def);
+      return def;
+    }
+  };
+
+  // Auto-sync Google Keep and Phone Storage on mount and when user account updates
+  useEffect(() => {
+    syncGoogleKeepNotes();
+    refreshInternalPhoneStorage();
+  }, [user?.email]);
 
   const [role, setRoleState] = useState<UserRole>('primary');
   const [isLocked, setIsLocked] = useState<boolean>(false);
@@ -793,16 +912,100 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [moodEntries, setMoodEntries] = useState<MoodJournalEntry[]>(INITIAL_MOODS);
   const [vaultNotes, setVaultNotes] = useState<EncryptedVaultNote[]>([]);
   const [storedDocs, setStoredDocs] = useState<UploadedFileDoc[]>([]);
-  const [chatHistory, setChatHistory] = useState<VoiceMessage[]>([
-    {
-      id: 'vm-0',
-      role: 'assistant',
-      content: 'Welcome back, Thamiz. All family vitals are secure, your $100M milestone execution is tracking at 68% velocity, and your calendar has 2 high-leverage focus blocks today. How may I serve your vision right now?',
-      timestamp: '10:48 AM',
-      emotion: 'warm & visionary',
-      actionSuggestion: 'Execute your 45-minute term sheet review block.',
-    },
-  ]);
+  const [chatHistory, setChatHistory] = useState<VoiceMessage[]>(() => {
+    try {
+      const savedUser = localStorage.getItem('aura_user');
+      const email = savedUser ? JSON.parse(savedUser)?.email : 'chinna.tamil2000@gmail.com';
+      const saved = localStorage.getItem(`aura_voice_chat_${email}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [
+      {
+        id: 'vm-0',
+        role: 'assistant',
+        content: 'Welcome back, Thamiz. All family vitals are secure, your $100M milestone execution is tracking at 68% velocity, and your calendar has 2 high-leverage focus blocks today. How may I serve your vision right now?',
+        timestamp: '10:48 AM',
+        emotion: 'warm & visionary',
+        actionSuggestion: 'Execute your 45-minute term sheet review block.',
+      },
+    ];
+  });
+
+  // Voice Assistant Persistent SQLite Memories State
+  const [assistantMemories, setAssistantMemories] = useState<AssistantMemoryItem[]>([]);
+  const [isLoadingMemories, setIsLoadingMemories] = useState<boolean>(false);
+
+  const loadAssistantMemories = async () => {
+    if (!user?.email) return;
+    setIsLoadingMemories(true);
+    try {
+      const res = await fetchAssistantMemoriesApi(user.email);
+      if (res.success && Array.isArray(res.memories)) {
+        setAssistantMemories(res.memories);
+      }
+    } catch (e) {
+      console.warn('Error loading assistant memories:', e);
+    } finally {
+      setIsLoadingMemories(false);
+    }
+  };
+
+  const saveAssistantMemory = async (topic: string, content: string, tags?: string[]) => {
+    if (!user?.email || !content.trim()) return;
+    try {
+      const res = await saveAssistantMemoryApi({
+        userEmail: user.email,
+        topic: topic || 'General Memory',
+        memoryContent: content.trim(),
+        tags: tags || [],
+      });
+      if (res.success && res.memory) {
+        setAssistantMemories((prev) => [res.memory, ...prev.filter((m) => m.id !== res.memory.id)]);
+      }
+    } catch (err) {
+      console.error('Failed to save memory:', err);
+    }
+  };
+
+  const deleteAssistantMemory = async (id: string) => {
+    if (!user?.email) return;
+    try {
+      await deleteAssistantMemoryApi(id, user.email);
+      setAssistantMemories((prev) => prev.filter((m) => m.id !== id));
+    } catch (err) {
+      console.error('Failed to delete memory:', err);
+    }
+  };
+
+  // Sync memories and conversation turns from SQLite when login account changes
+  useEffect(() => {
+    if (user?.email) {
+      loadAssistantMemories();
+      fetchVoiceConversationsApi(user.email)
+        .then((res) => {
+          if (res.success && Array.isArray(res.conversations) && res.conversations.length > 0) {
+            const formatted: VoiceMessage[] = res.conversations.map((c) => ({
+              id: c.id,
+              role: c.role,
+              content: c.content,
+              timestamp: c.timestamp
+                ? new Date(c.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                : 'Earlier',
+              emotion: c.emotion,
+              actionSuggestion: c.actionSuggestion,
+            }));
+            setChatHistory(formatted);
+            try {
+              localStorage.setItem(`aura_voice_chat_${user.email}`, JSON.stringify(formatted));
+            } catch {}
+          }
+        })
+        .catch(() => {});
+    }
+  }, [user?.email]);
 
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline'>('synced');
@@ -1577,11 +1780,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Voice & Chat
   const addVoiceMessage = (msg: Omit<VoiceMessage, 'id'>) => {
     const newMsg: VoiceMessage = { ...msg, id: `vm-${Date.now()}` };
-    setChatHistory((prev) => [...prev, newMsg]);
+    setChatHistory((prev) => {
+      const updated = [...prev, newMsg];
+      if (user?.email) {
+        try {
+          localStorage.setItem(`aura_voice_chat_${user.email}`, JSON.stringify(updated.slice(-80)));
+        } catch {}
+      }
+      return updated;
+    });
   };
 
   const clearChatHistory = () => {
     setChatHistory([]);
+    if (user?.email) {
+      try {
+        localStorage.removeItem(`aura_voice_chat_${user.email}`);
+        clearVoiceConversationsApi(user.email).catch(() => {});
+      } catch {}
+    }
   };
 
   // Google One Sync
@@ -2132,6 +2349,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         liveEmails,
         liveDriveFiles,
         liveStorageQuota,
+        liveKeepNotes,
+        syncGoogleKeepNotes,
+        addGoogleKeepNote,
+        removeGoogleKeepNote,
+        internalStorageDetails,
+        refreshInternalPhoneStorage,
         syncLiveGoogleData,
         signInWithGoogleOAuth,
         loginWithGoogle,
@@ -2182,6 +2405,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         chatHistory,
         addVoiceMessage,
         clearChatHistory,
+        assistantMemories,
+        isLoadingMemories,
+        loadAssistantMemories,
+        saveAssistantMemory,
+        deleteAssistantMemory,
         isOnline,
         googleOneStorageUsedGb: user.googleOneStorageUsedGb,
         syncStatus,

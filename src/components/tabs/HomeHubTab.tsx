@@ -50,10 +50,11 @@ import {
   CheckSquare,
   CreditCard,
   FileText,
+  Languages,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { useApp } from '../../context/AppContext';
-import { speechEngine } from '../../services/speech';
+import { speechEngine, SUPPORTED_VOICE_LANGUAGES, VoiceLanguage } from '../../services/speech';
 import { TabKey } from '../BottomNav';
 import {
   FALLBACK_GMAIL_MESSAGES,
@@ -121,6 +122,14 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
   const [selectedHomeEmail, setSelectedHomeEmail] = useState<GoogleEmailMessage | null>(null);
   const [showHomeDigestModal, setShowHomeDigestModal] = useState(false);
   const [showKeysAndSqliteModal, setShowKeysAndSqliteModal] = useState(false);
+  const [hubModalTab, setHubModalTab] = useState<'keys' | 'sqlite' | 'assistant'>('keys');
+  const [hubVoiceLang, setHubVoiceLang] = useState<string>(() => speechEngine.getLanguage());
+
+  // Keep hubVoiceLang synchronized when modal closes or external change occurs
+  useEffect(() => {
+    setHubVoiceLang(speechEngine.getLanguage());
+  }, [showKeysAndSqliteModal]);
+
   const [isHomeDigestLoading, setIsHomeDigestLoading] = useState(false);
   const [homeDigestResult, setHomeDigestResult] = useState<any>(null);
   const [homeWaToast, setHomeWaToast] = useState<string | null>(null);
@@ -227,9 +236,30 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             Switch to {role === 'primary' ? 'Secondary' : 'Primary'}
           </button>
 
+          {/* Hub Assistant Language Switcher button */}
+          <button
+            onClick={() => {
+              setHubModalTab('assistant');
+              setShowKeysAndSqliteModal(true);
+            }}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-purple-900/50 text-purple-300 border border-purple-500/30 transition-colors flex items-center gap-1.5 text-xs font-medium"
+            title="Configure AI Assistant Voice Language"
+          >
+            <Languages className="w-4 h-4 text-purple-400" />
+            <span className="font-mono text-[11px]">
+              {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === hubVoiceLang)?.flag}{' '}
+              <span className="hidden sm:inline">
+                {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === hubVoiceLang)?.nativeName || 'தமிழ்'}
+              </span>
+            </span>
+          </button>
+
           {/* Hub API Keys & SQLite Data Store button */}
           <button
-            onClick={() => setShowKeysAndSqliteModal(true)}
+            onClick={() => {
+              setHubModalTab('keys');
+              setShowKeysAndSqliteModal(true);
+            }}
             className="p-2 rounded-xl bg-slate-800/80 hover:bg-indigo-900/50 text-indigo-300 border border-indigo-500/30 transition-colors flex items-center gap-1.5 text-xs font-medium"
             title="Configure Google Maps, Gemini API, OAuth & SQLite Store"
           >
@@ -425,6 +455,51 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
               <span className="w-1 h-3 rounded-full bg-indigo-400 animate-[pulse_0.7s_ease-in-out_infinite]" />
               <span className="w-1 h-5 rounded-full bg-purple-400 animate-[pulse_1.0s_ease-in-out_infinite]" />
               <span className="w-1 h-2 rounded-full bg-pink-400 animate-[pulse_1.2s_ease-in-out_infinite]" />
+            </div>
+
+            {/* Hub Voice Assistant Language Switcher */}
+            <div className="w-full my-2 p-2 rounded-2xl bg-slate-900/90 border border-indigo-500/30">
+              <div className="flex items-center justify-between px-1 mb-1.5 text-[10px]">
+                <span className="font-semibold text-slate-300 flex items-center gap-1">
+                  <Languages className="w-3 h-3 text-purple-400" />
+                  <span>Assistant Language:</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHubModalTab('assistant');
+                    setShowKeysAndSqliteModal(true);
+                  }}
+                  className="text-purple-300 hover:text-purple-200 hover:underline flex items-center gap-0.5"
+                  title="Configure Voice & Dialect"
+                >
+                  <span>Configure</span>
+                  <ChevronRight className="w-2.5 h-2.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
+                  const isActive = hubVoiceLang === lang.code;
+                  return (
+                    <button
+                      key={lang.code}
+                      onClick={() => {
+                        speechEngine.setLanguage(lang.code as any);
+                        setHubVoiceLang(lang.code);
+                      }}
+                      className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center justify-center gap-1 transition-all ${
+                        isActive
+                          ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400/50'
+                          : 'bg-slate-950/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      }`}
+                      title={`Switch voice & recognition to ${lang.label}`}
+                    >
+                      <span className="text-xs">{lang.flag}</span>
+                      <span className="truncate">{lang.nativeName}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Launch Voice Assistant Button */}
@@ -2241,6 +2316,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
       <HubKeysAndSqliteModal
         isOpen={showKeysAndSqliteModal}
         onClose={() => setShowKeysAndSqliteModal(false)}
+        initialTab={hubModalTab}
       />
     </div>
   );

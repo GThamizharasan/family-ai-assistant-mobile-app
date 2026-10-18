@@ -52,8 +52,8 @@ function blobToBase64(blob: Blob | null | undefined): Promise<string> {
 export type VoiceLanguage = 'ta-IN' | 'en-US' | 'en-IN' | 'hi-IN';
 
 export const SUPPORTED_VOICE_LANGUAGES = [
-  { code: 'ta-IN', label: 'தமிழ் (Tamil)', flag: '🇮🇳', nativeName: 'தமிழ்' },
-  { code: 'en-US', label: 'English (US)', flag: '🇺🇸', nativeName: 'English' },
+  { code: 'ta-IN', label: 'தமிழ் & English (Auto)', flag: '🇮🇳', nativeName: 'தமிழ் / Auto' },
+  { code: 'en-US', label: 'English (US)', flag: '🇺🇸', nativeName: 'English (US)' },
   { code: 'en-IN', label: 'English (India)', flag: '🇮🇳', nativeName: 'Indian English' },
   { code: 'hi-IN', label: 'हिन्दी (Hindi)', flag: '🇮🇳', nativeName: 'हिन्दी' },
 ] as const;
@@ -70,6 +70,14 @@ export class VoiceAssistantEngine {
   // Active voice language (defaults to Tamil ta-IN for bilingual Tamil/English flow)
   private currentLanguage: string =
     (typeof window !== 'undefined' && localStorage.getItem('aura_voice_language')) || 'ta-IN';
+
+  // Selected specific Tamil voice URI & tuned audio parameters
+  private selectedTamilVoiceURI: string =
+    (typeof window !== 'undefined' && localStorage.getItem('aura_tamil_voice_uri')) || '';
+  private tamilSpeechRate: number =
+    (typeof window !== 'undefined' && parseFloat(localStorage.getItem('aura_tamil_speech_rate') || '0.90')) || 0.90;
+  private tamilSpeechPitch: number =
+    (typeof window !== 'undefined' && parseFloat(localStorage.getItem('aura_tamil_speech_pitch') || '1.0')) || 1.0;
 
   // Real-time silence debounce for hands-free natural speaking
   private silenceTimer: any = null;
@@ -122,6 +130,62 @@ export class VoiceAssistantEngine {
 
   public getLanguage(): string {
     return this.currentLanguage;
+  }
+
+  public getTamilVoices(): { uri: string; name: string; lang: string; isDefault: boolean }[] {
+    if (!this.synth) return [];
+    const voices = this.cachedVoices.length > 0 ? this.cachedVoices : this.synth.getVoices();
+    return voices
+      .filter((v) => {
+        const lang = v.lang.toLowerCase().replace('_', '-');
+        const name = v.name.toLowerCase();
+        return lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்');
+      })
+      .map((v) => ({
+        uri: v.voiceURI,
+        name: v.name,
+        lang: v.lang,
+        isDefault: v.default,
+      }));
+  }
+
+  public setSelectedTamilVoice(uri: string) {
+    this.selectedTamilVoiceURI = uri || '';
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aura_tamil_voice_uri', this.selectedTamilVoiceURI);
+      } catch {}
+    }
+  }
+
+  public getSelectedTamilVoice(): string {
+    return this.selectedTamilVoiceURI;
+  }
+
+  public setTamilSpeechRate(rate: number) {
+    this.tamilSpeechRate = Math.max(0.6, Math.min(1.5, rate));
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aura_tamil_speech_rate', this.tamilSpeechRate.toString());
+      } catch {}
+    }
+  }
+
+  public getTamilSpeechRate(): number {
+    return this.tamilSpeechRate;
+  }
+
+  public setTamilSpeechPitch(pitch: number) {
+    this.tamilSpeechPitch = Math.max(0.6, Math.min(1.5, pitch));
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('aura_tamil_speech_pitch', this.tamilSpeechPitch.toString());
+      } catch {}
+    }
+  }
+
+  public getTamilSpeechPitch(): number {
+    return this.tamilSpeechPitch;
   }
 
   public setContinuousMode(enabled: boolean) {
@@ -887,8 +951,6 @@ export class VoiceAssistantEngine {
     }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.pitch = options.pitch ?? 1.04;
-    utterance.rate = options.rate ?? 1.0;
 
     // Pick best voice: detect if text is Tamil or language is Tamil
     const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText) || this.currentLanguage.startsWith('ta');
@@ -896,11 +958,36 @@ export class VoiceAssistantEngine {
 
     let preferredVoice: SpeechSynthesisVoice | undefined;
     if (isTamilText) {
-      preferredVoice =
-        voices.find((v) => v.lang.toLowerCase().replace('_', '-').startsWith('ta')) ||
-        voices.find((v) => v.name.toLowerCase().includes('tamil') || v.name.toLowerCase().includes('தமிழ்'));
+      utterance.pitch = options.pitch ?? this.tamilSpeechPitch;
+      utterance.rate = options.rate ?? this.tamilSpeechRate;
+
+      // 1. If user selected a specific voice URI in settings, prioritize it
+      if (this.selectedTamilVoiceURI) {
+        preferredVoice = voices.find((v) => v.voiceURI === this.selectedTamilVoiceURI);
+      }
+
+      // 2. Otherwise pick the highest quality natural/Google/neural Tamil voice
+      if (!preferredVoice) {
+        preferredVoice =
+          voices.find((v) => {
+            const lang = v.lang.toLowerCase().replace('_', '-');
+            const name = v.name.toLowerCase();
+            return (
+              (lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்')) &&
+              (name.includes('natural') || name.includes('neural') || name.includes('google') || name.includes('network') || name.includes('cloud'))
+            );
+          }) ||
+          voices.find((v) => {
+            const lang = v.lang.toLowerCase().replace('_', '-');
+            const name = v.name.toLowerCase();
+            return lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்');
+          });
+      }
       utterance.lang = preferredVoice?.lang || 'ta-IN';
     } else {
+      utterance.pitch = options.pitch ?? 1.04;
+      utterance.rate = options.rate ?? 1.0;
+
       preferredVoice =
         voices.find(
           (v) =>

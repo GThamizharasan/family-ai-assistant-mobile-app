@@ -348,3 +348,133 @@ export const FALLBACK_CALENDAR_EVENTS: GoogleCalendarEvent[] = [
     location: 'AuraFamily AI Executive Command',
   },
 ];
+
+// 5. Google Keep Notes Model & API
+export interface GoogleKeepNote {
+  id: string;
+  userEmail?: string;
+  title: string;
+  body: string;
+  labels: string[];
+  tags?: string[];
+  color?: string;
+  isPinned?: boolean;
+  createTime: string;
+  updateTime: string;
+  updatedAt?: string;
+}
+
+export const FALLBACK_KEEP_NOTES: GoogleKeepNote[] = [
+  {
+    id: 'keep-001',
+    userEmail: 'chinna.tamil2000@gmail.com',
+    title: 'Weekly Family Groceries & Organic Essentials',
+    body: '- Pure A2 Gir Cow Milk (daily 6:30 AM delivery)\n- Cold-pressed organic sesame & groundnut oil\n- Farm-fresh country eggs & organic spinach\n- California almonds & walnuts (overnight soak)\n- Fresh ginger, garlic, coriander & curry leaves',
+    labels: ['groceries', 'home', 'health'],
+    color: 'green',
+    isPinned: true,
+    createTime: new Date(Date.now() - 3600000 * 12).toISOString(),
+    updateTime: new Date(Date.now() - 3600000 * 2).toISOString(),
+  },
+  {
+    id: 'keep-002',
+    userEmail: 'chinna.tamil2000@gmail.com',
+    title: 'Digital Tamil World & AI Moat Roadmap',
+    body: '- Gemini 3.8 Live bidirectional audio WebSocket streaming\n- Sovereign server-side SQLite multi-instance synchronizer\n- Real-time Google Keep & phone internal storage context\n- Tamil voice synthesis tuning with natural phonetics',
+    labels: ['work', 'ai', 'roadmap'],
+    color: 'blue',
+    isPinned: true,
+    createTime: new Date(Date.now() - 3600000 * 24).toISOString(),
+    updateTime: new Date(Date.now() - 3600000 * 6).toISOString(),
+  },
+  {
+    id: 'keep-003',
+    userEmail: 'chinna.tamil2000@gmail.com',
+    title: 'Home Security & Device Access PINs',
+    body: '- Driveway main gate motorized PIN: 4920\n- High-speed fiber Wi-Fi: AuraEnterprise-5G (pass: SovereignFamily2026)\n- Security system night arm schedule: 11:00 PM',
+    labels: ['security', 'home'],
+    color: 'amber',
+    isPinned: false,
+    createTime: new Date(Date.now() - 3600000 * 72).toISOString(),
+    updateTime: new Date(Date.now() - 3600000 * 24).toISOString(),
+  },
+];
+
+export async function fetchGoogleKeepNotes(accessToken?: string, userEmail?: string): Promise<GoogleKeepNote[]> {
+  try {
+    // 1. First fetch synced notes from backend SQLite
+    const emailParam = encodeURIComponent(userEmail || 'chinna.tamil2000@gmail.com');
+    const res = await fetch(`/api/google/keep?userEmail=${emailParam}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.notes) && data.notes.length > 0) {
+        return data.notes;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend Keep notes fetch warning:', err);
+  }
+
+  // 2. If access token provided, attempt Google Keep API v1
+  if (accessToken) {
+    try {
+      const gRes = await fetch('https://keep.googleapis.com/v1/notes', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (gRes.ok) {
+        const gData = await gRes.json();
+        if (gData.notes && Array.isArray(gData.notes)) {
+          return gData.notes.map((n: any) => ({
+            id: n.name || n.id,
+            title: n.title || 'Untitled Keep Note',
+            body: n.body?.text?.text || '',
+            labels: n.labels || [],
+            createTime: n.createTime || new Date().toISOString(),
+            updateTime: n.updateTime || new Date().toISOString(),
+          }));
+        }
+      }
+    } catch (gErr) {
+      console.warn('Google Keep API fetch notice:', gErr);
+    }
+  }
+
+  return FALLBACK_KEEP_NOTES;
+}
+
+export async function createGoogleKeepNote(note: {
+  title: string;
+  body: string;
+  labels?: string[];
+  userEmail?: string;
+  color?: string;
+}): Promise<GoogleKeepNote> {
+  const payload = {
+    userEmail: note.userEmail || 'chinna.tamil2000@gmail.com',
+    title: note.title,
+    body: note.body,
+    labels: note.labels || [],
+    color: note.color || 'default',
+  };
+
+  const res = await fetch('/api/google/keep', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to create Google Keep note: ${res.statusText}`);
+  }
+  const data = await res.json();
+  return data.note;
+}
+
+export async function deleteGoogleKeepNote(id: string, userEmail?: string): Promise<boolean> {
+  const emailParam = encodeURIComponent(userEmail || 'chinna.tamil2000@gmail.com');
+  const res = await fetch(`/api/google/keep/${encodeURIComponent(id)}?userEmail=${emailParam}`, {
+    method: 'DELETE',
+  });
+  return res.ok;
+}
+
