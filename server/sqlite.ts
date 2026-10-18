@@ -147,6 +147,19 @@ export interface DeviceStorageRecord {
   timestamp: string;
 }
 
+export interface GoogleDriveFileRecord {
+  id: string;
+  userEmail: string;
+  name: string;
+  mimeType: string;
+  size: string;
+  sizeBytes: number;
+  webViewLink?: string;
+  fileContentBase64?: string;
+  uploadedBy?: string;
+  modifiedTime: string;
+}
+
 let db: Database | null = null;
 let saveDebounceTimer: NodeJS.Timeout | null = null;
 
@@ -345,6 +358,19 @@ export async function initSqliteDb(): Promise<Database> {
       breakdown_json TEXT,
       timestamp TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS google_drive_files (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size TEXT NOT NULL,
+      size_bytes INTEGER DEFAULT 0,
+      web_view_link TEXT,
+      file_content_base64 TEXT,
+      uploaded_by TEXT DEFAULT 'voice_assistant',
+      modified_time TEXT NOT NULL
+    );
   `);
 
   // Seed default Google Keep notes if empty
@@ -393,6 +419,63 @@ export async function initSqliteDb(): Promise<Database> {
     }
   } catch (err) {
     console.warn('Seed Google Keep notes warning:', err);
+  }
+
+  // Seed default Google Drive files if empty
+  try {
+    const driveRes = db.exec('SELECT COUNT(*) as count FROM google_drive_files');
+    const driveCount = (driveRes[0]?.values[0]?.[0] as number) || 0;
+    if (driveCount === 0) {
+      const defaultUser = 'chinna.tamil2000@gmail.com';
+      const nowIso = new Date().toISOString();
+      const seedDriveFiles = [
+        {
+          id: 'gdf-001',
+          name: 'Family_Trust_Estate_Charter_2026.pdf',
+          mimeType: 'application/pdf',
+          size: '2.4 MB',
+          sizeBytes: 2516582,
+          webViewLink: 'https://drive.google.com',
+          uploadedBy: 'system',
+        },
+        {
+          id: 'gdf-002',
+          name: 'Billionaire_Holding_Co_Cap_Table_v4.xlsx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          size: '1.1 MB',
+          sizeBytes: 1153433,
+          webViewLink: 'https://drive.google.com',
+          uploadedBy: 'system',
+        },
+        {
+          id: 'gdf-003',
+          name: 'AI_Operating_System_Patents_Draft.docx',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: '850 KB',
+          sizeBytes: 870400,
+          webViewLink: 'https://drive.google.com',
+          uploadedBy: 'system',
+        },
+        {
+          id: 'gdf-004',
+          name: 'Family_Wellness_Longevity_Protocol_Q4.pdf',
+          mimeType: 'application/pdf',
+          size: '1.8 MB',
+          sizeBytes: 1887436,
+          webViewLink: 'https://drive.google.com',
+          uploadedBy: 'system',
+        },
+      ];
+      for (const f of seedDriveFiles) {
+        db.run(
+          `INSERT INTO google_drive_files (id, user_email, name, mime_type, size, size_bytes, web_view_link, uploaded_by, modified_time)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [f.id, defaultUser, f.name, f.mimeType, f.size, f.sizeBytes, f.webViewLink, f.uploadedBy, nowIso]
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('Seed Google Drive files warning:', err);
   }
 
   // Seed default activation codes if empty
@@ -1282,6 +1365,96 @@ export function getLatestDeviceStorageMetricsFromSqlite(deviceId?: string, userE
 }
 
 // -------------------------------------------------------------
+// Google Drive Files Store
+// -------------------------------------------------------------
+export function saveGoogleDriveFileToSqlite(file: {
+  id?: string;
+  userEmail: string;
+  name: string;
+  mimeType?: string;
+  size?: string;
+  sizeBytes?: number;
+  webViewLink?: string;
+  fileContentBase64?: string;
+  uploadedBy?: string;
+}): GoogleDriveFileRecord {
+  if (!db) throw new Error('SQLite database not ready');
+  const id = file.id || `drive-${Date.now()}`;
+  const now = new Date().toISOString();
+  const cleanEmail = (file.userEmail || '').toLowerCase().trim();
+  const mimeType = file.mimeType || 'application/octet-stream';
+  const size = file.size || '1.0 MB';
+  const sizeBytes = file.sizeBytes || 1024 * 1024;
+  const webViewLink = file.webViewLink || `https://drive.google.com/file/d/${id}/view`;
+  const uploadedBy = file.uploadedBy || 'voice_assistant';
+
+  db.run(
+    `INSERT INTO google_drive_files (id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, uploaded_by, modified_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       mime_type = excluded.mime_type,
+       size = excluded.size,
+       size_bytes = excluded.size_bytes,
+       web_view_link = excluded.web_view_link,
+       file_content_base64 = excluded.file_content_base64,
+       modified_time = excluded.modified_time`,
+    [id, cleanEmail, file.name, mimeType, size, sizeBytes, webViewLink, file.fileContentBase64 || null, uploadedBy, now]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: cleanEmail,
+    name: file.name,
+    mimeType,
+    size,
+    sizeBytes,
+    webViewLink,
+    fileContentBase64: file.fileContentBase64,
+    uploadedBy,
+    modifiedTime: now,
+  };
+}
+
+export function getGoogleDriveFilesFromSqlite(userEmail: string): GoogleDriveFileRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || '').toLowerCase().trim();
+  const res = db.exec(
+    `SELECT id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, uploaded_by, modified_time
+     FROM google_drive_files
+     WHERE user_email = ? OR user_email = 'chinna.tamil2000@gmail.com'
+     ORDER BY modified_time DESC`,
+    [cleanEmail]
+  );
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => ({
+    id: row[0] as string,
+    userEmail: row[1] as string,
+    name: row[2] as string,
+    mimeType: row[3] as string,
+    size: row[4] as string,
+    sizeBytes: Number(row[5]) || 0,
+    webViewLink: (row[6] as string) || undefined,
+    fileContentBase64: (row[7] as string) || undefined,
+    uploadedBy: (row[8] as string) || 'voice_assistant',
+    modifiedTime: row[9] as string,
+  }));
+}
+
+export function deleteGoogleDriveFileFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  if (userEmail) {
+    db.run('DELETE FROM google_drive_files WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+  } else {
+    db.run('DELETE FROM google_drive_files WHERE id = ?', [id]);
+  }
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
 export function getSqliteDbStats() {
@@ -1314,6 +1487,7 @@ export function getSqliteDbStats() {
     'assistant_memory_store',
     'voice_assistant_conversations',
     'google_keep_notes',
+    'google_drive_files',
     'device_storage_metrics',
   ];
 

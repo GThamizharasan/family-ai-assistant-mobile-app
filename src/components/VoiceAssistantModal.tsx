@@ -26,6 +26,9 @@ import {
   FileText,
   HardDrive,
   Home,
+  Paperclip,
+  UploadCloud,
+  Check,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
@@ -66,6 +69,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     liveEmails,
     liveDriveFiles,
     liveStorageQuota,
+    uploadGoogleDriveFile,
     googleWorkspaceSettings,
     isGoogleConnected,
     syncLiveGoogleData,
@@ -86,10 +90,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
   const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
   const [savedKeepNoteNotice, setSavedKeepNoteNotice] = useState<string | null>(null);
+  const [driveUploadNotice, setDriveUploadNotice] = useState<string | null>(null);
   const [showDeviceStorageNotice, setShowDeviceStorageNotice] = useState(false);
   const [newMemTopic, setNewMemTopic] = useState('');
   const [newMemContent, setNewMemContent] = useState('');
   const [isAddingMem, setIsAddingMem] = useState(false);
+
+  // Attachment state for uploading into Google Drive and voice discussing
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSelectLanguage = (code: string) => {
     speechEngine.setLanguage(code);
@@ -268,6 +278,61 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     }
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setMicStatusMessage(null);
+    }
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleUploadAttachmentToDrive = async (fileToUpload?: File) => {
+    const file = fileToUpload || selectedFile;
+    if (!file) return;
+
+    setIsUploadingToDrive(true);
+    try {
+      const uploaded = await uploadGoogleDriveFile(file);
+      setIsUploadingToDrive(false);
+      setSelectedFile(null);
+      setDriveUploadNotice(uploaded.name);
+      setTimeout(() => setDriveUploadNotice(null), 6000);
+
+      const isTamil = voiceLanguage.startsWith('ta');
+      const confirmText = isTamil
+        ? `உங்கள் "${uploaded.name}" (${uploaded.size || 'கோப்பு'}) வெற்றிகரமாக உங்கள் கூகுள் டிரைவில் (Google Drive) பதிவேற்றப்பட்டது. இது இப்போது உங்கள் Google One Tab-ல் பாதுகாப்பாக சேமிக்கப்பட்டுள்ளது.`
+        : `I have uploaded "${uploaded.name}" (${uploaded.size || 'file'}) into your Google Drive. It is now safely stored in your cloud drive.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: confirmText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'organized & protective',
+        actionSuggestion: `Google Drive: "${uploaded.name}"`,
+      });
+
+      speakWithAuro(confirmText, { emotion: 'supportive' });
+      return uploaded;
+    } catch (err: any) {
+      setIsUploadingToDrive(false);
+      console.error('Google Drive upload error:', err);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const errText = isTamil
+        ? `கூகுள் டிரைவில் பதிவேற்ற முடியவில்லை. தயவுசெய்து உங்கள் இணைய இணைப்பை சரிபார்த்து மீண்டும் முயற்சிக்கவும்.`
+        : `Could not upload file to Google Drive. Please verify your connection and try again.`;
+      addVoiceMessage({
+        role: 'assistant',
+        content: errText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'comforting',
+      });
+      speakWithAuro(errText);
+    }
+  };
+
   const handleUserSpeech = async (spokenText: string) => {
     if (!spokenText || !spokenText.trim()) return;
     speechEngine.unlockAudio();
@@ -293,6 +358,33 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         speechEngine.speak(`Calling ${targetContact.name} on sovereign line now.`);
         onClose();
         startCall(targetContact, false);
+        return;
+      }
+    }
+
+    // Direct Google Drive upload attachment intent
+    if (
+      (lower.includes('upload') || lower.includes('save') || lower.includes('store') || lower.includes('சேமி') || lower.includes('அப்லோட்') || lower.includes('பதிவேற்ற')) &&
+      (lower.includes('drive') || lower.includes('google drive') || lower.includes('டிரைவ்') || lower.includes('டிரைவில்'))
+    ) {
+      if (selectedFile) {
+        setIsThinking(true);
+        await handleUploadAttachmentToDrive(selectedFile);
+        setIsThinking(false);
+        return;
+      } else {
+        fileInputRef.current?.click();
+        const promptMsg = voiceLanguage.startsWith('ta')
+          ? 'உங்கள் கூகுள் டிரைவில் பதிவேற்ற விரும்பும் கோப்பை தேர்ந்தெடுக்கவும். கீழே உள்ள Paperclip பொத்தானையும் தட்டலாம்.'
+          : 'Please select the file you want to upload into your Google Drive. You can tap the paperclip icon below.';
+        addVoiceMessage({
+          role: 'assistant',
+          content: promptMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'helpful & attentive',
+          actionSuggestion: 'Attach file for Google Drive upload',
+        });
+        speakWithAuro(promptMsg);
         return;
       }
     }
@@ -690,6 +782,55 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         isGoogleConnected,
       };
 
+      // If an attachment is selected, process and auto-upload it to Google Drive
+      let attachmentPayload = null;
+      if (selectedFile) {
+        void uploadGoogleDriveFile(selectedFile);
+
+        let textSnippet = '';
+        if (selectedFile.type.startsWith('text/') || selectedFile.name.endsWith('.txt') || selectedFile.name.endsWith('.json') || selectedFile.name.endsWith('.md')) {
+          try {
+            textSnippet = await selectedFile.text();
+          } catch {}
+        }
+
+        const base64Data = await new Promise<string>((resolve) => {
+          try {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const res = reader.result;
+              if (typeof res === 'string') {
+                const comma = res.indexOf(',');
+                resolve(comma !== -1 ? res.slice(comma + 1) : res);
+              } else {
+                resolve('');
+              }
+            };
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(selectedFile);
+          } catch {
+            resolve('');
+          }
+        });
+
+        const sizeFormatted = selectedFile.size > 1024 * 1024
+          ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`
+          : `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`;
+
+        attachmentPayload = {
+          name: selectedFile.name,
+          mimeType: selectedFile.type || 'application/octet-stream',
+          size: sizeFormatted,
+          sizeBytes: selectedFile.size,
+          contentBase64: base64Data,
+          textContent: textSnippet.slice(0, 3000),
+        };
+
+        setDriveUploadNotice(selectedFile.name);
+        setTimeout(() => setDriveUploadNotice(null), 5000);
+        setSelectedFile(null);
+      }
+
       const result = await sendChatMessage({
         message: spokenText,
         history: historyPayload,
@@ -698,6 +839,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         currentMood: currentEmotion,
         includeSpeechAudio: !isMuted,
         currentLanguage: voiceLanguage.startsWith('ta') ? 'ta' : 'en',
+        attachment: attachmentPayload,
       });
 
       setIsThinking(false);
@@ -718,6 +860,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         const keepTitle = result.savedKeepNote.title || 'Note';
         setSavedKeepNoteNotice(keepTitle);
         setTimeout(() => setSavedKeepNoteNotice(null), 5000);
+      }
+
+      // Check if a Google Drive file was indexed/saved
+      if (result.savedDriveFile) {
+        const driveName = result.savedDriveFile.name || 'File';
+        setDriveUploadNotice(driveName);
+        setTimeout(() => setDriveUploadNotice(null), 5000);
       }
 
       const aiMsg = {
@@ -782,8 +931,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
 
   const handleManualSend = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!textInput.trim()) return;
-    const msg = textInput.trim();
+    if (!textInput.trim() && !selectedFile) return;
+    const msg =
+      textInput.trim() ||
+      (selectedFile
+        ? `Please upload this attached file "${selectedFile.name}" to my Google Drive and summarize its contents.`
+        : '');
     setTextInput('');
     handleUserSpeech(msg);
   };
@@ -791,6 +944,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   handleUserSpeechRef.current = handleUserSpeech;
 
   const quickPrompts = [
+    { label: '📎 Upload to Drive', text: 'Upload this attachment to my Google Drive.' },
+    { label: '📎 டிரைவில் அப்லோட்', text: 'என் attachment-ஐ கூகுள் டிரைவில் அப்லோட் பண்ணு.' },
     { label: '📝 Google Keep Notes', text: 'Check my Google Keep notes and read my grocery list.' },
     { label: '📝 Add Keep Note', text: 'Add note to Google Keep: Organic apples, oat milk, and cold brew coffee.' },
     { label: '📱 Phone Storage Status', text: 'How much free internal storage do I have on my phone?' },
@@ -995,6 +1150,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             <button
               onClick={() => setSavedKeepNoteNotice(null)}
               className="text-amber-300 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Saved Google Drive Upload Notice Banner */}
+        {driveUploadNotice && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-emerald-950/80 via-slate-900 to-emerald-950/80 border-b border-emerald-500/40 text-emerald-200 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <UploadCloud className="w-4 h-4 text-emerald-400 shrink-0 animate-bounce" />
+              <span>
+                <strong className="text-white">Uploaded to Google Drive:</strong> {driveUploadNotice} (Saved & available in Google One tab)
+              </span>
+            </div>
+            <button
+              onClick={() => setDriveUploadNotice(null)}
+              className="text-emerald-300 hover:text-white"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -1464,6 +1637,69 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           ))}
         </div>
 
+        {/* Selected Attachment Preview & Upload to Drive Bar */}
+        {selectedFile && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-indigo-950/90 border-t border-indigo-500/40 flex items-center justify-between gap-3 animate-fade-in shadow-lg">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <div className="w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center shrink-0 text-indigo-300">
+                <Paperclip className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-white truncate max-w-[200px] sm:max-w-xs">{selectedFile.name}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    ({(selectedFile.size / (1024 * 1024)).toFixed(1) === '0.0' ? `${Math.round(selectedFile.size / 1024)} KB` : `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`})
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-indigo-300 flex items-center gap-1">
+                  <HardDrive className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span>Ready to upload into your Google Drive & discuss with Aura</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={isUploadingToDrive}
+                onClick={() => handleUploadAttachmentToDrive()}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs shadow-md shadow-emerald-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+                title="Upload immediately to Google Drive"
+              >
+                {isUploadingToDrive ? (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                    <span>Uploading...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Upload to Drive</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedFile(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                title="Remove attachment"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Hidden File Input for Attachments */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={handleFileChange}
+          accept="*/*"
+        />
+
         {/* Input Dock & Big Mic Trigger */}
         <div className="p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
           <button
@@ -1487,19 +1723,40 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
+          {/* Attachment Button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 ${
+              selectedFile
+                ? 'bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/30 shadow-indigo-600/30'
+                : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-indigo-300 border-slate-800 hover:border-indigo-500/40'
+            }`}
+            title="Attach a file to upload into Google Drive"
+            aria-label="Attach file for Google Drive"
+          >
+            <Paperclip className="w-5 h-5" />
+          </button>
+
           <form onSubmit={handleManualSend} className="flex-1 flex items-center gap-2">
             <input
               type="text"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder={isLocalVoiceMode ? 'Speak to transcribe, or edit transcript...' : 'Talk or type with Aura...'}
+              placeholder={
+                selectedFile
+                  ? `Attached: ${selectedFile.name} (Tap Send or Upload to Drive)`
+                  : isLocalVoiceMode
+                  ? 'Speak to transcribe, or edit transcript...'
+                  : 'Talk or type with Aura...'
+              }
               className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
-              disabled={!textInput.trim() || isLocalVoiceMode}
+              disabled={(!textInput.trim() && !selectedFile) || isLocalVoiceMode}
               title={isLocalVoiceMode ? 'AI replies require a configured backend' : 'Send message'}
-              className="p-3 rounded-xl bg-slate-800 hover:bg-indigo-600 disabled:opacity-40 text-white transition-colors"
+              className="p-3 rounded-xl bg-slate-800 hover:bg-indigo-600 disabled:opacity-40 text-white transition-colors cursor-pointer"
             >
               <Send className="w-4 h-4" />
             </button>

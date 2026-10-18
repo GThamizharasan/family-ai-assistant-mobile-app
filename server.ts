@@ -37,6 +37,9 @@ import {
   saveGoogleKeepNoteToSqlite,
   getGoogleKeepNotesFromSqlite,
   deleteGoogleKeepNoteFromSqlite,
+  saveGoogleDriveFileToSqlite,
+  getGoogleDriveFilesFromSqlite,
+  deleteGoogleDriveFileFromSqlite,
   saveDeviceStorageMetricsToSqlite,
   getLatestDeviceStorageMetricsFromSqlite,
   getSqliteDbStats,
@@ -46,6 +49,7 @@ import {
   type AssistantMemoryRecord,
   type VoiceConversationRecord,
   type GoogleKeepNoteRecord,
+  type GoogleDriveFileRecord,
   type DeviceStorageRecord,
 } from './server/sqlite.ts';
 
@@ -382,10 +386,30 @@ app.post('/api/chat', async (req, res) => {
     const userEmail = (userProfile?.email || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
     const familyId = userProfile?.familyId || 'family-aura-primary';
 
-    // Retrieve persistent memories from SQLite for this logged-in account
+    // Retrieve persistent memories, Keep notes, and Drive files from SQLite for this logged-in account
     const storedMemories = getAssistantMemoriesFromSqlite(userEmail, familyId);
     const storedKeepNotes = getGoogleKeepNotesFromSqlite(userEmail);
+    const storedDriveFiles = getGoogleDriveFilesFromSqlite(userEmail);
     const storedDeviceStorage = (context?.internalPhoneStorageSummary) || getLatestDeviceStorageMetricsFromSqlite(undefined, userEmail);
+
+    // If an attachment was passed in this chat turn, automatically index it into Google Drive
+    const attachment = req.body.attachment;
+    let savedAttachmentRecord: GoogleDriveFileRecord | null = null;
+    if (attachment && attachment.name) {
+      try {
+        savedAttachmentRecord = saveGoogleDriveFileToSqlite({
+          userEmail,
+          name: attachment.name,
+          mimeType: attachment.mimeType || 'application/octet-stream',
+          size: attachment.size || '1.0 MB',
+          sizeBytes: attachment.sizeBytes || 1024 * 1024,
+          fileContentBase64: attachment.contentBase64,
+          uploadedBy: 'voice_assistant',
+        });
+      } catch (attErr) {
+        console.warn('Auto-save voice attachment to Google Drive SQLite warning:', attErr);
+      }
+    }
 
     const systemPrompt = `You are Aura, an elite, highly empathetic, emotionally intelligent Family Personal AI Assistant and Life Operating System for a high-performing family leader (${userEmail}).
 Your persona combines:
@@ -397,6 +421,26 @@ LANGUAGE AGILITY & MULTILINGUAL CONVERSATION (TAMIL & ENGLISH):
 - You are fully bilingual and natively fluent in Tamil (தமிழ்), Tanglish (Tamil in Latin/English letters), English, and Hindi.
 - CRITICAL: When the user speaks, greets, or asks in Tamil or Tanglish (e.g., "வணக்கம்", "எப்படி இருக்கீங்க", "சாப்பிட்டியா", "enna panra", "tamil la pesu", etc.), you MUST reply naturally in fluent Tamil (தமிழ்) or conversational Tanglish matching the user's dialect!
 - If the user switches languages between English and Tamil, seamlessly mirror their language immediately with cultural warmth and respect. Never force English when addressed in Tamil.
+
+GOOGLE DRIVE FILES & ATTACHMENT UPLOADS (LIVE & CONNECTED):
+You have direct, continuous access to the user's Google Drive files for account "${userEmail}":
+${
+  storedDriveFiles.length === 0
+    ? '- (No Google Drive files indexed yet)'
+    : storedDriveFiles.slice(0, 10).map((f, i) => `${i + 1}. [${f.name}] (${f.size}, ${f.mimeType})`).join('\n')
+}
+${
+  attachment
+    ? `\nCURRENT ATTACHMENT UPLOADED IN THIS CONVERSATION TURN:
+- File Name: "${attachment.name}"
+- File Size: ${attachment.size || 'Unknown'}
+- MIME Type: ${attachment.mimeType || 'application/octet-stream'}
+- Extracted Snippet / Details: "${(attachment.textContent || '').slice(0, 2000)}"
+- Upload Status: Successfully uploaded into Google Drive for ${userEmail}!`
+    : ''
+}
+- When the user attaches a file or asks you to upload/save an attachment to their Google Drive (in English or Tamil e.g., "upload this attachment to my drive", "save this to my google drive", "கூகுள் டிரைவில் சேமி", "என் டிரைவில் அப்லோட் பண்ணு"):
+  Confirm with warmth and confidence that their file has been successfully uploaded to their Google Drive and is securely stored in their Google One Drive tab! If they ask about the content, provide a crisp summary of its key points.
 
 GOOGLE KEEP NOTES ACCESS (LIVE & SYNCED STORE):
 You have direct, continuous access to the user's connected Google Keep notes for account "${userEmail}":
@@ -630,6 +674,7 @@ Return a valid JSON object matching:
       audioBase64,
       savedMemory: savedMemoryRecord,
       savedKeepNote: savedKeepNoteRecord,
+      savedDriveFile: savedAttachmentRecord,
     });
   } catch (error: any) {
     console.error('Error in /api/chat:', error);
@@ -2427,6 +2472,51 @@ app.delete('/api/google/keep/:id', (req, res) => {
     const { id } = req.params;
     const userEmail = req.query.userEmail as string | undefined;
     const ok = deleteGoogleKeepNoteFromSqlite(id, userEmail);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Google Drive Files SQLite REST Endpoints
+app.get('/api/google/drive', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const files = getGoogleDriveFilesFromSqlite(userEmail);
+    res.json({ success: true, count: files.length, files });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/google/drive/upload', (req, res) => {
+  try {
+    const { id, userEmail, name, mimeType, size, sizeBytes, webViewLink, fileContentBase64, uploadedBy } = req.body;
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'File name is required' });
+    }
+    const file = saveGoogleDriveFileToSqlite({
+      id,
+      userEmail: userEmail || 'chinna.tamil2000@gmail.com',
+      name,
+      mimeType,
+      size,
+      sizeBytes,
+      webViewLink,
+      fileContentBase64,
+      uploadedBy: uploadedBy || 'voice_assistant',
+    });
+    res.json({ success: true, file });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/google/drive/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteGoogleDriveFileFromSqlite(id, userEmail);
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   UserProfile,
   UserRole,
@@ -43,6 +44,8 @@ import {
   FALLBACK_KEEP_NOTES,
   DEFAULT_2TB_QUOTA,
   fetchGoogleDriveFiles,
+  uploadFileToGoogleDrive,
+  deleteGoogleDriveFile,
   fetchGmailMessages,
   fetchGoogleDriveStorageQuota,
   fetchGoogleKeepNotes,
@@ -150,6 +153,8 @@ interface AppContextType {
   liveEmails: GoogleEmailMessage[];
   liveDriveFiles: GoogleDriveFile[];
   liveStorageQuota: GoogleStorageQuota;
+  uploadGoogleDriveFile: (file: File) => Promise<GoogleDriveFile>;
+  removeGoogleDriveFile: (id: string) => Promise<boolean>;
   liveKeepNotes: GoogleKeepNote[];
   syncGoogleKeepNotes: () => Promise<void>;
   addGoogleKeepNote: (title: string, body: string, labels?: string[], color?: string) => Promise<GoogleKeepNote | null>;
@@ -754,6 +759,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.error('Failed to delete Google Keep note:', e);
     }
     return false;
+  };
+
+  const uploadGoogleDriveFile = async (file: File): Promise<GoogleDriveFile> => {
+    try {
+      const uploaded = await uploadFileToGoogleDrive(googleAccessToken, file, user?.email);
+      setLiveDriveFiles((prev) => [uploaded, ...prev.filter((f) => f.id !== uploaded.id)]);
+      // Update Google Drive and Google One quota in state
+      const sizeMb = (file.size || 0) / (1024 * 1024);
+      setLiveStorageQuota((prev) => ({
+        ...prev,
+        usageGb: Number((prev.usageGb + sizeMb / 1024).toFixed(3)),
+        driveUsedGb: Number((prev.driveUsedGb + sizeMb / 1024).toFixed(3)),
+        lastUpdated: `Uploaded "${file.name}" (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`,
+      }));
+      return uploaded;
+    } catch (e) {
+      console.error('Failed to upload file to Google Drive:', e);
+      throw e;
+    }
+  };
+
+  const removeGoogleDriveFile = async (id: string): Promise<boolean> => {
+    try {
+      const ok = await deleteGoogleDriveFile(id, user?.email);
+      if (ok) {
+        setLiveDriveFiles((prev) => prev.filter((f) => f.id !== id));
+      }
+      return ok;
+    } catch (e) {
+      console.warn('Remove drive file notice:', e);
+      return false;
+    }
   };
 
   const refreshInternalPhoneStorage = async () => {
@@ -1387,7 +1424,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
     if (!localStorage.getItem('aura_api_base_url')) {
-      localStorage.setItem('aura_api_base_url', 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app');
+      if (Capacitor.isNativePlatform()) {
+        localStorage.setItem('aura_api_base_url', 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app');
+      } else {
+        localStorage.setItem('aura_api_base_url', window.location.origin);
+      }
     }
 
     // Calibrate storage quota to connected Google account
@@ -2349,6 +2390,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         liveEmails,
         liveDriveFiles,
         liveStorageQuota,
+        uploadGoogleDriveFile,
+        removeGoogleDriveFile,
         liveKeepNotes,
         syncGoogleKeepNotes,
         addGoogleKeepNote,

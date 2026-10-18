@@ -922,7 +922,11 @@ export class VoiceAssistantEngine {
 
         const chunk = chunks[idx++];
         const directUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${langCode}&client=tw-ob`;
-        const audio = new Audio(directUrl);
+        const audio = new Audio();
+        try {
+          (audio as any).referrerPolicy = 'no-referrer';
+        } catch {}
+        audio.src = directUrl;
         this.currentAudioElement = audio;
 
         return new Promise<boolean>((resolve) => {

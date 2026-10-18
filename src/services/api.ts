@@ -3,7 +3,21 @@ import { Capacitor } from '@capacitor/core';
 export const DEFAULT_BACKEND_URL = 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
 export function getApiBaseUrl(): string {
-  // 1. Runtime configured URL in localStorage (e.g. set from Hub Keys modal)
+  // 1. Web browser: use the current web origin (e.g. http://localhost:3000) so local endpoints (/api/tts, /api/chat, /api/google/*) work directly
+  if (typeof window !== 'undefined' && !Capacitor.isNativePlatform()) {
+    const runtimeUrl = localStorage.getItem('aura_api_base_url');
+    // If a custom URL was explicitly configured (and it's not the default remote Cloud Run fallback), honor it
+    if (runtimeUrl && runtimeUrl.trim() && runtimeUrl.trim() !== DEFAULT_BACKEND_URL) {
+      return runtimeUrl.trim().replace(/\/+$/, '');
+    }
+    // Clean up outdated default cloud run URL in localStorage on web platform
+    if (runtimeUrl === DEFAULT_BACKEND_URL) {
+      try { localStorage.removeItem('aura_api_base_url'); } catch {}
+    }
+    return window.location.origin;
+  }
+
+  // 2. Runtime configured URL in localStorage (e.g. set from Hub Keys modal on mobile)
   if (typeof window !== 'undefined') {
     const runtimeUrl = localStorage.getItem('aura_api_base_url');
     if (runtimeUrl && runtimeUrl.trim()) {
@@ -11,15 +25,10 @@ export function getApiBaseUrl(): string {
     }
   }
 
-  // 2. Vite build-time environment variable
+  // 3. Vite build-time environment variable
   const envUrl = (import.meta.env.VITE_API_BASE_URL as string || '').trim().replace(/\/+$/, '');
   if (envUrl) {
     return envUrl;
-  }
-
-  // 3. Web browser: use the current web origin (e.g. http://localhost:3000) so local endpoints work directly
-  if (typeof window !== 'undefined' && !Capacitor.isNativePlatform()) {
-    return window.location.origin;
   }
 
   // 4. Native Android / iOS fallback to Google Cloud Run
@@ -109,6 +118,14 @@ export async function sendChatMessage(payload: {
   currentMood?: string;
   includeSpeechAudio?: boolean;
   currentLanguage?: string;
+  attachment?: {
+    name: string;
+    mimeType: string;
+    size: string;
+    sizeBytes?: number;
+    contentBase64?: string;
+    textContent?: string;
+  } | null;
 }) {
   return safeFetchJson('/api/chat', {
     method: 'POST',
