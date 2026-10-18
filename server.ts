@@ -273,6 +273,95 @@ app.get('/api/camera/snapshot', (req, res) => {
   });
 });
 
+// Reusable High-Fidelity Audio TTS Buffer Generator (Tamil & English support)
+async function generateTtsAudioBuffer(text: string, lang?: string): Promise<Buffer | null> {
+  try {
+    const cleanText = text
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/#+\s/g, '')
+      .replace(/`{1,3}.*?`{1,3}/g, '')
+      .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+      .trim();
+
+    if (!cleanText) return null;
+
+    const detectedLang = lang || (/[\u0B80-\u0BFF]/.test(cleanText) ? 'ta' : 'en');
+    const langCode = detectedLang.startsWith('ta') ? 'ta' : 'en';
+
+    // Split text into small natural sentences (<= 180 chars per Google TTS request)
+    const sentences = cleanText.match(/[^.!?\n,]+[.!?\n,]*/g) || [cleanText];
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const s of sentences) {
+      if ((currentChunk + ' ' + s).trim().length <= 180) {
+        currentChunk = (currentChunk + ' ' + s).trim();
+      } else {
+        if (currentChunk) chunks.push(currentChunk);
+        currentChunk = s.trim().slice(0, 180);
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk);
+
+    // Fetch up to 6 chunks in parallel for fast, low-latency streaming
+    const chunksToFetch = chunks.slice(0, 6);
+    const chunkPromises = chunksToFetch.map(async (chunk) => {
+      try {
+        const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${langCode}&client=tw-ob`;
+        const ttsRes = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          },
+        });
+        if (ttsRes.ok) {
+          const ab = await ttsRes.arrayBuffer();
+          return Buffer.from(ab);
+        }
+      } catch (e) {
+        console.warn('TTS chunk fetch failed:', e);
+      }
+      return null;
+    });
+
+    const results = await Promise.all(chunkPromises);
+    const buffers: Buffer[] = [];
+    for (const b of results) {
+      if (b) buffers.push(b);
+    }
+    if (buffers.length === 0) return null;
+    return Buffer.concat(buffers);
+  } catch (err) {
+    console.warn('generateTtsAudioBuffer error:', err);
+    return null;
+  }
+}
+
+// High-Fidelity Audio TTS Endpoint (Supports GET & POST for Tamil, English, and all multilingual queries)
+app.all('/api/tts', async (req, res) => {
+  try {
+    const text = (((req.method === 'POST' ? req.body?.text : req.query.text) as string) || '').trim();
+    if (!text) {
+      return res.status(400).send('Text parameter required');
+    }
+
+    const lang = ((req.method === 'POST' ? req.body?.lang : req.query.lang) as string) || (/[\u0B80-\u0BFF]/.test(text) ? 'ta' : 'en');
+    const fullAudio = await generateTtsAudioBuffer(text, lang);
+
+    if (!fullAudio) {
+      return res.status(502).send('Unable to generate speech audio');
+    }
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', fullAudio.length);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.end(fullAudio);
+  } catch (err: any) {
+    console.warn('TTS streaming error:', err);
+    return res.status(500).send('TTS processing error');
+  }
+});
+
 // 1. Natural Empathetic AI Assistant Chat
 app.post('/api/chat', async (req, res) => {
   try {
@@ -515,8 +604,7 @@ Return a valid JSON object matching:
     }
 
     let audioBase64: string | null = null;
-    const client = ai || (process.env.GEMINI_API_KEY ? getAiClient() : null);
-    if (req.body.includeSpeechAudio && parsed.reply && client) {
+    if (req.body.includeSpeechAudio && parsed.reply) {
       try {
         const cleanSpoken = parsed.reply
           .replace(/\*\*(.*?)\*\*/g, '$1')
@@ -524,36 +612,15 @@ Return a valid JSON object matching:
           .replace(/#+\s/g, '')
           .replace(/`{1,3}.*?`{1,3}/g, '')
           .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-          .slice(0, 320);
+          .slice(0, 450);
 
-        // Run TTS with a 7s soft deadline so response is returned promptly
-        const ttsPromise = client.models.generateContent({
-          model: 'gemini-3.8-flash-lite-tts',
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: cleanSpoken }],
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: 'Kore' },
-              },
-            },
-          },
-        });
-
-        // Soft timeout resolves to null instead of rejecting, enabling clean client-side speech fallback
-        const timeoutPromise = new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), 7000)
-        );
-
-        const ttsResponse: any = await Promise.race([ttsPromise, timeoutPromise]);
-        audioBase64 = ttsResponse?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || null;
-      } catch {
-        // Silent graceful fallback to browser-native voice synthesis
+        const targetLang = req.body.currentLanguage || (parsed.language === 'ta' || /[\u0B80-\u0BFF]/.test(cleanSpoken) ? 'ta' : 'en');
+        const ttsAudioBuffer = await generateTtsAudioBuffer(cleanSpoken, targetLang);
+        if (ttsAudioBuffer && ttsAudioBuffer.length > 0) {
+          audioBase64 = ttsAudioBuffer.toString('base64');
+        }
+      } catch (ttsErr) {
+        console.warn('Voice response audio generation error in /api/chat:', ttsErr);
         audioBase64 = null;
       }
     }

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   X,
   Play,
+  Home,
 } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { safeFetchJson } from '../services/api';
@@ -20,9 +21,10 @@ import { safeFetchJson } from '../services/api';
 interface AndroidInstallerModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onGoHome?: () => void;
 }
 
-export const AndroidInstallerModal: React.FC<AndroidInstallerModalProps> = ({ isOpen, onClose }) => {
+export const AndroidInstallerModal: React.FC<AndroidInstallerModalProps> = ({ isOpen, onClose, onGoHome }) => {
   const { isInstallable, isInstalled, isAndroid, install } = usePWAInstall();
   const [activeTab, setActiveTab] = useState<'apk' | 'api'>('apk');
 
@@ -134,9 +136,11 @@ export const AndroidInstallerModal: React.FC<AndroidInstallerModalProps> = ({ is
         {/* Modal Header */}
         <div className="p-4 sm:px-6 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400">
-              <Smartphone className="w-5 h-5" />
-            </div>
+            <img
+              src="/app-logo.png"
+              alt="Aura Logo"
+              className="w-10 h-10 rounded-xl object-cover border border-amber-500/40 shadow-md shrink-0"
+            />
             <div>
               <h3 className="font-bold text-white text-sm sm:text-base">
                 Android APK Installer & API Integration Hub
@@ -146,12 +150,28 @@ export const AndroidInstallerModal: React.FC<AndroidInstallerModalProps> = ({ is
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                onClose();
+                onGoHome?.();
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 hover:text-white border border-rose-500/30 hover:border-rose-500/50 transition-all cursor-pointer shadow-sm active:scale-95"
+              title="Cancel and return to Home Hub"
+              aria-label="Cancel and return home"
+            >
+              <Home className="w-3.5 h-3.5 text-rose-400" />
+              <span>Cancel</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title="Close"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Tab Switcher */}

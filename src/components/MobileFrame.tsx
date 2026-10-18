@@ -36,7 +36,11 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
       {/* Top Floating Utility Control Bar */}
       <header className="sticky top-0 z-40 w-full max-w-lg mb-3 px-3 pt-[env(safe-area-inset-top)] flex items-center justify-between text-xs text-slate-400 bg-slate-950/95 backdrop-blur-xl">
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          <img
+            src="/app-logo.png"
+            alt="Aura Logo"
+            className="w-5 h-5 rounded-full object-cover border border-amber-500/40 shadow-sm"
+          />
           <span className="font-semibold text-slate-200">AuraFamily Life OS</span>
           <span className="text-[10px] text-slate-500 font-mono">v2.4 Sovereign</span>
         </div>
@@ -44,11 +48,12 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={onGoHome}
-            className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
-            title="Go to Home"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95"
+            title="Go to Home Hub"
             aria-label="Go to Home"
           >
-            <Home className="w-3.5 h-3.5" />
+            <Home className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="text-[11px] font-semibold">Home</span>
           </button>
 
           {/* Install Android APK Button */}

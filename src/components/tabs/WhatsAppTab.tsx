@@ -225,6 +225,7 @@ export const WhatsAppTab: React.FC<WhatsAppTabProps> = ({ initialContactId, onOp
       };
       speechEngine.onErrorCallback = (error) => {
         setIsDictating(false);
+        if (error === 'no-speech' || error === 'aborted') return;
         showToast(
           error === 'not-allowed'
             ? 'Please allow microphone access in Android Settings or your browser site permissions.'

@@ -176,11 +176,19 @@ const AppContent: React.FC = () => {
       <VoiceAssistantModal
         isOpen={isVoiceOpen}
         onClose={() => setIsVoiceOpen(false)}
+        onGoHome={() => {
+          setIsVoiceOpen(false);
+          setCurrentTab('home');
+        }}
       />
 
       <AndroidInstallerModal
         isOpen={isInstallerOpen}
         onClose={() => setIsInstallerOpen(false)}
+        onGoHome={() => {
+          setIsInstallerOpen(false);
+          setCurrentTab('home');
+        }}
       />
 
       <ActiveCallModal />

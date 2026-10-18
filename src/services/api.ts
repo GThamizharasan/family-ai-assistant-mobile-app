@@ -17,7 +17,12 @@ export function getApiBaseUrl(): string {
     return envUrl;
   }
 
-  // 3. Active Google Cloud Run deployment URL
+  // 3. Web browser: use the current web origin (e.g. http://localhost:3000) so local endpoints work directly
+  if (typeof window !== 'undefined' && !Capacitor.isNativePlatform()) {
+    return window.location.origin;
+  }
+
+  // 4. Native Android / iOS fallback to Google Cloud Run
   return DEFAULT_BACKEND_URL;
 }
 
@@ -103,6 +108,7 @@ export async function sendChatMessage(payload: {
   userProfile?: any;
   currentMood?: string;
   includeSpeechAudio?: boolean;
+  currentLanguage?: string;
 }) {
   return safeFetchJson('/api/chat', {
     method: 'POST',

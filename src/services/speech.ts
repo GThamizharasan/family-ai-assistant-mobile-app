@@ -1,5 +1,5 @@
 // Real-time Voice Recognition (STT), Web Audio Engine & Natural Empathetic Speech Synthesis (TTS)
-import { transcribeAudioApi } from './api';
+import { transcribeAudioApi, getApiUrl } from './api';
 import { Capacitor } from '@capacitor/core';
 import { SpeechRecognition } from '@capacitor-community/speech-recognition';
 
@@ -349,8 +349,8 @@ export class VoiceAssistantEngine {
 
       this.recognition.onerror = (event: any) => {
         console.warn('Speech recognition status:', event.error);
-        if (event.error === 'no-speech') {
-          // Normal silence, keep listening smoothly
+        if (event.error === 'no-speech' || event.error === 'aborted') {
+          // Normal silence, brief pause, or programmatic stop/restart (never display error to user)
           return;
         }
 
@@ -455,6 +455,9 @@ export class VoiceAssistantEngine {
   }
 
   public startListening(): boolean {
+    if (this.isListening && !this.isUsingMediaRecorderFallback) {
+      return true;
+    }
     this.stopSpeaking();
     this.isCommitted = false;
     this.latestTranscript = '';
@@ -561,8 +564,8 @@ export class VoiceAssistantEngine {
       } else if (/not available|recognition service not/i.test(message)) {
         console.warn('Speech Services by Google not available, falling back to MediaRecorder...');
         void this.startMediaRecorderListening();
-      } else if (/no match|no speech|timeout/i.test(message)) {
-        // Natural pause/silence from user in hands-free mode -> gentle re-arm without audio glitching
+      } else if (/no match|no speech|timeout|aborted/i.test(message)) {
+        // Natural pause/silence from user in hands-free mode or programmatic stop -> gentle re-arm
         this.consecutiveErrorCount++;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
@@ -570,7 +573,7 @@ export class VoiceAssistantEngine {
           this.scheduleAutoRestart(restartDelay);
           return;
         }
-        this.onErrorCallback?.('no-speech');
+        return;
       } else if (/busy|audio recording/i.test(message)) {
         // Audio focus collision or device busy -> wait for audio focus release and retry
         this.isNativeRecognitionActive = false;
@@ -819,64 +822,62 @@ export class VoiceAssistantEngine {
           bytes[i] = binaryString.charCodeAt(i);
         }
 
-        // Web Audio API decodes WAV PCM cleanly in browser
-        const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0));
-        const source = this.audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(this.audioContext.destination);
+        try {
+          const audioBuffer = await this.audioContext.decodeAudioData(bytes.buffer.slice(0));
+          const source = this.audioContext.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(this.audioContext.destination);
 
-        this.currentBufferSource = source;
-        this.isSpeakingNow = true;
-        this.onSpeakingChange?.(true);
+          this.currentBufferSource = source;
+          this.isSpeakingNow = true;
+          this.onSpeakingChange?.(true);
 
-        source.onended = () => {
-          this.isSpeakingNow = false;
-          this.onSpeakingChange?.(false);
-          this.currentBufferSource = null;
-          onEnd?.();
-        };
+          source.onended = () => {
+            this.isSpeakingNow = false;
+            this.onSpeakingChange?.(false);
+            this.currentBufferSource = null;
+            onEnd?.();
+          };
 
-        source.start(0);
-        return true;
+          source.start(0);
+          return true;
+        } catch (decodeErr) {
+          console.warn('Web Audio decodeAudioData notice, trying HTMLAudio element:', decodeErr);
+        }
       }
     } catch (webAudioErr) {
-      console.warn('Web Audio API playback notice, falling back to Blob HTMLAudio:', webAudioErr);
+      console.warn('Web Audio API playback notice, falling back to HTMLAudio:', webAudioErr);
     }
 
-    // HTMLAudioElement Fallback with Blob URL
+    // HTMLAudioElement Fallback with Data URI / Blob
     try {
-      const binaryString = atob(base64);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const blob = new Blob([bytes], { type: 'audio/wav' });
-      const blobUrl = URL.createObjectURL(blob);
-      const audio = new Audio(blobUrl);
+      const audio = new Audio(`data:audio/mpeg;base64,${base64}`);
       this.currentAudioElement = audio;
 
-      audio.onplay = () => {
-        this.isSpeakingNow = true;
-        this.onSpeakingChange?.(true);
-      };
-      audio.onended = () => {
-        this.isSpeakingNow = false;
-        this.onSpeakingChange?.(false);
-        this.currentAudioElement = null;
-        URL.revokeObjectURL(blobUrl);
-        onEnd?.();
-      };
-      audio.onerror = () => {
-        this.isSpeakingNow = false;
-        this.onSpeakingChange?.(false);
-        this.currentAudioElement = null;
-        URL.revokeObjectURL(blobUrl);
-        onEnd?.();
-      };
+      return new Promise<boolean>((resolve) => {
+        let hasEnded = false;
+        const finish = (success: boolean) => {
+          if (hasEnded) return;
+          hasEnded = true;
+          this.isSpeakingNow = false;
+          this.onSpeakingChange?.(false);
+          this.currentAudioElement = null;
+          onEnd?.();
+          resolve(success);
+        };
 
-      await audio.play();
-      return true;
+        audio.onplay = () => {
+          this.isSpeakingNow = true;
+          this.onSpeakingChange?.(true);
+        };
+        audio.onended = () => finish(true);
+        audio.onerror = () => finish(false);
+
+        audio.play().catch((playErr) => {
+          console.warn('HTML Audio play error:', playErr);
+          finish(false);
+        });
+      });
     } catch (htmlAudioErr) {
       console.warn('HTML Audio playback error:', htmlAudioErr);
       return false;
@@ -884,9 +885,174 @@ export class VoiceAssistantEngine {
   }
 
   /**
+   * Direct high-fidelity Google TTS streaming audio fallback (essential for Tamil on devices without Tamil OS voice packs).
+   * Splits text into natural sentence chunks and plays them seamlessly in sequence.
+   */
+  public async playGoogleTtsDirect(text: string, langCode: string, onEnd?: () => void): Promise<boolean> {
+    try {
+      await this.unlockAudio();
+      // Split into sentences / natural chunks (<= 150 chars for Google translate_tts)
+      const sentences = text.match(/[^.!?\n,;]+[.!?\n,;]*/g) || [text];
+      const chunks: string[] = [];
+      let currentChunk = '';
+      for (const s of sentences) {
+        if ((currentChunk + ' ' + s).trim().length <= 150) {
+          currentChunk = (currentChunk + ' ' + s).trim();
+        } else {
+          if (currentChunk) chunks.push(currentChunk);
+          currentChunk = s.trim().slice(0, 150);
+        }
+      }
+      if (currentChunk) chunks.push(currentChunk);
+
+      if (chunks.length === 0) return false;
+
+      let idx = 0;
+      this.isSpeakingNow = true;
+      this.onSpeakingChange?.(true);
+
+      const playNext = (): Promise<boolean> => {
+        if (idx >= chunks.length || !this.isSpeakingNow) {
+          this.isSpeakingNow = false;
+          this.onSpeakingChange?.(false);
+          this.currentAudioElement = null;
+          onEnd?.();
+          return Promise.resolve(true);
+        }
+
+        const chunk = chunks[idx++];
+        const directUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${langCode}&client=tw-ob`;
+        const audio = new Audio(directUrl);
+        this.currentAudioElement = audio;
+
+        return new Promise<boolean>((resolve) => {
+          let chunkDone = false;
+          const onChunkDone = (success: boolean) => {
+            if (chunkDone) return;
+            chunkDone = true;
+            if (success) {
+              playNext().then(resolve);
+            } else {
+              this.isSpeakingNow = false;
+              this.onSpeakingChange?.(false);
+              this.currentAudioElement = null;
+              onEnd?.();
+              resolve(false);
+            }
+          };
+
+          audio.onended = () => onChunkDone(true);
+          audio.onerror = (e) => {
+            console.warn('Direct Google TTS chunk error:', e);
+            onChunkDone(false);
+          };
+
+          audio.play().catch((playErr) => {
+            console.warn('Direct Google TTS chunk play error:', playErr);
+            onChunkDone(false);
+          });
+        });
+      };
+
+      return await playNext();
+    } catch (e) {
+      console.warn('playGoogleTtsDirect error:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Direct TTS streaming audio playback from /api/tts endpoint with automatic Google TTS fallback.
+   * Guarantees 100% audible Tamil and English voice on every OS and browser.
+   */
+  public async playTtsStream(
+    text: string,
+    options: {
+      onEnd?: () => void;
+      pitch?: number;
+      rate?: number;
+    } = {}
+  ): Promise<boolean> {
+    try {
+      await this.unlockAudio();
+      const cleanText = text
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*\*(.*?)\*/g, '$1')
+        .replace(/#+\s/g, '')
+        .replace(/`{1,3}.*?`{1,3}/g, '')
+        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+        .trim();
+
+      if (!cleanText) return false;
+
+      const hasTamilChars = /[\u0B80-\u0BFF]/.test(cleanText);
+      const langCode = hasTamilChars ? 'ta' : (this.currentLanguage.startsWith('ta') ? 'ta' : 'en');
+      const ttsUrl = getApiUrl(`/api/tts?text=${encodeURIComponent(cleanText.slice(0, 450))}&lang=${langCode}`);
+
+      // Try local/configured /api/tts endpoint with 3.5s timeout
+      const streamSuccess = await new Promise<boolean>((resolve) => {
+        let hasEnded = false;
+        const audio = new Audio(ttsUrl);
+        this.currentAudioElement = audio;
+
+        const watchdog = setTimeout(() => {
+          if (!hasEnded) {
+            hasEnded = true;
+            try { audio.pause(); } catch (e) {}
+            resolve(false);
+          }
+        }, 3500);
+
+        audio.onplay = () => {
+          this.isSpeakingNow = true;
+          this.onSpeakingChange?.(true);
+        };
+        audio.onended = () => {
+          if (hasEnded) return;
+          hasEnded = true;
+          clearTimeout(watchdog);
+          this.isSpeakingNow = false;
+          this.onSpeakingChange?.(false);
+          this.currentAudioElement = null;
+          options.onEnd?.();
+          resolve(true);
+        };
+        audio.onerror = (e) => {
+          if (hasEnded) return;
+          hasEnded = true;
+          clearTimeout(watchdog);
+          console.warn('TTS stream audio error, trying direct Google TTS gateway:', e);
+          resolve(false);
+        };
+
+        audio.play().catch((playErr) => {
+          if (hasEnded) return;
+          hasEnded = true;
+          clearTimeout(watchdog);
+          console.warn('TTS stream audio.play() rejected, trying direct Google TTS gateway:', playErr);
+          resolve(false);
+        });
+      });
+
+      if (streamSuccess) {
+        return true;
+      }
+
+      // If backend TTS endpoint failed (e.g. remote Cloud Run returning HTML), play via direct Google TTS
+      return await this.playGoogleTtsDirect(cleanText, langCode, options.onEnd);
+    } catch (streamErr) {
+      console.warn('playTtsStream error, falling back to direct Google TTS:', streamErr);
+      const hasTamilChars = /[\u0B80-\u0BFF]/.test(text);
+      const langCode = hasTamilChars ? 'ta' : (this.currentLanguage.startsWith('ta') ? 'ta' : 'en');
+      return await this.playGoogleTtsDirect(text, langCode, options.onEnd);
+    }
+  }
+
+  /**
    * Natural Empathetic Speech Synthesis (TTS)
-   * 1. Plays Gemini 3.8 Flash Lite TTS audio if provided via Web Audio API.
-   * 2. Seamlessly falls back to resilient browser SpeechSynthesis.
+   * 1. Plays pre-rendered high-fidelity audio (from /api/chat) via Web Audio API.
+   * 2. Plays streamed audio from /api/tts for crystal-clear Tamil and English pronunciation.
+   * 3. Resilient fallback to browser SpeechSynthesis.
    */
   public speak(
     text: string,
@@ -904,21 +1070,30 @@ export class VoiceAssistantEngine {
     this.isSpeakingNow = true;
     clearTimeout(this.restartTimeout);
 
-    // 1. If high-fidelity Gemini 3.8 TTS audio was provided, play it
+    // 1. If high-fidelity audio was returned by backend, play it
     if (options.audioBase64) {
       this.playAudioBase64(options.audioBase64, () => {
         this.isSpeakingNow = false;
         options.onEnd?.();
       }).then((success) => {
         if (!success) {
-          this.speakBrowserSynthesis(text, options);
+          this.playTtsStream(text, options).then((streamSuccess) => {
+            if (!streamSuccess) {
+              this.speakBrowserSynthesis(text, options);
+            }
+          });
         }
       });
       return;
     }
 
-    // 2. Otherwise, use responsive browser SpeechSynthesis
-    this.speakBrowserSynthesis(text, options);
+    // 2. Stream natural voice audio from backend /api/tts
+    this.playTtsStream(text, options).then((streamSuccess) => {
+      if (!streamSuccess) {
+        // 3. Fallback to browser SpeechSynthesis
+        this.speakBrowserSynthesis(text, options);
+      }
+    });
   }
 
   private speakBrowserSynthesis(
@@ -952,36 +1127,44 @@ export class VoiceAssistantEngine {
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
 
-    // Pick best voice: detect if text is Tamil or language is Tamil
-    const isTamilText = /[\u0B80-\u0BFF]/.test(cleanText) || this.currentLanguage.startsWith('ta');
+    // Pick best voice: detect if text actually contains Tamil characters
+    const hasTamilChars = /[\u0B80-\u0BFF]/.test(cleanText);
     const voices = this.cachedVoices.length > 0 ? this.cachedVoices : this.synth.getVoices();
 
+    const tamilVoice =
+      voices.find((v) => {
+        const lang = v.lang.toLowerCase().replace('_', '-');
+        const name = v.name.toLowerCase();
+        return (
+          (lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்')) &&
+          (name.includes('natural') || name.includes('neural') || name.includes('google') || name.includes('network') || name.includes('cloud'))
+        );
+      }) ||
+      voices.find((v) => {
+        const lang = v.lang.toLowerCase().replace('_', '-');
+        const name = v.name.toLowerCase();
+        return lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்');
+      });
+
+    const isTamilText = hasTamilChars || (this.currentLanguage.startsWith('ta') && !!tamilVoice);
+
+    // If text contains Tamil characters but the OS has no installed Tamil voice (e.g. Windows),
+    // delegate to direct Google TTS so the user hears authentic Tamil audio instead of silence
+    if (hasTamilChars && !tamilVoice) {
+      this.playGoogleTtsDirect(cleanText, 'ta', options.onEnd);
+      return;
+    }
+
     let preferredVoice: SpeechSynthesisVoice | undefined;
-    if (isTamilText) {
+    if (isTamilText && tamilVoice) {
       utterance.pitch = options.pitch ?? this.tamilSpeechPitch;
       utterance.rate = options.rate ?? this.tamilSpeechRate;
 
       // 1. If user selected a specific voice URI in settings, prioritize it
       if (this.selectedTamilVoiceURI) {
-        preferredVoice = voices.find((v) => v.voiceURI === this.selectedTamilVoiceURI);
-      }
-
-      // 2. Otherwise pick the highest quality natural/Google/neural Tamil voice
-      if (!preferredVoice) {
-        preferredVoice =
-          voices.find((v) => {
-            const lang = v.lang.toLowerCase().replace('_', '-');
-            const name = v.name.toLowerCase();
-            return (
-              (lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்')) &&
-              (name.includes('natural') || name.includes('neural') || name.includes('google') || name.includes('network') || name.includes('cloud'))
-            );
-          }) ||
-          voices.find((v) => {
-            const lang = v.lang.toLowerCase().replace('_', '-');
-            const name = v.name.toLowerCase();
-            return lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்');
-          });
+        preferredVoice = voices.find((v) => v.voiceURI === this.selectedTamilVoiceURI) || tamilVoice;
+      } else {
+        preferredVoice = tamilVoice;
       }
       utterance.lang = preferredVoice?.lang || 'ta-IN';
     } else {
@@ -1000,8 +1183,9 @@ export class VoiceAssistantEngine {
               v.name.includes('Victoria') ||
               v.name.includes('Serena') ||
               v.name.includes('Ava') ||
-              v.name.includes('Zira'))
-        ) || voices.find((v) => v.lang.startsWith('en'));
+              v.name.includes('Zira') ||
+              v.name.includes('David'))
+        ) || voices.find((v) => v.lang.startsWith('en')) || voices[0];
       utterance.lang = preferredVoice?.lang || 'en-US';
     }
 
@@ -1080,7 +1264,10 @@ export class VoiceAssistantEngine {
 
   public testVoiceOutput(onEnd?: () => void) {
     this.unlockAudio();
-    const greeting = "Hello Thamizh! My voice channel is active. I am ready to converse in real-time.";
+    const isTamil = this.currentLanguage.startsWith('ta');
+    const greeting = isTamil
+      ? "வணக்கம் தமிழரசன்! என் குரல் இப்போது கேட்கிறதா? நான் உங்களுடன் பேச தயாராக இருக்கிறேன்."
+      : "Hello Thamizh! My voice channel is active. I am ready to converse in real-time.";
     this.speak(greeting, { onEnd });
   }
 

@@ -25,6 +25,7 @@ import {
   Smartphone,
   FileText,
   HardDrive,
+  Home,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
@@ -34,9 +35,10 @@ import { sendChatMessage, getApiBaseUrl } from '../services/api';
 interface VoiceAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onGoHome?: () => void;
 }
 
-export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen, onClose }) => {
+export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen, onClose, onGoHome }) => {
   const {
     user,
     chatHistory,
@@ -189,14 +191,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       }
     };
     speechEngine.onErrorCallback = (error) => {
+      if (error === 'no-speech' || error === 'aborted') {
+        // Silent timeout or benign abort: ignore during conversational turns, auto-restart is active
+        return;
+      }
       if (error === 'not-allowed' || error === 'permission-denied') {
         setMicStatusMessage(
           Capacitor.isNativePlatform()
             ? 'Microphone access is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone and allow access.'
             : 'Microphone access blocked. Click the lock 🔒 or tune 🎛️ icon next to the URL in your browser bar and choose "Allow" for Microphone.'
         );
-      } else if (error === 'no-speech') {
-        // Silent timeout: ignore during conversational turns, auto-restart is active
       } else if (error === 'audio-capture') {
         setMicStatusMessage('No microphone detected. Please connect or enable your microphone.');
       } else if (error === 'device-busy') {
@@ -251,6 +255,18 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       setShowMicHelp(false);
     }
   }, [isOpen]);
+
+  const handleCancelAndGoHome = () => {
+    speechEngine.stopSpeaking();
+    speechEngine.stopListening(true);
+    setMicStatusMessage(null);
+    setShowMicHelp(false);
+    if (onGoHome) {
+      onGoHome();
+    } else {
+      onClose();
+    }
+  };
 
   const handleUserSpeech = async (spokenText: string) => {
     if (!spokenText || !spokenText.trim()) return;
@@ -681,6 +697,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         userProfile: user,
         currentMood: currentEmotion,
         includeSpeechAudio: !isMuted,
+        currentLanguage: voiceLanguage.startsWith('ta') ? 'ta' : 'en',
       });
 
       setIsThinking(false);
@@ -798,8 +815,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         <div className="p-4 sm:px-6 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/50">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center text-white shadow-lg shadow-indigo-500/25">
-                <Sparkles className="w-5 h-5 animate-pulse" />
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-600 to-indigo-600 flex items-center justify-center p-0.5 shadow-lg shadow-amber-500/20 overflow-hidden">
+                <img src="/app-logo.png" alt="Aura Logo" className="w-full h-full object-cover rounded-xl" />
               </div>
               <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
             </div>
@@ -891,26 +908,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
               </span>
             </button>
 
-            {/* Internal Phone Storage Diagnostics Button */}
-            <button
-              onClick={async () => {
-                await refreshInternalPhoneStorage();
-                setShowDeviceStorageNotice(!showDeviceStorageNotice);
-              }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
-                showDeviceStorageNotice
-                  ? 'bg-emerald-600/30 text-emerald-200 border-emerald-500/50 shadow-md shadow-emerald-950/40'
-                  : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20 hover:bg-emerald-500/20'
-              }`}
-              title="View live phone internal storage & hardware health"
-            >
-              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="hidden sm:inline">Phone Storage</span>
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500/30 text-emerald-200 font-bold font-mono">
-                {internalStorageDetails ? `${internalStorageDetails.freeStorageGb}GB` : 'ROM'}
-              </span>
-            </button>
-
             <button
               onClick={() => {
                 const next = !isHandsFree;
@@ -954,11 +951,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
             >
               {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
             </button>
+
+            {/* Cancel & Go Back to Home Button */}
             <button
-              onClick={onClose}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              onClick={handleCancelAndGoHome}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 hover:text-white border border-rose-500/40 hover:border-rose-500/60 transition-all cursor-pointer shadow-md active:scale-95"
+              title="Cancel and return to Home Hub"
+              aria-label="Cancel and go back to home"
             >
-              <X className="w-4 h-4" />
+              <Home className="w-3.5 h-3.5 text-rose-300" />
+              <span>Cancel</span>
             </button>
           </div>
         </div>
@@ -1464,6 +1466,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
 
         {/* Input Dock & Big Mic Trigger */}
         <div className="p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
+          <button
+            onClick={handleCancelAndGoHome}
+            className="p-3.5 rounded-2xl flex items-center justify-center bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 transition-all shadow active:scale-95 cursor-pointer"
+            title="Cancel and return to Home Hub"
+            aria-label="Cancel and go back to home"
+          >
+            <Home className="w-5 h-5" />
+          </button>
+
           <button
             onClick={toggleMic}
             className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 ${
