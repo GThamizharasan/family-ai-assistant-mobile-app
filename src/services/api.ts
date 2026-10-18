@@ -125,6 +125,10 @@ export async function sendChatMessage(payload: {
     sizeBytes?: number;
     contentBase64?: string;
     textContent?: string;
+    uploadedToGoogleDrive?: boolean;
+    googleDriveFileId?: string;
+    webViewLink?: string;
+    uploadError?: string;
   } | null;
 }) {
   return safeFetchJson('/api/chat', {

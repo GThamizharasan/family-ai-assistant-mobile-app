@@ -8,6 +8,21 @@ export interface GoogleDriveFile {
   modifiedTime: string;
   size?: string;
   webViewLink?: string;
+  isRealCloudDrive?: boolean;
+  folderId?: string;
+  folderName?: string;
+  parents?: string[];
+  category?: string;
+}
+
+export interface UploadDriveOptions {
+  defaultFolder?: string;
+  folderName?: string;
+  folderId?: string;
+  autoCategorize?: boolean;
+  targetFolderId?: string;
+  targetFolderName?: string;
+  textSnippet?: string;
 }
 
 export interface GoogleEmailMessage {
@@ -151,6 +166,9 @@ export async function fetchGoogleDriveFiles(accessToken?: string, userEmail?: st
             modifiedTime: f.modifiedTime,
             size: f.size,
             webViewLink: f.webViewLink || 'https://drive.google.com',
+            folderId: f.folderId,
+            folderName: f.folderName || 'Family Circle',
+            category: f.category || 'General',
           });
         }
       }
@@ -162,23 +180,41 @@ export async function fetchGoogleDriveFiles(accessToken?: string, userEmail?: st
   // 2. If access token provided, fetch live files from Google Drive API
   if (accessToken) {
     try {
+      // First, get a map of folder IDs to folder names to display exact subfolders
+      const folderMap = new Map<string, string>();
+      try {
+        const folders = await listGoogleDriveFolders(accessToken, userEmail);
+        for (const f of folders) {
+          folderMap.set(f.id, f.name);
+        }
+      } catch {}
+
       const res = await fetch(
-        'https://www.googleapis.com/drive/v3/files?pageSize=20&fields=files(id,name,mimeType,modifiedTime,size,webViewLink)&orderBy=modifiedTime desc',
+        "https://www.googleapis.com/drive/v3/files?pageSize=100&q=trashed%20%3D%20false%20and%20mimeType%20!%3D%20'application%2Fvnd.google-apps.folder'&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name,mimeType,modifiedTime,size,webViewLink,parents)&orderBy=modifiedTime desc",
         {
           headers: { Authorization: `Bearer ${accessToken}` },
         }
       );
       if (res.ok) {
         const data = await res.json();
-        const files: GoogleDriveFile[] = data.files || [];
+        const files: any[] = data.files || [];
         for (const f of files) {
+          const existing = fileMap.get(f.id);
+          const parentId = Array.isArray(f.parents) && f.parents.length > 0 ? f.parents[0] : undefined;
+          const parentFolderName = parentId ? folderMap.get(parentId) : undefined;
+
           fileMap.set(f.id, {
             id: f.id,
             name: f.name,
             mimeType: f.mimeType,
             modifiedTime: f.modifiedTime,
-            size: f.size ? `${(Number(f.size) / (1024 * 1024)).toFixed(1)} MB` : undefined,
+            size: f.size ? `${(Number(f.size) / (1024 * 1024)).toFixed(1)} MB` : existing?.size,
             webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+            parents: f.parents,
+            folderId: existing?.folderId || parentId,
+            folderName: existing?.folderName || (parentFolderName ? `Family Circle / ${parentFolderName}` : 'Family Circle'),
+            category: existing?.category || 'General',
+            isRealCloudDrive: true,
           });
         }
       }
@@ -194,11 +230,247 @@ export async function fetchGoogleDriveFiles(accessToken?: string, userEmail?: st
   return FALLBACK_DRIVE_FILES;
 }
 
-// Upload file directly into Google Drive with multipart upload and SQLite synchronization
+// -------------------------------------------------------------
+// Google Drive Folders & Content Categorization
+// -------------------------------------------------------------
+
+export function categorizeFileContent(
+  fileName: string,
+  mimeType: string,
+  textSnippet?: string
+): { category: string; subfolderName: string } {
+  const text = `${fileName} ${mimeType} ${textSnippet || ''}`.toLowerCase();
+
+  // 1. Receipts, Invoices & Daily Bills
+  if (
+    /(receipt|invoice|bill|payment|expense|tax|gst|swiggy|zomato|amazon|flipkart|uber|ola|rent|utility|electricity|eb bill|recharge|order|voucher|ரசீது|பில்)/i.test(
+      text
+    )
+  ) {
+    return { category: 'Receipts & Bills', subfolderName: 'Receipts & Bills' };
+  }
+
+  // 2. Health, Medical & Prescriptions
+  if (
+    /(medical|health|prescription|hospital|doctor|clinic|lab|report|blood|scan|mri|xray|test|medicine|pharma|vaccine|diagnosis|patient|மருத்துவம்|மருந்து)/i.test(
+      text
+    )
+  ) {
+    return { category: 'Health & Medical', subfolderName: 'Health & Medical' };
+  }
+
+  // 3. Identity, Passports & Official Family Documents
+  if (
+    /(passport|aadhaar|pan card|license|licence|driving|voter|birth|marriage|certificate|visa|resume|cv|marksheet|degree|diploma|agreement|deed|contract|affidavit|charter|சான்றிதழ்)/i.test(
+      text
+    )
+  ) {
+    return { category: 'Family Documents', subfolderName: 'Family Documents' };
+  }
+
+  // 4. Finance, Banking & Investments
+  if (
+    /(bank|statement|salary|payslip|pf|epf|investment|mutual fund|stock|portfolio|holding|trading|loan|emi|mortgage|insurance|lic|audit|balance sheet|w2|1040|வருமானம்|வங்கி)/i.test(
+      text
+    )
+  ) {
+    return { category: 'Finance & Banking', subfolderName: 'Finance & Banking' };
+  }
+
+  // 5. Photos & Media
+  if (
+    mimeType.startsWith('image/') ||
+    mimeType.startsWith('video/') ||
+    mimeType.startsWith('audio/') ||
+    /\.(jpg|jpeg|png|gif|webp|svg|mp4|mov|mp3|wav|m4a)$/i.test(fileName)
+  ) {
+    return { category: 'Photos & Media', subfolderName: 'Photos & Media' };
+  }
+
+  // 6. General & Notes
+  return { category: 'General & Notes', subfolderName: 'General & Notes' };
+}
+
+export async function getOrCreateGoogleDriveFolder(
+  accessToken: string,
+  folderName: string,
+  parentFolderId?: string
+): Promise<{ id: string; name: string }> {
+  const safeName = folderName.replace(/'/g, "\\'");
+  const q = `mimeType = 'application/vnd.google-apps.folder' and name = '${safeName}' and trashed = false` +
+    (parentFolderId ? ` and '${parentFolderId}' in parents` : ` and 'root' in parents`);
+
+  try {
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=files(id,name,parents)&pageSize=10`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    if (searchRes.ok) {
+      const data = await searchRes.json();
+      if (data.files && data.files.length > 0) {
+        return { id: data.files[0].id, name: data.files[0].name };
+      }
+    }
+  } catch (err) {
+    console.warn(`[Google Drive] Error searching folder "${folderName}":`, err);
+  }
+
+  // If not found, create folder
+  const createRes = await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&fields=id,name,parents,webViewLink', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      name: folderName,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: parentFolderId ? [parentFolderId] : undefined,
+    }),
+  });
+
+  if (!createRes.ok) {
+    const errText = await createRes.text().catch(() => '');
+    throw new Error(`Failed to create Google Drive folder "${folderName}" (${createRes.status}): ${errText}`);
+  }
+
+  const created = await createRes.json();
+  console.log(`[Google Drive] Successfully created folder "${folderName}":`, created.id);
+  return { id: created.id, name: created.name || folderName };
+}
+
+export async function listGoogleDriveFolders(
+  accessToken: string | null | undefined,
+  _userEmail?: string
+): Promise<Array<{ id: string; name: string; parents?: string[] }>> {
+  if (!accessToken) return [];
+  try {
+    const q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,parents)&pageSize=50&orderBy=name`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      return data.files || [];
+    }
+  } catch (err) {
+    console.warn('Failed to list Google Drive folders:', err);
+  }
+  return [];
+}
+
+export async function moveGoogleDriveFile(
+  accessToken: string | null | undefined,
+  fileId: string,
+  newFolderId: string,
+  optionsOrFolderName?: {
+    oldFolderId?: string;
+    newFolderName?: string;
+    userEmail?: string;
+    category?: string;
+  } | string,
+  explicitUserEmail?: string
+): Promise<GoogleDriveFile> {
+  if (!accessToken) throw new Error('NO_GOOGLE_AUTH: Active Google access token required to move files.');
+
+  const options =
+    typeof optionsOrFolderName === 'string'
+      ? { newFolderName: optionsOrFolderName, userEmail: explicitUserEmail }
+      : optionsOrFolderName;
+
+  // 1. Determine existing parent folder IDs
+  let oldParents = options?.oldFolderId;
+  let fileMeta: any = null;
+
+  try {
+    const metaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,mimeType,modifiedTime,size,webViewLink,parents`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (metaRes.ok) {
+      fileMeta = await metaRes.json();
+      if (!oldParents && Array.isArray(fileMeta.parents)) {
+        oldParents = fileMeta.parents.join(',');
+      }
+    }
+  } catch (err) {
+    console.warn('[Google Drive] Meta fetch before move notice:', err);
+  }
+
+  // 2. Move file via Drive API v3 PATCH
+  const params = new URLSearchParams({
+    addParents: newFolderId,
+    fields: 'id,name,mimeType,modifiedTime,size,webViewLink,parents',
+  });
+  if (oldParents && oldParents.length > 0) {
+    params.set('removeParents', oldParents);
+  }
+
+  const patchRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?${params.toString()}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!patchRes.ok) {
+    const errText = await patchRes.text().catch(() => '');
+    throw new Error(`Failed to move file in Google Drive (${patchRes.status}): ${errText}`);
+  }
+
+  const movedData = await patchRes.json();
+  const folderName = options?.newFolderName || (newFolderId === 'root' ? 'My Drive (Root)' : 'Family Circle');
+
+  console.log(`[Google Drive] Moved file "${movedData.name}" to folder "${folderName}" (${newFolderId})`);
+
+  const updatedFile: GoogleDriveFile = {
+    id: movedData.id,
+    name: movedData.name,
+    mimeType: movedData.mimeType,
+    modifiedTime: movedData.modifiedTime || new Date().toISOString(),
+    size: movedData.size ? `${(Number(movedData.size) / (1024 * 1024)).toFixed(1)} MB` : undefined,
+    webViewLink: movedData.webViewLink || `https://drive.google.com/file/d/${movedData.id}/view`,
+    folderId: newFolderId,
+    folderName,
+    parents: movedData.parents || [newFolderId],
+    category: options?.category,
+    isRealCloudDrive: true,
+  };
+
+  // 3. Mirror to server SQLite
+  try {
+    await fetch(getApiUrl('/api/google/drive/move'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: updatedFile.id,
+        folderId: newFolderId,
+        folderName,
+        category: options?.category,
+        userEmail: options?.userEmail,
+      }),
+    });
+  } catch (err) {
+    console.warn('SQLite move mirror notice:', err);
+  }
+
+  return updatedFile;
+}
+
+// Upload file directly into Google Drive with RFC 2387 multipart/related upload, smart categorization & SQLite synchronization
 export async function uploadFileToGoogleDrive(
   accessToken: string | null | undefined,
   file: File,
-  userEmail?: string
+  userEmail?: string,
+  options?: UploadDriveOptions
 ): Promise<GoogleDriveFile> {
   const fileName = file.name;
   const mimeType = file.type || 'application/octet-stream';
@@ -207,9 +479,170 @@ export async function uploadFileToGoogleDrive(
     ? `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`
     : `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
 
-  // Read file as base64 for local backend persistence and AI attachment context
-  const contentBase64 = await new Promise<string>((resolve) => {
+  // Validate active Google OAuth access token
+  if (!accessToken || !accessToken.trim()) {
+    throw new Error(
+      'NO_GOOGLE_AUTH: Google account is not connected. Please connect your Google account to grant Google Drive upload permission.'
+    );
+  }
+
+  // 1. Resolve Target Drive Folder & Smart Content Categorization
+  let targetFolderId: string | undefined = options?.targetFolderId || options?.folderId;
+  let targetFolderName: string =
+    options?.targetFolderName || options?.folderName || options?.defaultFolder || 'Family Circle';
+  let detectedCategory = 'General';
+
+  try {
+    if (!targetFolderId) {
+      const rootFolderName = options?.folderName || options?.defaultFolder || 'Family Circle';
+      // Find or create the root default folder (e.g. 'Family Circle')
+      const rootFolder = await getOrCreateGoogleDriveFolder(accessToken, rootFolderName);
+
+      // Determine smart subfolder categorization based on file content & type
+      if (options?.autoCategorize !== false) {
+        const { category, subfolderName } = categorizeFileContent(fileName, mimeType, options?.textSnippet);
+        detectedCategory = category;
+        const subFolder = await getOrCreateGoogleDriveFolder(accessToken, subfolderName, rootFolder.id);
+        targetFolderId = subFolder.id;
+        targetFolderName = `${rootFolder.name} / ${subFolder.name}`;
+      } else {
+        targetFolderId = rootFolder.id;
+        targetFolderName = rootFolder.name;
+        detectedCategory = 'General';
+      }
+    }
+  } catch (folderErr) {
+    console.warn('[Google Drive] Folder resolution warning, falling back to Drive root:', folderErr);
+  }
+
+  // 2. Direct upload to real Google Drive REST API v3 using multipart/related (RFC 2387)
+  const boundary = '-------AuraFamilyDrive' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+
+  const metadata: any = {
+    name: fileName,
+    mimeType: mimeType,
+  };
+  if (targetFolderId) {
+    metadata.parents = [targetFolderId];
+  }
+
+  // RFC 2387 multipart: First boundary MUST start directly with `--${boundary}\r\n` (no leading CRLF)
+  const multipartRequestBody = new Blob(
+    [
+      `--${boundary}\r\n`,
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+      JSON.stringify(metadata),
+      `\r\n--${boundary}\r\n`,
+      `Content-Type: ${mimeType}\r\n\r\n`,
+      file,
+      `\r\n--${boundary}--`,
+    ],
+    { type: `multipart/related; boundary=${boundary}` }
+  );
+
+  const driveRes = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,modifiedTime,size,webViewLink,parents',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartRequestBody,
+    }
+  );
+
+  if (!driveRes.ok) {
+    const errorBody = await driveRes.text().catch(() => '');
+    console.error('[Google Drive Upload] API error response:', driveRes.status, errorBody);
+    if (driveRes.status === 401) {
+      throw new Error('Google authorization expired (401). Please re-authenticate your Google account.');
+    } else if (driveRes.status === 403) {
+      throw new Error(
+        'Google Drive write permission denied (403). Please reconnect your Google account with Drive write permissions.'
+      );
+    } else {
+      let errDetail = `Google Drive upload failed with status ${driveRes.status}`;
+      try {
+        const parsed = JSON.parse(errorBody);
+        if (parsed.error?.message) {
+          errDetail = parsed.error.message;
+        }
+      } catch {}
+      throw new Error(errDetail);
+    }
+  }
+
+  const driveData = await driveRes.json();
+  const realFileId = driveData.id;
+  const realWebViewLink = driveData.webViewLink || `https://drive.google.com/file/d/${realFileId}/view`;
+
+  // 2b. CRITICAL PARENT VERIFICATION & AUTO-MOVE:
+  // If targetFolderId was requested, verify that targetFolderId is in driveData.parents.
+  // If Google Drive API uploaded the file into root or omitted parents, immediately move it into the subfolder!
+  let finalParents: string[] = Array.isArray(driveData.parents) ? driveData.parents : [];
+  if (targetFolderId && !finalParents.includes(targetFolderId)) {
+    console.warn(
+      `[Google Drive] File ${realFileId} landed with parents [${finalParents.join(', ')}], moving directly into target subfolder ${targetFolderId}...`
+    );
     try {
+      const moveParams = new URLSearchParams({
+        addParents: targetFolderId,
+        supportsAllDrives: 'true',
+        fields: 'id,name,mimeType,modifiedTime,size,webViewLink,parents',
+      });
+      if (finalParents.length > 0) {
+        moveParams.set('removeParents', finalParents.join(','));
+      }
+      const moveRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${realFileId}?${moveParams.toString()}`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        }
+      );
+      if (moveRes.ok) {
+        const movedData = await moveRes.json();
+        finalParents = Array.isArray(movedData.parents) ? movedData.parents : [targetFolderId];
+        console.log(`[Google Drive] Successfully moved file ${realFileId} into subfolder: ${targetFolderId}`);
+      } else {
+        const moveErr = await moveRes.text().catch(() => '');
+        console.warn(`[Google Drive] Post-upload move warning (${moveRes.status}):`, moveErr);
+      }
+    } catch (moveErr) {
+      console.warn('[Google Drive] Parent move correction warning:', moveErr);
+    }
+  }
+
+  console.log('[Google Drive] Successfully stored file in Google Drive subfolder:', {
+    id: realFileId,
+    name: driveData.name || fileName,
+    folder: targetFolderName,
+    folderId: targetFolderId,
+    parents: finalParents,
+    link: realWebViewLink,
+  });
+
+  const uploadedFile: GoogleDriveFile = {
+    id: realFileId,
+    name: driveData.name || fileName,
+    mimeType: driveData.mimeType || mimeType,
+    modifiedTime: driveData.modifiedTime || new Date().toISOString(),
+    size: driveData.size ? `${(Number(driveData.size) / (1024 * 1024)).toFixed(1)} MB` : sizeFormatted,
+    webViewLink: realWebViewLink,
+    folderId: targetFolderId,
+    folderName: targetFolderName,
+    parents: finalParents.length > 0 ? finalParents : (targetFolderId ? [targetFolderId] : undefined),
+    category: detectedCategory,
+    isRealCloudDrive: true,
+  };
+
+  // 3. Read base64 to mirror into local SQLite cache repository
+  let contentBase64 = '';
+  try {
+    contentBase64 = await new Promise<string>((resolve) => {
       const reader = new FileReader();
       reader.onloadend = () => {
         const res = reader.result;
@@ -222,101 +655,33 @@ export async function uploadFileToGoogleDrive(
       };
       reader.onerror = () => resolve('');
       reader.readAsDataURL(file);
-    } catch {
-      resolve('');
-    }
-  });
+    });
+  } catch {}
 
-  let uploadedFile: GoogleDriveFile | null = null;
-
-  // 1. Direct upload to Google Drive API if OAuth accessToken is active
-  if (accessToken) {
-    try {
-      const metadata = {
-        name: fileName,
-        mimeType: mimeType,
-      };
-
-      const formData = new FormData();
-      formData.append(
-        'metadata',
-        new Blob([JSON.stringify(metadata)], { type: 'application/json; charset=UTF-8' })
-      );
-      formData.append('file', file);
-
-      const res = await fetch(
-        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,modifiedTime,size,webViewLink',
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: formData,
-        }
-      );
-
-      if (res.ok) {
-        const driveData = await res.json();
-        uploadedFile = {
-          id: driveData.id || `drive-${Date.now()}`,
-          name: driveData.name || fileName,
-          mimeType: driveData.mimeType || mimeType,
-          modifiedTime: driveData.modifiedTime || new Date().toISOString(),
-          size: driveData.size ? `${(Number(driveData.size) / (1024 * 1024)).toFixed(1)} MB` : sizeFormatted,
-          webViewLink: driveData.webViewLink || `https://drive.google.com/file/d/${driveData.id}/view`,
-        };
-      }
-    } catch (gErr) {
-      console.warn('Google Drive API upload failed, falling back to local SQLite Drive store:', gErr);
-    }
-  }
-
-  // 2. Synchronize to server SQLite drive repository
   try {
-    const backendRes = await fetch(getApiUrl('/api/google/drive/upload'), {
+    await fetch(getApiUrl('/api/google/drive/upload'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        id: uploadedFile?.id || `drive-${Date.now()}`,
-        name: fileName,
-        mimeType,
-        size: sizeFormatted,
+        id: uploadedFile.id,
+        name: uploadedFile.name,
+        mimeType: uploadedFile.mimeType,
+        size: uploadedFile.size,
         sizeBytes,
         userEmail: userEmail || 'chinna.tamil2000@gmail.com',
-        webViewLink: uploadedFile?.webViewLink || 'https://drive.google.com',
+        webViewLink: uploadedFile.webViewLink,
+        folderId: targetFolderId,
+        folderName: targetFolderName,
+        category: detectedCategory,
         fileContentBase64: contentBase64,
         uploadedBy: 'voice_assistant',
       }),
     });
-
-    if (backendRes.ok) {
-      const savedData = await backendRes.json();
-      if (savedData?.file) {
-        return {
-          id: savedData.file.id,
-          name: savedData.file.name,
-          mimeType: savedData.file.mimeType,
-          modifiedTime: savedData.file.modifiedTime,
-          size: savedData.file.size,
-          webViewLink: savedData.file.webViewLink || 'https://drive.google.com',
-        };
-      }
-    }
   } catch (backendErr) {
-    console.warn('Server SQLite drive sync notice:', backendErr);
+    console.warn('Local SQLite cache mirror notice:', backendErr);
   }
 
-  // 3. Fallback object if offline / network error
-  return (
-    uploadedFile || {
-      id: `drive-${Date.now()}`,
-      name: fileName,
-      mimeType,
-      modifiedTime: new Date().toISOString(),
-      size: sizeFormatted,
-      webViewLink: 'https://drive.google.com',
-    }
-  );
+  return uploadedFile;
 }
 
 export async function deleteGoogleDriveFile(id: string, userEmail?: string): Promise<boolean> {

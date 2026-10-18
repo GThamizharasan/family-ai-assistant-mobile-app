@@ -1,5 +1,8 @@
 // IndexedDB Storage for large PDF Documents
 // Solves browser localStorage 5MB QuotaExceededError by leveraging IndexedDB (hundreds of MBs quota)
+import { Book } from '../types/book';
+
+export const MAX_LOCAL_RECENT_BOOKS = 20;
 
 const DB_NAME = 'aura_pdf_vault_db';
 const STORE_NAME = 'pdf_documents';
@@ -107,4 +110,84 @@ export function safeSetLocalStorage(key: string, value: string): boolean {
       return false;
     }
   }
+}
+
+/**
+ * Checks whether full book binary is present locally in IndexedDB
+ */
+export async function hasLocalBookContent(bookId: string): Promise<boolean> {
+  const content = await getPdfFromStorage(bookId);
+  return Boolean(content && content.length > 50);
+}
+
+/**
+ * Manages local version retention for recent 20 books (LRU eviction).
+ * Keeps local content for the top 20 most recently accessed or added books,
+ * and clears heavy IndexedDB binary for older books (preserving metadata).
+ */
+export async function manageRecentBooksCache(
+  allBooks: Book[],
+  maxLocalBooks = MAX_LOCAL_RECENT_BOOKS
+): Promise<Book[]> {
+  if (!allBooks || allBooks.length === 0) return [];
+
+  // Sort books by recency: lastAccessedAt -> cachedAt -> addedAt
+  const sorted = [...allBooks].sort((a, b) => {
+    const timeA = new Date(a.lastAccessedAt || a.cachedAt || a.addedAt || 0).getTime();
+    const timeB = new Date(b.lastAccessedAt || b.cachedAt || b.addedAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  const updatedBooks: Book[] = [];
+
+  for (let idx = 0; idx < sorted.length; idx++) {
+    const book = sorted[idx];
+    if (idx < maxLocalBooks) {
+      // Keep within top 20 local versions
+      const isCached = await hasLocalBookContent(book.id);
+      updatedBooks.push({
+        ...book,
+        isLocalCached: isCached,
+      });
+    } else {
+      // Beyond top 20: purge local binary to preserve device storage while keeping metadata
+      if (book.isLocalCached || book.isPdf) {
+        await deletePdfFromStorage(book.id);
+      }
+      updatedBooks.push({
+        ...book,
+        isLocalCached: false,
+      });
+    }
+  }
+
+  return updatedBooks;
+}
+
+/**
+ * Mark a book as recently accessed, store its binary if provided,
+ * and enforce the recent 20 books cache limit.
+ */
+export async function markBookAccessedAndCache(
+  bookId: string,
+  allBooks: Book[],
+  binaryDataUrl?: string
+): Promise<Book[]> {
+  if (binaryDataUrl) {
+    await savePdfToStorage(bookId, binaryDataUrl);
+  }
+
+  const now = new Date().toISOString();
+  const touchedBooks = allBooks.map((b) =>
+    b.id === bookId
+      ? {
+          ...b,
+          lastAccessedAt: now,
+          cachedAt: binaryDataUrl ? now : b.cachedAt || now,
+          isLocalCached: true,
+        }
+      : b
+  );
+
+  return await manageRecentBooksCache(touchedBooks, MAX_LOCAL_RECENT_BOOKS);
 }

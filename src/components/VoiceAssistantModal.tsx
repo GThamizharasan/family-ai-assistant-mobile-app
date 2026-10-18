@@ -72,6 +72,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     uploadGoogleDriveFile,
     googleWorkspaceSettings,
     isGoogleConnected,
+    googleAccessToken,
+    signInWithGoogleOAuth,
     syncLiveGoogleData,
   } = useApp();
   const [isListening, setIsListening] = useState(false);
@@ -98,6 +100,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
 
   // Attachment state for uploading into Google Drive and voice discussing
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileSnippet, setFileSnippet] = useState<string>('');
   const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -278,11 +281,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setSelectedFile(file);
       setMicStatusMessage(null);
+      if (
+        file.type.startsWith('text/') ||
+        file.name.endsWith('.txt') ||
+        file.name.endsWith('.csv') ||
+        file.name.endsWith('.json') ||
+        file.name.endsWith('.md')
+      ) {
+        try {
+          const text = await file.slice(0, 3000).text();
+          setFileSnippet(text);
+        } catch {
+          setFileSnippet('');
+        }
+      } else {
+        setFileSnippet('');
+      }
     }
     if (e.target) {
       e.target.value = '';
@@ -293,25 +312,71 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     const file = fileToUpload || selectedFile;
     if (!file) return;
 
+    let activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+
+    // If not authenticated with Google, proactively prompt and launch Google OAuth
+    if (!activeToken) {
+      const isTamil = voiceLanguage.startsWith('ta');
+      const authNotice = isTamil
+        ? 'கூகுள் டிரைவில் (drive.google.com) பதிவேற்ற, உங்கள் கூகுள் கணக்கை இணைப்பது அவசியம். கூகுள் உள்நுழைவை துவக்குகிறேன்...'
+        : 'Google account authorization is required to upload directly to drive.google.com. Opening Google sign-in now...';
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: authNotice,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'helpful & attentive',
+        actionSuggestion: 'Sign in with Google',
+      });
+      speakWithAuro(authNotice);
+
+      const ok = await signInWithGoogleOAuth();
+      if (!ok) {
+        const cancelMsg = isTamil
+          ? 'கூகுள் உள்நுழைவு ரத்து செய்யப்பட்டது. கோப்பைப் பதிவேற்ற கூகுள் கணக்குடன் இணைக்கவும்.'
+          : 'Google sign-in was cancelled. Please connect your Google account to upload files to Google Drive.';
+        addVoiceMessage({
+          role: 'assistant',
+          content: cancelMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'comforting',
+        });
+        speakWithAuro(cancelMsg);
+        return;
+      }
+      activeToken = localStorage.getItem('aura_google_access_token');
+    }
+
     setIsUploadingToDrive(true);
     try {
-      const uploaded = await uploadGoogleDriveFile(file);
+      const defaultFolder = googleWorkspaceSettings?.driveDefaultFolder || 'Family Circle';
+      const autoCat = googleWorkspaceSettings?.autoCategorizeDriveFiles ?? true;
+
+      const uploaded = await uploadGoogleDriveFile(file, {
+        folderName: defaultFolder,
+        autoCategorize: autoCat,
+        textSnippet: fileSnippet || undefined,
+      });
       setIsUploadingToDrive(false);
       setSelectedFile(null);
+      setFileSnippet('');
       setDriveUploadNotice(uploaded.name);
       setTimeout(() => setDriveUploadNotice(null), 6000);
 
       const isTamil = voiceLanguage.startsWith('ta');
+      const destinationFolder = uploaded.folderName || defaultFolder;
+      const categoryLabel = uploaded.category ? ` (${uploaded.category})` : '';
+
       const confirmText = isTamil
-        ? `உங்கள் "${uploaded.name}" (${uploaded.size || 'கோப்பு'}) வெற்றிகரமாக உங்கள் கூகுள் டிரைவில் (Google Drive) பதிவேற்றப்பட்டது. இது இப்போது உங்கள் Google One Tab-ல் பாதுகாப்பாக சேமிக்கப்பட்டுள்ளது.`
-        : `I have uploaded "${uploaded.name}" (${uploaded.size || 'file'}) into your Google Drive. It is now safely stored in your cloud drive.`;
+        ? `உங்கள் "${uploaded.name}" கூகுள் டிரைவில் உள்ள "${destinationFolder}" கோப்புறையில் வெற்றிகரமாக பதிவேற்றப்பட்டது!`
+        : `I have uploaded "${uploaded.name}" into your Google Drive under folder "${destinationFolder}"${categoryLabel}! It is securely organized in drive.google.com.`;
 
       addVoiceMessage({
         role: 'assistant',
         content: confirmText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         emotion: 'organized & protective',
-        actionSuggestion: `Google Drive: "${uploaded.name}"`,
+        actionSuggestion: `Google Drive: "${uploaded.name}" (${destinationFolder})`,
       });
 
       speakWithAuro(confirmText, { emotion: 'supportive' });
@@ -320,16 +385,33 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       setIsUploadingToDrive(false);
       console.error('Google Drive upload error:', err);
       const isTamil = voiceLanguage.startsWith('ta');
-      const errText = isTamil
-        ? `கூகுள் டிரைவில் பதிவேற்ற முடியவில்லை. தயவுசெய்து உங்கள் இணைய இணைப்பை சரிபார்த்து மீண்டும் முயற்சிக்கவும்.`
-        : `Could not upload file to Google Drive. Please verify your connection and try again.`;
-      addVoiceMessage({
-        role: 'assistant',
-        content: errText,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        emotion: 'comforting',
-      });
-      speakWithAuro(errText);
+      const errMsg = err?.message || '';
+
+      if (errMsg.includes('401') || errMsg.includes('expired') || errMsg.includes('403') || errMsg.includes('permission') || errMsg.includes('NO_GOOGLE_AUTH')) {
+        const authErrText = isTamil
+          ? `கூகுள் டிரைவ் பதிவேற்ற அனுமதி தேவை அல்லது காலாவதியானது. தயவுசெய்து உங்கள் கூகுள் கணக்கை மீண்டும் இணைக்கவும்.`
+          : `Google Drive upload permission is required or expired. Please re-authenticate your Google account.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: authErrText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'comforting',
+          actionSuggestion: 'Re-authenticate Google Drive',
+        });
+        speakWithAuro(authErrText);
+        void signInWithGoogleOAuth();
+      } else {
+        const errText = isTamil
+          ? `கூகுள் டிரைவில் பதிவேற்ற முடியவில்லை: ${errMsg || 'தயவுசெய்து உங்கள் இணைய இணைப்பை சரிபார்த்து மீண்டும் முயற்சிக்கவும்.'}`
+          : `Could not upload to Google Drive: ${errMsg || 'Please verify your connection and try again.'}`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: errText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'comforting',
+        });
+        speakWithAuro(errText);
+      }
     }
   };
 
@@ -785,7 +867,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
       // If an attachment is selected, process and auto-upload it to Google Drive
       let attachmentPayload = null;
       if (selectedFile) {
-        void uploadGoogleDriveFile(selectedFile);
+        let uploadedToDrive = false;
+        let driveFileId = '';
+        let driveWebLink = '';
+        let uploadError = '';
+
+        const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+
+        if (activeToken) {
+          try {
+            const uploaded = await uploadGoogleDriveFile(selectedFile);
+            uploadedToDrive = true;
+            driveFileId = uploaded.id;
+            driveWebLink = uploaded.webViewLink || '';
+            setDriveUploadNotice(uploaded.name);
+            setTimeout(() => setDriveUploadNotice(null), 5000);
+          } catch (upErr: any) {
+            console.warn('Voice chat auto-upload to Google Drive notice:', upErr);
+            uploadError = upErr?.message || 'Google Drive API error';
+          }
+        } else {
+          uploadError = 'Google account is not connected yet. Authorization required to upload to drive.google.com.';
+        }
 
         let textSnippet = '';
         if (selectedFile.type.startsWith('text/') || selectedFile.name.endsWith('.txt') || selectedFile.name.endsWith('.json') || selectedFile.name.endsWith('.md')) {
@@ -824,10 +927,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
           sizeBytes: selectedFile.size,
           contentBase64: base64Data,
           textContent: textSnippet.slice(0, 3000),
+          uploadedToGoogleDrive: uploadedToDrive,
+          googleDriveFileId: driveFileId,
+          webViewLink: driveWebLink,
+          uploadError,
         };
 
-        setDriveUploadNotice(selectedFile.name);
-        setTimeout(() => setDriveUploadNotice(null), 5000);
         setSelectedFile(null);
       }
 
@@ -1652,8 +1757,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                   </span>
                 </div>
                 <div className="text-[10.5px] text-indigo-300 flex items-center gap-1">
-                  <HardDrive className="w-3 h-3 text-emerald-400 shrink-0" />
-                  <span>Ready to upload into your Google Drive & discuss with Aura</span>
+                  <HardDrive className={`w-3 h-3 ${isGoogleConnected ? 'text-emerald-400' : 'text-amber-400'} shrink-0`} />
+                  <span>
+                    {isGoogleConnected
+                      ? 'Ready to upload into your Google Drive & discuss with Aura'
+                      : 'Connect Google account to upload directly to drive.google.com'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -1671,10 +1780,15 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                     <Sparkles className="w-3.5 h-3.5 animate-spin" />
                     <span>Uploading...</span>
                   </>
-                ) : (
+                ) : isGoogleConnected ? (
                   <>
                     <UploadCloud className="w-3.5 h-3.5" />
                     <span>Upload to Drive</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-3.5 h-3.5 text-amber-300" />
+                    <span>Connect & Upload</span>
                   </>
                 )}
               </button>

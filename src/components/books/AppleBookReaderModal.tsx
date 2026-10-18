@@ -34,10 +34,11 @@ import {
 } from 'lucide-react';
 import { Book, Chapter, Highlight, Bookmark as BookmarkType, ReaderTheme, ReaderFont } from '../../types/book';
 import { ambientAudio, SoundscapeType } from '../../services/ambientAudio';
-import { getPdfFromStorage, safeSetLocalStorage } from '../../utils/pdfStorage';
+import { getPdfFromStorage, savePdfToStorage, safeSetLocalStorage } from '../../utils/pdfStorage';
 import { generateReadablePdfDocumentUrl, extractPdfChaptersAndPages } from '../../utils/pdfHelper';
 import { getPageContent, PageContent } from '../../utils/paginationHelper';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
+import { downloadBookContentFromDrive } from '../../services/appleBooksDrive';
 import { safeFetchJson } from '../../services/api';
 
 interface AppleBookReaderModalProps {
@@ -190,6 +191,41 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
             } catch (e) {
               console.warn('Could not extract chapters from stored PDF:', e);
             }
+          }
+        } else if (safeBook.driveFileId) {
+          const token = localStorage.getItem('aura_google_access_token');
+          if (token) {
+            downloadBookContentFromDrive(token, safeBook.driveFileId)
+              .then(async (dl) => {
+                if (!isCancelled && dl) {
+                  setActivePdfUrl(dl);
+                  await savePdfToStorage(safeBook.id, dl);
+                  try {
+                    const extracted = await extractPdfChaptersAndPages(dl);
+                    if (!isCancelled && extracted.chapters.length > 0) {
+                      setDynamicChapters(extracted.chapters);
+                      setDynamicTotalPages(extracted.totalPages);
+                    }
+                  } catch {}
+                }
+              })
+              .catch(() => {
+                const gen = generateReadablePdfDocumentUrl(
+                  safeBook.title,
+                  safeBook.author,
+                  safeBook.subtitle || '',
+                  chapters
+                );
+                setActivePdfUrl(gen);
+              });
+          } else {
+            const gen = generateReadablePdfDocumentUrl(
+              safeBook.title,
+              safeBook.author,
+              safeBook.subtitle || '',
+              chapters
+            );
+            setActivePdfUrl(gen);
           }
         } else {
           // Generate on-demand viewable PDF layout

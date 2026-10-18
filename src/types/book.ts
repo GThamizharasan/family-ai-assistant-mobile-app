@@ -67,6 +67,16 @@ export interface Book {
   pdfFileName?: string;
   pdfFileSize?: string;
   pdfPageCount?: number;
+
+  // Google Drive & Local Storage attributes
+  driveFileId?: string;
+  driveFolderId?: string;
+  driveFolderPath?: string; // e.g. "Family Circle / Apple Books / Finance & Investing"
+  driveCategory?: string;
+  driveWebViewLink?: string;
+  isLocalCached?: boolean;
+  cachedAt?: string;
+  lastAccessedAt?: string;
 }
 
 export type ReaderTheme = 'white' | 'sepia' | 'charcoal' | 'oled';

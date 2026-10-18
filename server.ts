@@ -38,6 +38,7 @@ import {
   getGoogleKeepNotesFromSqlite,
   deleteGoogleKeepNoteFromSqlite,
   saveGoogleDriveFileToSqlite,
+  updateGoogleDriveFileFolderInSqlite,
   getGoogleDriveFilesFromSqlite,
   deleteGoogleDriveFileFromSqlite,
   saveDeviceStorageMetricsToSqlite,
@@ -392,17 +393,19 @@ app.post('/api/chat', async (req, res) => {
     const storedDriveFiles = getGoogleDriveFilesFromSqlite(userEmail);
     const storedDeviceStorage = (context?.internalPhoneStorageSummary) || getLatestDeviceStorageMetricsFromSqlite(undefined, userEmail);
 
-    // If an attachment was passed in this chat turn, automatically index it into Google Drive
+    // If an attachment was passed in this chat turn, index it into Google Drive SQLite mirror
     const attachment = req.body.attachment;
     let savedAttachmentRecord: GoogleDriveFileRecord | null = null;
     if (attachment && attachment.name) {
       try {
         savedAttachmentRecord = saveGoogleDriveFileToSqlite({
+          id: attachment.googleDriveFileId,
           userEmail,
           name: attachment.name,
           mimeType: attachment.mimeType || 'application/octet-stream',
           size: attachment.size || '1.0 MB',
           sizeBytes: attachment.sizeBytes || 1024 * 1024,
+          webViewLink: attachment.webViewLink,
           fileContentBase64: attachment.contentBase64,
           uploadedBy: 'voice_assistant',
         });
@@ -431,16 +434,21 @@ ${
 }
 ${
   attachment
-    ? `\nCURRENT ATTACHMENT UPLOADED IN THIS CONVERSATION TURN:
+    ? `\nCURRENT ATTACHMENT IN THIS CONVERSATION TURN:
 - File Name: "${attachment.name}"
 - File Size: ${attachment.size || 'Unknown'}
 - MIME Type: ${attachment.mimeType || 'application/octet-stream'}
 - Extracted Snippet / Details: "${(attachment.textContent || '').slice(0, 2000)}"
-- Upload Status: Successfully uploaded into Google Drive for ${userEmail}!`
+- Real Google Drive Upload Status: ${
+  attachment.uploadedToGoogleDrive
+    ? `SUCCESSFULLY UPLOADED TO GOOGLE DRIVE CLOUD (File ID: ${attachment.googleDriveFileId || 'created'}, Web Link: ${attachment.webViewLink || 'https://drive.google.com'})`
+    : `NOT UPLOADED TO GOOGLE DRIVE (${attachment.uploadError || 'User Google account authentication required'}).`
+}`
     : ''
 }
 - When the user attaches a file or asks you to upload/save an attachment to their Google Drive (in English or Tamil e.g., "upload this attachment to my drive", "save this to my google drive", "கூகுள் டிரைவில் சேமி", "என் டிரைவில் அப்லோட் பண்ணு"):
-  Confirm with warmth and confidence that their file has been successfully uploaded to their Google Drive and is securely stored in their Google One Drive tab! If they ask about the content, provide a crisp summary of its key points.
+  * If Real Google Drive Upload Status is "SUCCESSFULLY UPLOADED": Confidently confirm that their file has been uploaded directly to their Google Drive and is safely stored in drive.google.com! If they ask about the content, provide a crisp summary of its key points.
+  * If Real Google Drive Upload Status is "NOT UPLOADED": Explain honestly and warmly that the file couldn't be placed into their Google Drive because their Google account needs to be connected with Drive write permissions, and ask them to tap "Connect & Upload" or authorize Google Drive. NEVER falsely claim the file is in Google Drive if it was not uploaded!
 
 GOOGLE KEEP NOTES ACCESS (LIVE & SYNCED STORE):
 You have direct, continuous access to the user's connected Google Keep notes for account "${userEmail}":
@@ -2491,7 +2499,7 @@ app.get('/api/google/drive', (req, res) => {
 
 app.post('/api/google/drive/upload', (req, res) => {
   try {
-    const { id, userEmail, name, mimeType, size, sizeBytes, webViewLink, fileContentBase64, uploadedBy } = req.body;
+    const { id, userEmail, name, mimeType, size, sizeBytes, webViewLink, fileContentBase64, folderId, folderName, category, uploadedBy } = req.body;
     if (!name) {
       return res.status(400).json({ success: false, error: 'File name is required' });
     }
@@ -2504,9 +2512,25 @@ app.post('/api/google/drive/upload', (req, res) => {
       sizeBytes,
       webViewLink,
       fileContentBase64,
+      folderId,
+      folderName,
+      category,
       uploadedBy: uploadedBy || 'voice_assistant',
     });
     res.json({ success: true, file });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/google/drive/move', (req, res) => {
+  try {
+    const { id, folderId, folderName, category } = req.body;
+    if (!id || !folderId) {
+      return res.status(400).json({ success: false, error: 'File id and folderId are required' });
+    }
+    const ok = updateGoogleDriveFileFolderInSqlite(id, folderId, folderName || 'Family Circle', category);
+    res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

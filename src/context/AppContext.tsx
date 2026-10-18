@@ -45,6 +45,9 @@ import {
   DEFAULT_2TB_QUOTA,
   fetchGoogleDriveFiles,
   uploadFileToGoogleDrive,
+  moveGoogleDriveFile,
+  listGoogleDriveFolders,
+  type UploadDriveOptions,
   deleteGoogleDriveFile,
   fetchGmailMessages,
   fetchGoogleDriveStorageQuota,
@@ -153,8 +156,10 @@ interface AppContextType {
   liveEmails: GoogleEmailMessage[];
   liveDriveFiles: GoogleDriveFile[];
   liveStorageQuota: GoogleStorageQuota;
-  uploadGoogleDriveFile: (file: File) => Promise<GoogleDriveFile>;
+  uploadGoogleDriveFile: (file: File, options?: UploadDriveOptions) => Promise<GoogleDriveFile>;
   removeGoogleDriveFile: (id: string) => Promise<boolean>;
+  moveDriveFile: (fileId: string, newFolderId: string, newFolderName?: string) => Promise<GoogleDriveFile | null>;
+  getDriveFolders: () => Promise<Array<{ id: string; name: string }>>;
   liveKeepNotes: GoogleKeepNote[];
   syncGoogleKeepNotes: () => Promise<void>;
   addGoogleKeepNote: (title: string, body: string, labels?: string[], color?: string) => Promise<GoogleKeepNote | null>;
@@ -604,16 +609,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Google Workspace Connected Services Settings
   const [googleWorkspaceSettings, setGoogleWorkspaceSettings] = useState<GoogleWorkspaceSettings>(() => {
     const saved = localStorage.getItem('aura_workspace_settings');
-    return saved
-      ? JSON.parse(saved)
-      : {
-          gmailEnabled: true,
-          driveEnabled: true,
-          calendarEnabled: true,
-          googleOneBackupEnabled: true,
-          autoSyncCalendarToTasks: true,
-          autoSummarizeUnreadEmails: true,
-        };
+    const parsed = saved ? JSON.parse(saved) : {};
+    return {
+      gmailEnabled: true,
+      driveEnabled: true,
+      calendarEnabled: true,
+      googleOneBackupEnabled: true,
+      autoSyncCalendarToTasks: true,
+      autoSummarizeUnreadEmails: true,
+      driveDefaultFolder: 'Family Circle',
+      autoCategorizeDriveFiles: true,
+      ...parsed,
+    };
   });
 
   const updateGoogleWorkspaceSettings = (partial: Partial<GoogleWorkspaceSettings>) => {
@@ -761,9 +768,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return false;
   };
 
-  const uploadGoogleDriveFile = async (file: File): Promise<GoogleDriveFile> => {
+  const uploadGoogleDriveFile = async (file: File, options?: UploadDriveOptions): Promise<GoogleDriveFile> => {
     try {
-      const uploaded = await uploadFileToGoogleDrive(googleAccessToken, file, user?.email);
+      const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+      const effectiveOptions: UploadDriveOptions = {
+        folderName: options?.folderName || googleWorkspaceSettings.driveDefaultFolder || 'Family Circle',
+        folderId: options?.folderId,
+        autoCategorize: options?.autoCategorize !== undefined ? options.autoCategorize : (googleWorkspaceSettings.autoCategorizeDriveFiles ?? true),
+        textSnippet: options?.textSnippet,
+      };
+      const uploaded = await uploadFileToGoogleDrive(activeToken, file, user?.email, effectiveOptions);
       setLiveDriveFiles((prev) => [uploaded, ...prev.filter((f) => f.id !== uploaded.id)]);
       // Update Google Drive and Google One quota in state
       const sizeMb = (file.size || 0) / (1024 * 1024);
@@ -780,8 +794,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const moveDriveFile = async (fileId: string, newFolderId: string, newFolderName?: string): Promise<GoogleDriveFile | null> => {
+    try {
+      const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+      const updated = await moveGoogleDriveFile(activeToken, fileId, newFolderId, newFolderName, user?.email);
+      if (updated) {
+        setLiveDriveFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, ...updated } : f));
+      }
+      return updated;
+    } catch (e) {
+      console.error('Failed to move Google Drive file:', e);
+      return null;
+    }
+  };
+
+  const getDriveFolders = async (): Promise<Array<{ id: string; name: string }>> => {
+    try {
+      const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+      return await listGoogleDriveFolders(activeToken, user?.email);
+    } catch (e) {
+      console.error('Failed to list Google Drive folders:', e);
+      return [];
+    }
+  };
+
   const removeGoogleDriveFile = async (id: string): Promise<boolean> => {
     try {
+      const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+      if (activeToken) {
+        try {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}?supportsAllDrives=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${activeToken}` },
+          });
+          console.log(`[Google Drive] Removed cloud file ${id} from drive.google.com`);
+        } catch (cloudErr) {
+          console.warn('[Google Drive] Cloud delete warning:', cloudErr);
+        }
+      }
       const ok = await deleteGoogleDriveFile(id, user?.email);
       if (ok) {
         setLiveDriveFiles((prev) => prev.filter((f) => f.id !== id));
@@ -2392,6 +2442,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         liveStorageQuota,
         uploadGoogleDriveFile,
         removeGoogleDriveFile,
+        moveDriveFile,
+        getDriveFolders,
         liveKeepNotes,
         syncGoogleKeepNotes,
         addGoogleKeepNote,

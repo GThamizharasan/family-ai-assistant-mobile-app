@@ -158,6 +158,9 @@ export interface GoogleDriveFileRecord {
   fileContentBase64?: string;
   uploadedBy?: string;
   modifiedTime: string;
+  folderId?: string;
+  folderName?: string;
+  category?: string;
 }
 
 let db: Database | null = null;
@@ -368,10 +371,18 @@ export async function initSqliteDb(): Promise<Database> {
       size_bytes INTEGER DEFAULT 0,
       web_view_link TEXT,
       file_content_base64 TEXT,
+      folder_id TEXT,
+      folder_name TEXT,
+      category TEXT,
       uploaded_by TEXT DEFAULT 'voice_assistant',
       modified_time TEXT NOT NULL
     );
   `);
+
+  // Run safe schema migrations for existing SQLite database
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch {}
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch {}
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
 
   // Seed default Google Keep notes if empty
   try {
@@ -1376,6 +1387,9 @@ export function saveGoogleDriveFileToSqlite(file: {
   sizeBytes?: number;
   webViewLink?: string;
   fileContentBase64?: string;
+  folderId?: string;
+  folderName?: string;
+  category?: string;
   uploadedBy?: string;
 }): GoogleDriveFileRecord {
   if (!db) throw new Error('SQLite database not ready');
@@ -1389,8 +1403,8 @@ export function saveGoogleDriveFileToSqlite(file: {
   const uploadedBy = file.uploadedBy || 'voice_assistant';
 
   db.run(
-    `INSERT INTO google_drive_files (id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, uploaded_by, modified_time)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO google_drive_files (id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, folder_id, folder_name, category, uploaded_by, modified_time)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        name = excluded.name,
        mime_type = excluded.mime_type,
@@ -1398,8 +1412,25 @@ export function saveGoogleDriveFileToSqlite(file: {
        size_bytes = excluded.size_bytes,
        web_view_link = excluded.web_view_link,
        file_content_base64 = excluded.file_content_base64,
+       folder_id = excluded.folder_id,
+       folder_name = excluded.folder_name,
+       category = excluded.category,
        modified_time = excluded.modified_time`,
-    [id, cleanEmail, file.name, mimeType, size, sizeBytes, webViewLink, file.fileContentBase64 || null, uploadedBy, now]
+    [
+      id,
+      cleanEmail,
+      file.name,
+      mimeType,
+      size,
+      sizeBytes,
+      webViewLink,
+      file.fileContentBase64 || null,
+      file.folderId || null,
+      file.folderName || 'Family Circle',
+      file.category || 'General',
+      uploadedBy,
+      now,
+    ]
   );
   scheduleSave();
 
@@ -1412,16 +1443,41 @@ export function saveGoogleDriveFileToSqlite(file: {
     sizeBytes,
     webViewLink,
     fileContentBase64: file.fileContentBase64,
+    folderId: file.folderId,
+    folderName: file.folderName || 'Family Circle',
+    category: file.category || 'General',
     uploadedBy,
     modifiedTime: now,
   };
+}
+
+export function updateGoogleDriveFileFolderInSqlite(
+  id: string,
+  folderId: string,
+  folderName: string,
+  category?: string
+): boolean {
+  if (!db) return false;
+  try {
+    db.run(
+      `UPDATE google_drive_files
+       SET folder_id = ?, folder_name = ?, category = COALESCE(?, category)
+       WHERE id = ?`,
+      [folderId, folderName, category || null, id]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to update Google Drive file folder in SQLite:', err);
+    return false;
+  }
 }
 
 export function getGoogleDriveFilesFromSqlite(userEmail: string): GoogleDriveFileRecord[] {
   if (!db) return [];
   const cleanEmail = (userEmail || '').toLowerCase().trim();
   const res = db.exec(
-    `SELECT id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, uploaded_by, modified_time
+    `SELECT id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, uploaded_by, modified_time, folder_id, folder_name, category
      FROM google_drive_files
      WHERE user_email = ? OR user_email = 'chinna.tamil2000@gmail.com'
      ORDER BY modified_time DESC`,
@@ -1440,6 +1496,9 @@ export function getGoogleDriveFilesFromSqlite(userEmail: string): GoogleDriveFil
     fileContentBase64: (row[7] as string) || undefined,
     uploadedBy: (row[8] as string) || 'voice_assistant',
     modifiedTime: row[9] as string,
+    folderId: (row[10] as string) || undefined,
+    folderName: (row[11] as string) || 'Family Circle',
+    category: (row[12] as string) || 'General',
   }));
 }
 

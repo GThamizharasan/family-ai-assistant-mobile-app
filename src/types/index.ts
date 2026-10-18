@@ -184,6 +184,8 @@ export interface GoogleWorkspaceSettings {
   googleOneBackupEnabled: boolean;
   autoSyncCalendarToTasks: boolean;
   autoSummarizeUnreadEmails: boolean;
+  driveDefaultFolder?: string;
+  autoCategorizeDriveFiles?: boolean;
 }
 
 export interface WhatsAppMessage {

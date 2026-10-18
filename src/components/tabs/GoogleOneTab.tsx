@@ -29,6 +29,13 @@ import {
   Smartphone,
   Trash2,
   Cpu,
+  FolderInput,
+  UploadCloud,
+  FolderPlus,
+  Tag,
+  MoreVertical,
+  Share2,
+  Copy,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { searchGoogleOneApi, summarizeEmailsApi, summarizeCalendarEventsApi, summarizeDocumentApi } from '../../services/api';
@@ -76,6 +83,10 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
     liveEmails,
     liveDriveFiles,
     liveStorageQuota,
+    uploadGoogleDriveFile,
+    removeGoogleDriveFile,
+    moveDriveFile,
+    getDriveFolders,
     liveKeepNotes,
     addGoogleKeepNote,
     removeGoogleKeepNote,
@@ -231,6 +242,160 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
   const [eventEndTime, setEventEndTime] = useState('15:30');
   const [isScheduling, setIsScheduling] = useState(false);
   const [scheduleSuccessMsg, setScheduleSuccessMsg] = useState<string | null>(null);
+
+  // Google Drive File Moving & Categorization States
+  const [movingFile, setMovingFile] = useState<GoogleDriveFile | null>(null);
+  const [destinationFolderId, setDestinationFolderId] = useState<string>('root');
+  const [destinationFolderName, setDestinationFolderName] = useState<string>('Drive Root');
+  const [customDestinationName, setCustomDestinationName] = useState<string>('');
+  const [availableFolders, setAvailableFolders] = useState<Array<{ id: string; name: string }>>([]);
+  const [isMoving, setIsMoving] = useState(false);
+  const [moveNotice, setMoveNotice] = useState<string | null>(null);
+  const [isUploadingDrive, setIsUploadingDrive] = useState(false);
+  const driveFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  // Kebab Menu & File Actions (Delete & Share) States
+  const [activeKebabFileId, setActiveKebabFileId] = useState<string | null>(null);
+  const [filePendingDelete, setFilePendingDelete] = useState<GoogleDriveFile | null>(null);
+  const [isDeletingFile, setIsDeletingFile] = useState(false);
+  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
+  const [shareSuccessMsg, setShareSuccessMsg] = useState<string | null>(null);
+
+  // Close kebab menu on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setActiveKebabFileId(null);
+        setFilePendingDelete(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleShareFile = async (file: GoogleDriveFile) => {
+    setActiveKebabFileId(null);
+    const shareUrl = file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`;
+    const shareData = {
+      title: file.name,
+      text: `File "${file.name}" in ${file.folderName || 'Google Drive'}`,
+      url: shareUrl,
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setShareSuccessMsg(`Shared "${file.name}" successfully!`);
+        setTimeout(() => setShareSuccessMsg(null), 4000);
+        return;
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.warn('Share error, falling back to clipboard:', err);
+        } else {
+          return;
+        }
+      }
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareSuccessMsg(`Drive link copied to clipboard for "${file.name}"!`);
+        setTimeout(() => setShareSuccessMsg(null), 4000);
+      } else {
+        window.open(shareUrl, '_blank');
+      }
+    } catch {
+      window.open(shareUrl, '_blank');
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!filePendingDelete) return;
+    setIsDeletingFile(true);
+    const fileId = filePendingDelete.id;
+    const fileName = filePendingDelete.name;
+    try {
+      await removeGoogleDriveFile(fileId);
+      setDriveFiles((prev) => prev.filter((f) => f.id !== fileId));
+      setDeleteSuccessMsg(`"${fileName}" was removed from Google Drive and local storage.`);
+      setTimeout(() => setDeleteSuccessMsg(null), 5000);
+    } catch (err: any) {
+      console.error('Delete error:', err);
+      alert(`Failed to delete file: ${err?.message || err}`);
+    } finally {
+      setIsDeletingFile(false);
+      setFilePendingDelete(null);
+      setActiveKebabFileId(null);
+    }
+  };
+
+  const handleOpenMoveModal = async (file: GoogleDriveFile) => {
+    setMovingFile(file);
+    setDestinationFolderId('root');
+    setDestinationFolderName('Drive Root');
+    setCustomDestinationName('');
+    try {
+      const folders = await getDriveFolders();
+      setAvailableFolders(folders);
+    } catch (e) {
+      console.warn('Could not load drive folders:', e);
+    }
+  };
+
+  const handleConfirmMove = async () => {
+    if (!movingFile) return;
+    setIsMoving(true);
+    try {
+      const finalFolderName = customDestinationName.trim() || destinationFolderName;
+      const updated = await moveDriveFile(movingFile.id, destinationFolderId, finalFolderName);
+      if (updated) {
+        setDriveFiles((prev) => prev.map((f) => (f.id === updated.id ? { ...f, ...updated } : f)));
+        setMoveNotice(`Moved "${updated.name}" to "${finalFolderName || 'Target Folder'}" successfully!`);
+        setTimeout(() => setMoveNotice(null), 5000);
+      }
+      setMovingFile(null);
+    } catch (err: any) {
+      alert(`Failed to move file: ${err?.message || err}`);
+    } finally {
+      setIsMoving(false);
+    }
+  };
+
+  const handleUploadDriveFileManual = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingDrive(true);
+    try {
+      let snippet = '';
+      if (
+        file.type.startsWith('text/') ||
+        file.name.endsWith('.txt') ||
+        file.name.endsWith('.json') ||
+        file.name.endsWith('.csv') ||
+        file.name.endsWith('.md')
+      ) {
+        try {
+          snippet = await file.slice(0, 3000).text();
+        } catch {}
+      }
+      const defaultFolder = googleWorkspaceSettings.driveDefaultFolder || 'Family Circle';
+      const autoCat = googleWorkspaceSettings.autoCategorizeDriveFiles ?? true;
+      const uploaded = await uploadGoogleDriveFile(file, {
+        folderName: defaultFolder,
+        autoCategorize: autoCat,
+        textSnippet: snippet || undefined,
+      });
+      setDriveFiles((prev) => [uploaded, ...prev.filter((f) => f.id !== uploaded.id)]);
+      setMoveNotice(`Uploaded "${uploaded.name}" into "${uploaded.folderName || defaultFolder}"!`);
+      setTimeout(() => setMoveNotice(null), 5000);
+    } catch (err: any) {
+      alert(`Upload failed: ${err?.message || err}`);
+    } finally {
+      setIsUploadingDrive(false);
+      if (e.target) e.target.value = '';
+    }
+  };
 
   // Google Keep & Phone Storage state
   const [newKeepTitle, setNewKeepTitle] = useState('');
@@ -553,6 +718,18 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
           <div className="mt-3 p-2.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-rose-400 shrink-0" />
             <span>{emailActionSuccess}</span>
+          </div>
+        )}
+        {deleteSuccessMsg && (
+          <div className="mt-3 p-2.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{deleteSuccessMsg}</span>
+          </div>
+        )}
+        {shareSuccessMsg && (
+          <div className="mt-3 p-2.5 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs flex items-center gap-2 animate-in fade-in">
+            <Share2 className="w-4 h-4 text-blue-400 shrink-0" />
+            <span>{shareSuccessMsg}</span>
           </div>
         )}
 
@@ -1196,27 +1373,79 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
       {/* TAB 3: GOOGLE DRIVE HUB */}
       {activeTab === 'drive' && (
         <div className="space-y-4">
-          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">
+          <input
+            type="file"
+            ref={driveFileInputRef}
+            onChange={handleUploadDriveFileManual}
+            className="hidden"
+          />
+
+          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="p-2.5 rounded-2xl bg-blue-500/10 text-blue-400">
                 <HardDrive className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Google Drive Integration</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">Google Drive Sovereign Vault</h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-bold">
+                    Folder: {googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400">
-                  {driveFiles.length} estate documents & contract files
+                  {driveFiles.length} estate documents & files synced with Google Drive
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={loadWorkspaceData}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDrive ? 'animate-spin text-blue-400' : ''}`} />
-              <span>Refresh Files</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => driveFileInputRef.current?.click()}
+                disabled={isUploadingDrive}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-xs font-semibold text-white transition-colors shadow-md shadow-blue-600/20"
+              >
+                <UploadCloud className={`w-3.5 h-3.5 ${isUploadingDrive ? 'animate-bounce' : ''}`} />
+                <span>{isUploadingDrive ? 'Uploading...' : 'Upload File'}</span>
+              </button>
+
+              <button
+                onClick={loadWorkspaceData}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDrive ? 'animate-spin text-blue-400' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
+
+          {/* Drive Configuration & Target Info Banner */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="flex items-center gap-2">
+              <Folder className="w-4 h-4 text-amber-400 shrink-0" />
+              <span className="text-slate-300">
+                Active Default Folder:{' '}
+                <strong className="text-white font-semibold">
+                  {googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'}
+                </strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-[11px]">
+              <span className="flex items-center gap-1 text-emerald-400">
+                <Check className="w-3.5 h-3.5" />
+                Auto-Categorization {googleWorkspaceSettings.autoCategorizeDriveFiles !== false ? 'Enabled' : 'Disabled'}
+              </span>
+              <span className="text-slate-500">•</span>
+              <span className="text-slate-400">Auto-creates folder if missing</span>
+            </div>
+          </div>
+
+          {/* Move/Upload Action Toast Notice */}
+          {moveNotice && (
+            <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-200 text-xs flex items-center gap-2 animate-fadeIn">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{moveNotice}</span>
+            </div>
+          )}
 
           {/* Document Summary Modal or Drawer */}
           {selectedDocSummary && (
@@ -1261,23 +1490,44 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                 key={file.id}
                 className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-blue-500/30 transition-colors flex items-center justify-between gap-3 text-xs"
               >
-                <div className="flex items-center gap-3 truncate">
-                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
+                <div className="flex items-center gap-3 truncate min-w-0">
+                  <div className="p-2.5 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
                     <FileText className="w-4 h-4" />
                   </div>
-                  <div className="truncate">
+                  <div className="truncate space-y-0.5">
                     <span className="font-semibold text-white block truncate">{file.name}</span>
-                    <span className="text-[10px] text-slate-400 font-mono block">
-                      Size: {file.size || '1.4 MB'} • Modified: {new Date(file.modifiedTime).toLocaleDateString()}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-400 font-mono">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-800 text-indigo-300 border border-slate-700">
+                        <Folder className="w-3 h-3 text-indigo-400" />
+                        {file.folderName || 'Drive Root'}
+                      </span>
+                      {file.category && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-950/60 text-blue-300 border border-blue-800/50">
+                          <Tag className="w-3 h-3 text-blue-400" />
+                          {file.category}
+                        </span>
+                      )}
+                      <span>
+                        Size: {file.size || '1.4 MB'} • Modified:{' '}
+                        {new Date(file.modifiedTime).toLocaleDateString()}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
+                <div className="flex items-center gap-1.5 shrink-0 relative">
+                  <button
+                    onClick={() => handleOpenMoveModal(file)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold transition-colors hidden sm:flex"
+                    title="Move file between folders or to root"
+                  >
+                    <FolderInput className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Move</span>
+                  </button>
                   <button
                     onClick={() => handleSummarizeDoc(file)}
                     disabled={isDocSummarizing}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-[11px] font-semibold transition-colors"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-[11px] font-semibold transition-colors hidden sm:flex"
                   >
                     <Sparkles className="w-3 h-3" />
                     <span>Summarize</span>
@@ -1291,10 +1541,395 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
+
+                  {/* Kebab Menu (Three Vertical Dots) */}
+                  <div className="relative">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveKebabFileId(activeKebabFileId === file.id ? null : file.id);
+                      }}
+                      className={`p-1.5 rounded-xl transition-all ${
+                        activeKebabFileId === file.id
+                          ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                      }`}
+                      title="File Options (Delete, Share, Move)"
+                      aria-label="File options"
+                    >
+                      <MoreVertical className="w-3.5 h-3.5" />
+                    </button>
+
+                    {/* Dropdown Menu */}
+                    {activeKebabFileId === file.id && (
+                      <>
+                        {/* Backdrop to close when clicking outside */}
+                        <div
+                          className="fixed inset-0 z-30"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveKebabFileId(null);
+                          }}
+                        />
+
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="absolute right-0 top-full mt-2 z-40 w-56 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-slate-700 shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95 duration-150"
+                        >
+                          <div className="px-3 py-1.5 border-b border-slate-800/80 mb-1">
+                            <span className="font-semibold text-white block truncate text-[11px]">{file.name}</span>
+                            <span className="text-[10px] text-slate-400 font-mono block truncate">{file.folderName || 'Drive Root'}</span>
+                          </div>
+
+                          {/* Share to external app */}
+                          <button
+                            onClick={() => handleShareFile(file)}
+                            className="w-full px-3 py-2 text-left hover:bg-blue-500/15 text-slate-200 hover:text-blue-300 flex items-center gap-2.5 transition-colors"
+                          >
+                            <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400">
+                              <Share2 className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-semibold">Share via App</div>
+                              <div className="text-[10px] text-slate-400">WhatsApp, Mail, AirDrop</div>
+                            </div>
+                          </button>
+
+                          {/* Move to Folder */}
+                          <button
+                            onClick={() => {
+                              setActiveKebabFileId(null);
+                              handleOpenMoveModal(file);
+                            }}
+                            className="w-full px-3 py-2 text-left hover:bg-indigo-500/15 text-slate-200 hover:text-indigo-300 flex items-center gap-2.5 transition-colors"
+                          >
+                            <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400">
+                              <FolderInput className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-semibold">Move Folder</div>
+                              <div className="text-[10px] text-slate-400">Change Drive destination</div>
+                            </div>
+                          </button>
+
+                          {/* Summarize */}
+                          <button
+                            onClick={() => {
+                              setActiveKebabFileId(null);
+                              handleSummarizeDoc(file);
+                            }}
+                            className="w-full px-3 py-2 text-left hover:bg-amber-500/15 text-slate-200 hover:text-amber-300 flex items-center gap-2.5 transition-colors"
+                          >
+                            <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+                              <Sparkles className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-semibold">AI Summarize</div>
+                              <div className="text-[10px] text-slate-400">Extract key points</div>
+                            </div>
+                          </button>
+
+                          {/* Open in Google Drive */}
+                          <a
+                            href={file.webViewLink || 'https://drive.google.com'}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => setActiveKebabFileId(null)}
+                            className="w-full px-3 py-2 text-left hover:bg-emerald-500/15 text-slate-200 hover:text-emerald-300 flex items-center gap-2.5 transition-colors"
+                          >
+                            <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-semibold">Open in Drive</div>
+                              <div className="text-[10px] text-slate-400">drive.google.com</div>
+                            </div>
+                          </a>
+
+                          <div className="h-px bg-slate-800 my-1" />
+
+                          {/* Delete File (Drive & Locally) */}
+                          <button
+                            onClick={() => {
+                              setActiveKebabFileId(null);
+                              setFilePendingDelete(file);
+                            }}
+                            className="w-full px-3 py-2 text-left hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 flex items-center gap-2.5 transition-colors"
+                          >
+                            <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-400">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </div>
+                            <div>
+                              <div className="font-semibold text-rose-300">Delete File</div>
+                              <div className="text-[10px] text-rose-400/80">From Drive & locally</div>
+                            </div>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+
+          {/* Interactive Move File Modal */}
+          {movingFile && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-indigo-500/40 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-2xl bg-indigo-500/20 text-indigo-400">
+                      <FolderInput className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Move Drive File</h3>
+                      <p className="text-xs text-slate-400 truncate max-w-[240px]">
+                        {movingFile.name}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setMovingFile(null)}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-1">
+                  <span className="text-slate-400 text-[11px]">Current Location:</span>
+                  <div className="flex items-center gap-1.5 font-semibold text-white">
+                    <Folder className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>{movingFile.folderName || 'Drive Root'}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-xs">
+                  <label className="text-slate-300 font-semibold block">Select Destination Folder:</label>
+                  <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto pr-1">
+                    {/* Option: Drive Root */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDestinationFolderId('root');
+                        setDestinationFolderName('Drive Root');
+                        setCustomDestinationName('');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left flex items-center justify-between transition-colors ${
+                        destinationFolderId === 'root' && !customDestinationName
+                          ? 'bg-indigo-600/20 border-indigo-500 text-white font-semibold'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <HardDrive className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Google Drive Root</span>
+                      </span>
+                      {destinationFolderId === 'root' && !customDestinationName && (
+                        <Check className="w-4 h-4 text-indigo-400" />
+                      )}
+                    </button>
+
+                    {/* Option: Family Circle Root Folder */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDestinationFolderId('family_circle');
+                        setDestinationFolderName(googleWorkspaceSettings.driveDefaultFolder || 'Family Circle');
+                        setCustomDestinationName('');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left flex items-center justify-between transition-colors ${
+                        destinationFolderName === (googleWorkspaceSettings.driveDefaultFolder || 'Family Circle') &&
+                        !customDestinationName
+                          ? 'bg-indigo-600/20 border-indigo-500 text-white font-semibold'
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Folder className="w-3.5 h-3.5 text-amber-400" />
+                        <span>{googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'}</span>
+                      </span>
+                      {destinationFolderName === (googleWorkspaceSettings.driveDefaultFolder || 'Family Circle') &&
+                        !customDestinationName && <Check className="w-4 h-4 text-indigo-400" />}
+                    </button>
+
+                    {/* Subfolder Category Options */}
+                    {[
+                      'Receipts & Bills',
+                      'Health & Medical',
+                      'Family Documents',
+                      'Finance & Banking',
+                      'Photos & Media',
+                      'General & Notes',
+                    ].map((sub) => {
+                      const fullName = `${googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'} / ${sub}`;
+                      const isSelected = destinationFolderName === fullName && !customDestinationName;
+                      return (
+                        <button
+                          key={sub}
+                          type="button"
+                          onClick={() => {
+                            setDestinationFolderId(`cat_${sub}`);
+                            setDestinationFolderName(fullName);
+                            setCustomDestinationName('');
+                          }}
+                          className={`p-2.5 rounded-xl border text-left flex items-center justify-between transition-colors ${
+                            isSelected
+                              ? 'bg-indigo-600/20 border-indigo-500 text-white font-semibold'
+                              : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <Tag className="w-3.5 h-3.5 text-blue-400" />
+                            <span>{fullName}</span>
+                          </span>
+                          {isSelected && <Check className="w-4 h-4 text-indigo-400" />}
+                        </button>
+                      );
+                    })}
+
+                    {/* Dynamic folders from Google Drive */}
+                    {availableFolders.map((f) => {
+                      const isSelected = destinationFolderId === f.id && !customDestinationName;
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => {
+                            setDestinationFolderId(f.id);
+                            setDestinationFolderName(f.name);
+                            setCustomDestinationName('');
+                          }}
+                          className={`p-2.5 rounded-xl border text-left flex items-center justify-between transition-colors ${
+                            isSelected
+                              ? 'bg-indigo-600/20 border-indigo-500 text-white font-semibold'
+                              : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <Folder className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{f.name}</span>
+                          </span>
+                          {isSelected && <Check className="w-4 h-4 text-indigo-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2">
+                    <label className="text-slate-400 text-[11px] block mb-1">Or Move to Custom Folder Name:</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Tax Returns 2026"
+                      value={customDestinationName}
+                      onChange={(e) => setCustomDestinationName(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-2">
+                  <button
+                    onClick={() => setMovingFile(null)}
+                    disabled={isMoving}
+                    className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmMove}
+                    disabled={isMoving}
+                    className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white shadow-md shadow-indigo-600/30 transition-colors"
+                  >
+                    {isMoving ? 'Moving File...' : 'Confirm Move'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete File Confirmation Modal */}
+          {filePendingDelete && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+              <div className="bg-slate-900 border border-rose-500/40 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-400">
+                      <Trash2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Delete Drive File</h3>
+                      <p className="text-xs text-rose-300/80">Remove from Google Drive & device</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setFilePendingDelete(null)}
+                    disabled={isDeletingFile}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">File Name:</span>
+                    <span className="font-semibold text-white truncate max-w-[200px]">{filePendingDelete.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Folder:</span>
+                    <span className="text-indigo-300 font-mono text-[11px]">{filePendingDelete.folderName || 'Drive Root'}</span>
+                  </div>
+                  {filePendingDelete.size && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Size:</span>
+                      <span className="text-slate-300 font-mono text-[11px]">{filePendingDelete.size}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 rounded-2xl bg-rose-950/30 border border-rose-800/40 text-[11px] text-rose-200 space-y-1">
+                  <div className="flex items-center gap-1.5 font-bold text-rose-300">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>Permanent Removal</span>
+                  </div>
+                  <p className="leading-relaxed">
+                    This file will be deleted from your connected Google Drive cloud account (<strong>drive.google.com</strong>) and all local SQLite cached files on this device will be purged.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={isDeletingFile}
+                    onClick={() => setFilePendingDelete(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isDeletingFile}
+                    onClick={handleConfirmDelete}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-lg shadow-rose-600/30 transition-all flex items-center gap-1.5"
+                  >
+                    {isDeletingFile ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Deleting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Everywhere</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1888,12 +2523,52 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
               <label className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800 cursor-pointer">
                 <div>
                   <span className="font-semibold text-slate-200 block">Enable Google Drive Integration</span>
-                  <span className="text-[11px] text-slate-400">Browse Drive files and perform 1-click AI document summarization</span>
+                  <span className="text-[11px] text-slate-400">Browse Drive files, move across folders, and perform AI document summarization</span>
                 </div>
                 <input
                   type="checkbox"
                   checked={googleWorkspaceSettings.driveEnabled}
                   onChange={(e) => updateGoogleWorkspaceSettings({ driveEnabled: e.target.checked })}
+                  className="accent-blue-500 w-4 h-4 rounded cursor-pointer"
+                />
+              </label>
+
+              {/* Default Drive Folder & Auto-Categorization Configuration */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                <div>
+                  <span className="font-semibold text-slate-200 block">Default Google Drive Folder</span>
+                  <span className="text-[11px] text-slate-400">
+                    Primary folder for all voice and mobile uploads. If it doesn't exist, Aura automatically creates it.
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-blue-500/10 text-blue-400 shrink-0">
+                    <Folder className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'}
+                    onChange={(e) => updateGoogleWorkspaceSettings({ driveDefaultFolder: e.target.value })}
+                    placeholder="Family Circle"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs font-semibold focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <span className="text-[10px] text-blue-400 font-mono block pt-0.5">
+                  Apple Books storage: <strong className="text-white">{googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'} / Apple Books / [Category]</strong>
+                </span>
+              </div>
+
+              <label className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800 cursor-pointer">
+                <div>
+                  <span className="font-semibold text-slate-200 block">Auto-Categorize Files by Content</span>
+                  <span className="text-[11px] text-slate-400">
+                    Automatically sort files into subfolders (Receipts & Bills, Health & Medical, Family Documents, Finance, Photos)
+                  </span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={googleWorkspaceSettings.autoCategorizeDriveFiles ?? true}
+                  onChange={(e) => updateGoogleWorkspaceSettings({ autoCategorizeDriveFiles: e.target.checked })}
                   className="accent-blue-500 w-4 h-4 rounded cursor-pointer"
                 />
               </label>

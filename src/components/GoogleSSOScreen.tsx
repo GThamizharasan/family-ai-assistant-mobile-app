@@ -124,7 +124,7 @@ export const GoogleSSOScreen: React.FC = () => {
 
   // Direct @react-oauth/google hook for full Workspace scopes
   const googleOAuthDirect = useGoogleLogin({
-    scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/cloud-platform.read-only https://www.googleapis.com/auth/cloud-billing.readonly',
+    scope: 'openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/cloud-platform.read-only https://www.googleapis.com/auth/cloud-billing.readonly',
     onSuccess: async (tokenResponse) => {
       setIsSigningIn(true);
       setAuthError(null);

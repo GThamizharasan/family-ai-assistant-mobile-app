@@ -35,15 +35,40 @@ import {
   Download,
   X,
   ExternalLink,
+  HardDrive,
+  Folder,
+  Cloud,
+  MoreVertical,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
 import { Book, Highlight, Bookmark as BookmarkType } from '../../types/book';
 import { INITIAL_BOOKS } from '../../data/initialBooks';
 import { AppleBookReaderModal } from '../books/AppleBookReaderModal';
 import { parsePdfFileToBook, syncBookToSqlite } from '../../utils/pdfHelper';
-import { safeSetLocalStorage } from '../../utils/pdfStorage';
+import {
+  safeSetLocalStorage,
+  manageRecentBooksCache,
+  markBookAccessedAndCache,
+  MAX_LOCAL_RECENT_BOOKS,
+} from '../../utils/pdfStorage';
+import {
+  uploadBookToDrive,
+  refreshAppleBooksFromDrive,
+  downloadBookContentFromDrive,
+  APPLE_BOOK_CATEGORIES,
+} from '../../services/appleBooksDrive';
 import { safeFetchJson, getApiUrl } from '../../services/api';
 
 export const IBooksLibraryTab: React.FC = () => {
+  const { user, googleAccessToken, googleWorkspaceSettings } = useApp();
+
+  // Drive Sync & On-Demand Download States
+  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [isDownloadingBook, setIsDownloadingBook] = useState<string | null>(null);
+  const [driveSyncNotice, setDriveSyncNotice] = useState<string | null>(null);
+
   // Books Collection (stored locally & synced with SQLite)
   const [books, setBooks] = useState<Book[]>(() => {
     try {
@@ -104,6 +129,96 @@ export const IBooksLibraryTab: React.FC = () => {
   const [isWeaving, setIsWeaving] = useState(false);
   const [weaverSuccessMsg, setWeaverSuccessMsg] = useState<string | null>(null);
 
+  // Kebab Menu & Delete / Share States
+  const [activeKebabBookId, setActiveKebabBookId] = useState<string | null>(null);
+  const [bookPendingDelete, setBookPendingDelete] = useState<Book | null>(null);
+  const [isDeletingBook, setIsDeletingBook] = useState(false);
+  const [bookShareNotice, setBookShareNotice] = useState<string | null>(null);
+
+  const handleShareBook = async (book: Book) => {
+    setActiveKebabBookId(null);
+    const shareUrl = book.driveWebViewLink || book.pdfUrl || window.location.href;
+    const shareData = {
+      title: book.title,
+      text: `Reading "${book.title}" by ${book.author} on Apple Books`,
+      url: shareUrl,
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setBookShareNotice(`Shared "${book.title}"!`);
+        setTimeout(() => setBookShareNotice(null), 3500);
+        return;
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.warn('Share error, falling back to clipboard:', err);
+        } else {
+          return;
+        }
+      }
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl);
+        setBookShareNotice(`Link copied to clipboard for "${book.title}"!`);
+        setTimeout(() => setBookShareNotice(null), 3500);
+      }
+    } catch {
+      window.open(shareUrl, '_blank');
+    }
+  };
+
+  const handleConfirmDeleteBook = async () => {
+    if (!bookPendingDelete) return;
+    setIsDeletingBook(true);
+    const bookId = bookPendingDelete.id;
+    const driveId = bookPendingDelete.driveFileId;
+    const title = bookPendingDelete.title;
+
+    try {
+      // 1. Delete from Google Drive cloud if driveFileId is present
+      if (driveId && googleAccessToken) {
+        try {
+          await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveId)}?supportsAllDrives=true`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${googleAccessToken}` },
+          });
+          console.log(`[Apple Books] Deleted "${title}" (${driveId}) from Google Drive cloud.`);
+        } catch (cloudErr) {
+          console.warn('[Apple Books] Cloud delete notice:', cloudErr);
+        }
+      }
+
+      // 2. Delete from server SQLite
+      if (driveId) {
+        try {
+          const emailParam = encodeURIComponent(user?.email || 'chinna.tamil2000@gmail.com');
+          await fetch(getApiUrl(`/api/google/drive/${encodeURIComponent(driveId)}?userEmail=${emailParam}`), {
+            method: 'DELETE',
+          });
+        } catch {}
+      }
+
+      // 3. Remove from local books state and update localStorage
+      setBooks((prev) => {
+        const next = prev.filter((b) => b.id !== bookId);
+        safeSetLocalStorage('aura_apple_books', JSON.stringify(next));
+        return next;
+      });
+
+      setBookShareNotice(`"${title}" deleted from Google Drive and local bookshelf.`);
+      setTimeout(() => setBookShareNotice(null), 4000);
+    } catch (err: any) {
+      console.error('Delete book error:', err);
+    } finally {
+      setIsDeletingBook(false);
+      setBookPendingDelete(null);
+      setActiveKebabBookId(null);
+    }
+  };
+
   // Persist books in localStorage safely (strip heavy data URLs; IndexedDB retains binaries)
   useEffect(() => {
     try {
@@ -145,6 +260,63 @@ export const IBooksLibraryTab: React.FC = () => {
       .catch((e) => console.warn('SQLite book fetch note:', e));
   }, []);
 
+  // Initialize and check local cache status for books (LRU top 20 retention)
+  useEffect(() => {
+    manageRecentBooksCache(books, MAX_LOCAL_RECENT_BOOKS).then((managed) => {
+      setBooks(managed);
+    });
+  }, []);
+
+  // Open book with on-demand download from Google Drive if uncached locally
+  const handleOpenBookToRead = async (book: Book) => {
+    if (!book.isLocalCached && book.driveFileId && googleAccessToken) {
+      setIsDownloadingBook(book.id);
+      try {
+        const dataUrl = await downloadBookContentFromDrive(googleAccessToken, book.driveFileId);
+        const updated = await markBookAccessedAndCache(book.id, books, dataUrl);
+        setBooks(updated);
+        const fresh = updated.find((b) => b.id === book.id) || { ...book, pdfUrl: dataUrl, isLocalCached: true };
+        setActiveReadingBook(fresh);
+      } catch (err: any) {
+        console.warn('Drive on-demand download notice:', err);
+        setActiveReadingBook(book);
+      } finally {
+        setIsDownloadingBook(null);
+      }
+    } else {
+      const updated = await markBookAccessedAndCache(book.id, books);
+      setBooks(updated);
+      const fresh = updated.find((b) => b.id === book.id) || book;
+      setActiveReadingBook(fresh);
+    }
+  };
+
+  // Refresh Apple Books directly from Google Drive path: {defaultFolder} / Apple Books
+  const handleRefreshFromDrive = async () => {
+    if (!googleAccessToken) {
+      setUploadError('Google account is not connected. Please connect your Google account in Settings to sync Apple Books.');
+      return;
+    }
+    setIsSyncingDrive(true);
+    setDriveSyncNotice(null);
+    try {
+      const defaultFolder = googleWorkspaceSettings?.driveDefaultFolder || 'Family Circle';
+      const result = await refreshAppleBooksFromDrive(googleAccessToken, books, defaultFolder, user?.email);
+      const managed = await manageRecentBooksCache(result.books, MAX_LOCAL_RECENT_BOOKS);
+      setBooks(managed);
+      setDriveSyncNotice(
+        result.newCount > 0
+          ? `Discovered ${result.newCount} new book(s) from "${defaultFolder} / Apple Books"! Top ${MAX_LOCAL_RECENT_BOOKS} kept in local offline storage.`
+          : `Apple Books library is up to date with Google Drive ("${defaultFolder} / Apple Books").`
+      );
+      setTimeout(() => setDriveSyncNotice(null), 6000);
+    } catch (err: any) {
+      setUploadError(err?.message || 'Failed to refresh books from Google Drive');
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
+
   // Handle PDF file upload (from native picker or drop)
   const handlePdfFiles = async (files: FileList | File[]) => {
     if (!files || files.length === 0) return;
@@ -153,24 +325,56 @@ export const IBooksLibraryTab: React.FC = () => {
     setUploadSuccess(null);
 
     try {
+      const defaultFolder = googleWorkspaceSettings?.driveDefaultFolder || 'Family Circle';
       const newAddedBooks: Book[] = [];
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
-          const parsedBook = await parsePdfFileToBook(file);
+          let parsedBook = await parsePdfFileToBook(file);
+
+          // Upload to Google Drive under: {defaultFolder} / Apple Books / {Category}
+          if (googleAccessToken) {
+            try {
+              const driveRes = await uploadBookToDrive(
+                googleAccessToken,
+                parsedBook,
+                file,
+                defaultFolder,
+                user?.email
+              );
+              parsedBook = {
+                ...parsedBook,
+                driveFileId: driveRes.driveFileId,
+                driveFolderId: driveRes.driveFolderId,
+                driveFolderPath: driveRes.driveFolderPath,
+                driveCategory: driveRes.driveCategory,
+                driveWebViewLink: driveRes.driveWebViewLink,
+              };
+            } catch (driveErr) {
+              console.warn('[Apple Books] Google Drive upload notice:', driveErr);
+            }
+          }
+
           newAddedBooks.push(parsedBook);
-          // Sync to SQLite in background
           syncBookToSqlite(parsedBook);
         }
       }
 
       if (newAddedBooks.length > 0) {
-        setBooks((prev) => [...newAddedBooks, ...prev]);
-        setUploadSuccess(`Successfully added ${newAddedBooks.length} PDF book(s) to your Apple Bookshelf!`);
+        const combined = [...newAddedBooks, ...books];
+        // Enforce recent 20 books local cache limit
+        const managed = await manageRecentBooksCache(combined, MAX_LOCAL_RECENT_BOOKS);
+        setBooks(managed);
+
+        const driveNotice = googleAccessToken
+          ? ` and synchronized into Google Drive (${defaultFolder} / Apple Books / [Category])`
+          : '';
+        setUploadSuccess(`Successfully added ${newAddedBooks.length} book(s) to Apple Books${driveNotice}!`);
         setTimeout(() => {
           setIsPdfModalOpen(false);
           setUploadSuccess(null);
-        }, 1500);
+        }, 2200);
       } else {
         setUploadError('Please select a valid .pdf file.');
       }
@@ -294,6 +498,140 @@ export const IBooksLibraryTab: React.FC = () => {
     e.stopPropagation();
     setBooks((prev) =>
       prev.map((b) => (b.id === bookId ? { ...b, isFavorite: !b.isFavorite } : b))
+    );
+  };
+
+  // Reusable Book Kebab Menu (Three Vertical Dots) with Share & Delete
+  const renderBookKebabMenu = (
+    book: Book,
+    buttonClassName?: string,
+    iconSize = 'w-3.5 h-3.5',
+    menuPlacement: 'top' | 'bottom' = 'bottom'
+  ) => {
+    const isOpen = activeKebabBookId === book.id;
+    return (
+      <div className="relative" onClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setActiveKebabBookId(isOpen ? null : book.id);
+          }}
+          className={
+            buttonClassName ||
+            `p-1.5 rounded-xl transition-all ${
+              isOpen
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/30'
+                : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-white'
+            }`
+          }
+          title="Book Options (Delete, Share, Drive)"
+          aria-label="Book options"
+        >
+          <MoreVertical className={iconSize} />
+        </button>
+
+        {isOpen && (
+          <>
+            {/* Backdrop to close when clicking outside */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveKebabBookId(null);
+              }}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className={`absolute right-0 ${
+                menuPlacement === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'
+              } z-50 w-56 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-slate-700 shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95 duration-150`}
+            >
+              <div className="px-3 py-1.5 border-b border-slate-800/80 mb-1">
+                <span className="font-semibold text-white block truncate text-[11px]">{book.title}</span>
+                <span className="text-[10px] text-slate-400 font-mono block truncate">{book.author}</span>
+                {book.driveFolderPath && (
+                  <span className="text-[9px] text-indigo-300 font-mono block truncate mt-0.5">
+                    {book.driveFolderPath}
+                  </span>
+                )}
+              </div>
+
+              {/* Share via App */}
+              <button
+                type="button"
+                onClick={() => handleShareBook(book)}
+                className="w-full px-3 py-2 text-left hover:bg-blue-500/15 text-slate-200 hover:text-blue-300 flex items-center gap-2.5 transition-colors"
+              >
+                <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400">
+                  <Share2 className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div className="font-semibold">Share via App</div>
+                  <div className="text-[10px] text-slate-400">WhatsApp, Mail, AirDrop</div>
+                </div>
+              </button>
+
+              {/* Open in Google Drive */}
+              {book.driveWebViewLink && (
+                <a
+                  href={book.driveWebViewLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setActiveKebabBookId(null)}
+                  className="w-full px-3 py-2 text-left hover:bg-emerald-500/15 text-slate-200 hover:text-emerald-300 flex items-center gap-2.5 transition-colors"
+                >
+                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="font-semibold">Open in Drive</div>
+                    <div className="text-[10px] text-slate-400">drive.google.com</div>
+                  </div>
+                </a>
+              )}
+
+              {/* Toggle Favorite */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  toggleFavorite(book.id, e);
+                  setActiveKebabBookId(null);
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-rose-500/15 text-slate-200 hover:text-rose-300 flex items-center gap-2.5 transition-colors"
+              >
+                <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-400">
+                  <Heart className={`w-3.5 h-3.5 ${book.isFavorite ? 'fill-current' : ''}`} />
+                </div>
+                <div>
+                  <div className="font-semibold">{book.isFavorite ? 'Unfavorite' : 'Favorite'}</div>
+                  <div className="text-[10px] text-slate-400">Add to favorite shelf</div>
+                </div>
+              </button>
+
+              <div className="h-px bg-slate-800 my-1" />
+
+              {/* Delete Book (Drive & Locally) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveKebabBookId(null);
+                  setBookPendingDelete(book);
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 flex items-center gap-2.5 transition-colors"
+              >
+                <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-400">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div className="font-semibold text-rose-300">Delete Book</div>
+                  <div className="text-[10px] text-rose-400/80">From Drive & locally</div>
+                </div>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     );
   };
 
@@ -651,7 +989,7 @@ export const IBooksLibraryTab: React.FC = () => {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setActiveReadingBook(featuredBook);
+                        handleOpenBookToRead(featuredBook);
                       }}
                       className="px-4 py-2 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-500/30 transition-all"
                     >
@@ -669,6 +1007,17 @@ export const IBooksLibraryTab: React.FC = () => {
                       <Upload className="w-3.5 h-3.5 text-amber-400" />
                       <span>Import Another PDF</span>
                     </button>
+
+                    {renderBookKebabMenu(
+                      featuredBook,
+                      `p-2 rounded-2xl transition-all ${
+                        activeKebabBookId === featuredBook.id
+                          ? 'bg-amber-600 text-white shadow-md'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                      }`,
+                      'w-4 h-4',
+                      'bottom'
+                    )}
                   </div>
                 </div>
               </div>
@@ -697,7 +1046,7 @@ export const IBooksLibraryTab: React.FC = () => {
                 {books.map((book) => (
                   <div
                     key={book.id}
-                    onClick={() => setActiveReadingBook(book)}
+                    onClick={() => handleOpenBookToRead(book)}
                     className="cursor-pointer group flex flex-col items-center shrink-0 w-32 relative"
                   >
                     {/* Realistic 3D Cover */}
@@ -706,16 +1055,28 @@ export const IBooksLibraryTab: React.FC = () => {
                     >
                       <div className="absolute top-0 bottom-0 left-0 w-2.5 bg-white/10" />
 
-                      <div className="flex items-center justify-between z-10">
+                      <div className="flex items-center justify-between z-10 gap-1">
                         <span className="text-[7px] font-mono text-amber-300 uppercase tracking-widest block truncate">
-                          {book.genre}
+                          {book.driveCategory || book.genre}
                         </span>
-                        {book.isPdf && (
+                        {book.driveFileId ? (
+                          <span className="px-1 py-0.2 rounded bg-blue-600/90 text-white font-mono text-[6.5px] font-bold shrink-0 flex items-center gap-0.5">
+                            <HardDrive className="w-2 h-2" />
+                            Drive
+                          </span>
+                        ) : book.isPdf ? (
                           <span className="px-1.5 py-0.2 rounded bg-rose-600/90 text-white font-mono text-[7px] font-bold">
                             PDF
                           </span>
-                        )}
+                        ) : null}
                       </div>
+
+                      {isDownloadingBook === book.id && (
+                        <div className="absolute inset-0 bg-slate-950/80 z-20 flex flex-col items-center justify-center p-2 text-center space-y-1">
+                          <RefreshCw className="w-4 h-4 text-blue-400 animate-spin" />
+                          <span className="text-[8px] text-blue-200 font-mono">Syncing Drive...</span>
+                        </div>
+                      )}
 
                       <h5 className="text-[11px] font-bold text-white line-clamp-3 leading-snug z-10">
                         {book.title}
@@ -767,14 +1128,26 @@ export const IBooksLibraryTab: React.FC = () => {
               <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
             </div>
 
-            {/* Upload PDF Book Quick Action Button */}
-            <button
-              onClick={() => setIsPdfModalOpen(true)}
-              className="px-3.5 py-2 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 shadow transition-colors"
-            >
-              <Upload className="w-4 h-4" />
-              <span>Upload PDF</span>
-            </button>
+            {/* Action Buttons: Upload PDF & Sync Drive */}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setIsPdfModalOpen(true)}
+                className="px-3.5 py-2 rounded-2xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 shadow transition-colors"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Upload PDF</span>
+              </button>
+
+              <button
+                onClick={handleRefreshFromDrive}
+                disabled={isSyncingDrive}
+                className="px-3.5 py-2 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-sm"
+                title="Refresh library from Google Drive (Family Circle / Apple Books)"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDrive ? 'animate-spin text-blue-400' : ''}`} />
+                <span>{isSyncingDrive ? 'Syncing...' : 'Sync Drive'}</span>
+              </button>
+            </div>
 
             {/* View Mode & Sort */}
             <div className="flex items-center gap-2">
@@ -812,16 +1185,51 @@ export const IBooksLibraryTab: React.FC = () => {
             </div>
           </div>
 
-          {/* Genre Category Chips including dedicated PDF & Documents */}
+          {/* Configured Google Drive Storage Path & LRU 20 Local Cache Status Banner */}
+          <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+            <div className="flex items-center gap-2">
+              <Folder className="w-4 h-4 text-blue-400 shrink-0" />
+              <span className="text-slate-300">
+                Configured Drive Path:{' '}
+                <strong className="text-white font-mono">
+                  {googleWorkspaceSettings.driveDefaultFolder || 'Family Circle'} / Apple Books
+                </strong>
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-[11px] font-mono">
+              <span className="inline-flex items-center gap-1 text-emerald-400">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Local Offline Cache: {books.filter((b) => b.isLocalCached).length}/{MAX_LOCAL_RECENT_BOOKS} Books
+              </span>
+              <span className="text-slate-600">•</span>
+              <span className="inline-flex items-center gap-1 text-blue-400">
+                <HardDrive className="w-3.5 h-3.5" />
+                {books.filter((b) => b.driveFileId).length} Drive Synced
+              </span>
+            </div>
+          </div>
+
+          {/* Drive Sync Notice Alert */}
+          {driveSyncNotice && (
+            <div className="p-3 rounded-2xl bg-blue-950/40 border border-blue-500/40 text-blue-200 text-xs flex items-center gap-2 animate-fadeIn">
+              <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+              <span>{driveSyncNotice}</span>
+            </div>
+          )}
+
+          {bookShareNotice && (
+            <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs flex items-center gap-2 animate-fadeIn">
+              <Share2 className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{bookShareNotice}</span>
+            </div>
+          )}
+
+          {/* Genre & Subfolder Category Chips */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth py-1">
             {[
               'All',
               'PDF & Documents',
-              'Venture & Tech',
-              'Robotics & STEM',
-              'Philosophy & Classics',
-              'Dynasty & History',
-              'Behavior & Habits',
+              ...APPLE_BOOK_CATEGORIES,
             ].map((genre) => (
               <button
                 key={genre}
@@ -849,28 +1257,50 @@ export const IBooksLibraryTab: React.FC = () => {
               {sortedBooks.map((book) => (
                 <div
                   key={book.id}
-                  onClick={() => setActiveReadingBook(book)}
-                  className="cursor-pointer group p-3.5 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all flex flex-col justify-between shadow-lg relative overflow-hidden"
+                  onClick={() => handleOpenBookToRead(book)}
+                  className={`cursor-pointer group p-3.5 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all flex flex-col justify-between shadow-lg relative ${
+                    activeKebabBookId === book.id ? 'z-30 ring-1 ring-amber-500/50' : 'z-0'
+                  }`}
                 >
                   {/* 3D Cover */}
                   <div
                     className={`w-full h-44 rounded-2xl bg-gradient-to-br ${book.coverGradient} p-4 flex flex-col justify-between shadow-xl border-l-4 border-white/20 group-hover:scale-[1.02] transition-transform relative overflow-hidden`}
                   >
                     <div className="space-y-1 relative z-10">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[8px] font-mono text-amber-300 uppercase tracking-wider block">
-                          {book.genre}
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[8px] font-mono text-amber-300 uppercase tracking-wider block truncate">
+                          {book.driveCategory || book.genre}
                         </span>
-                        {book.isPdf && (
-                          <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white font-mono text-[8px] font-bold">
-                            PDF
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {book.driveFileId && (
+                            <span className="px-1.5 py-0.5 rounded bg-blue-600/90 text-white font-mono text-[7px] font-bold flex items-center gap-0.5">
+                              <HardDrive className="w-2.5 h-2.5" />
+                              Drive
+                            </span>
+                          )}
+                          {book.isLocalCached ? (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-600/90 text-white font-mono text-[7px] font-bold">
+                              Local
+                            </span>
+                          ) : book.driveFileId ? (
+                            <span className="px-1.5 py-0.5 rounded bg-amber-600/90 text-white font-mono text-[7px] font-bold flex items-center gap-0.5">
+                              <Cloud className="w-2.5 h-2.5" />
+                              Cloud
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                       <h4 className="text-xs font-bold text-white line-clamp-3 leading-snug">
                         {book.title}
                       </h4>
                     </div>
+
+                    {isDownloadingBook === book.id && (
+                      <div className="absolute inset-0 bg-slate-950/85 z-20 flex flex-col items-center justify-center p-2 text-center space-y-1.5">
+                        <RefreshCw className="w-5 h-5 text-blue-400 animate-spin" />
+                        <span className="text-[9px] text-blue-200 font-mono">Streaming Drive PDF...</span>
+                      </div>
+                    )}
 
                     <div className="relative z-10 flex items-center justify-between text-[9px] text-slate-300 font-mono">
                       <span className="truncate">{book.author}</span>
@@ -878,13 +1308,25 @@ export const IBooksLibraryTab: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Info & Progress */}
+                  {/* Info & Progress with Kebab Menu */}
                   <div className="mt-3 space-y-1.5">
                     <div className="flex items-center justify-between text-[11px] font-mono">
-                      <span className="text-slate-400">
+                      <span className="text-slate-400 truncate max-w-[100px]">
                         {book.isPdf && book.pdfFileSize ? book.pdfFileSize : `${book.totalPages} pages`}
                       </span>
-                      <span className="text-amber-400 font-bold">{book.progressPercent}%</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-amber-400 font-bold">{book.progressPercent}%</span>
+                        {renderBookKebabMenu(
+                          book,
+                          `p-1 rounded-lg transition-colors ${
+                            activeKebabBookId === book.id
+                              ? 'bg-amber-600 text-white'
+                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                          }`,
+                          'w-3.5 h-3.5',
+                          'top'
+                        )}
+                      </div>
                     </div>
                     <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
                       <div
@@ -902,13 +1344,20 @@ export const IBooksLibraryTab: React.FC = () => {
               {sortedBooks.map((book) => (
                 <div
                   key={book.id}
-                  onClick={() => setActiveReadingBook(book)}
-                  className="cursor-pointer group p-3.5 rounded-2xl bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all flex items-center justify-between gap-4"
+                  onClick={() => handleOpenBookToRead(book)}
+                  className={`cursor-pointer group p-3.5 rounded-2xl bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all flex items-center justify-between gap-4 relative ${
+                    activeKebabBookId === book.id ? 'z-30 ring-1 ring-amber-500/50' : 'z-0'
+                  }`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div
-                      className={`w-12 h-16 rounded-lg bg-gradient-to-br ${book.coverGradient} shrink-0 p-1 flex flex-col justify-end text-[7px] text-white font-bold truncate`}
+                      className={`w-12 h-16 rounded-lg bg-gradient-to-br ${book.coverGradient} shrink-0 p-1 flex flex-col justify-end text-[7px] text-white font-bold truncate relative`}
                     >
+                      {isDownloadingBook === book.id && (
+                        <div className="absolute inset-0 bg-slate-950/80 flex items-center justify-center">
+                          <RefreshCw className="w-3 h-3 text-blue-400 animate-spin" />
+                        </div>
+                      )}
                       {book.title.slice(0, 15)}...
                     </div>
                     <div className="min-w-0">
@@ -916,22 +1365,33 @@ export const IBooksLibraryTab: React.FC = () => {
                         <h4 className="text-xs sm:text-sm font-bold text-white truncate group-hover:text-amber-400 transition-colors">
                           {book.title}
                         </h4>
-                        {book.isPdf && (
-                          <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white font-mono text-[8px] font-bold">
-                            PDF
+                        {book.driveFileId && (
+                          <span className="px-1.5 py-0.2 rounded bg-blue-600/90 text-white font-mono text-[7px] font-bold flex items-center gap-0.5">
+                            <HardDrive className="w-2 h-2" />
+                            Drive
                           </span>
                         )}
+                        {book.isLocalCached ? (
+                          <span className="px-1.5 py-0.2 rounded bg-emerald-600/90 text-white font-mono text-[7px] font-bold">
+                            Local
+                          </span>
+                        ) : book.driveFileId ? (
+                          <span className="px-1.5 py-0.2 rounded bg-amber-600/90 text-white font-mono text-[7px] font-bold flex items-center gap-0.5">
+                            <Cloud className="w-2 h-2" />
+                            Cloud
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-[11px] text-slate-400 truncate">{book.author}</p>
-                      <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500 font-mono">
-                        <span>{book.genre}</span>
+                      <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-slate-500 font-mono">
+                        <span className="text-indigo-400">{book.driveFolderPath || book.genre}</span>
                         <span>•</span>
                         <span>{book.pdfFileSize || `${book.totalPages} pages`}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right font-mono">
                       <span className="text-xs font-bold text-amber-400 block">
                         {book.progressPercent}%
@@ -946,9 +1406,21 @@ export const IBooksLibraryTab: React.FC = () => {
                       className={`p-2 rounded-xl transition-colors ${
                         book.isFavorite ? 'text-rose-500' : 'text-slate-600 hover:text-slate-400'
                       }`}
+                      title={book.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                     >
                       <Heart className={`w-4 h-4 ${book.isFavorite ? 'fill-current' : ''}`} />
                     </button>
+
+                    {renderBookKebabMenu(
+                      book,
+                      `p-2 rounded-xl transition-all ${
+                        activeKebabBookId === book.id
+                          ? 'bg-amber-600 text-white shadow-md'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                      }`,
+                      'w-4 h-4',
+                      'bottom'
+                    )}
                   </div>
                 </div>
               ))}
@@ -1014,30 +1486,120 @@ export const IBooksLibraryTab: React.FC = () => {
                     <p className="text-xs text-slate-300 line-clamp-2 mt-1 leading-relaxed">
                       {pdfBook.description}
                     </p>
-                    <div className="mt-3 flex items-center gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveReadingBook(pdfBook);
-                        }}
-                        className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                      >
-                        <BookOpen className="w-3.5 h-3.5" />
-                        <span>Open & Read</span>
-                      </button>
-                      {pdfBook.pdfUrl && (
-                        <a
-                          href={pdfBook.pdfUrl}
-                          download={pdfBook.pdfFileName || `${pdfBook.title}.pdf`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1 transition-colors"
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenBookToRead(pdfBook);
+                          }}
+                          className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                         >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>Save</span>
-                        </a>
-                      )}
+                          <BookOpen className="w-3.5 h-3.5" />
+                          <span>Open & Read</span>
+                        </button>
+                        {pdfBook.pdfUrl && (
+                          <a
+                            href={pdfBook.pdfUrl}
+                            download={pdfBook.pdfFileName || `${pdfBook.title}.pdf`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1 transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Save</span>
+                          </a>
+                        )}
+                      </div>
+
+                      {/* Kebab Menu */}
+                      <div className="relative">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveKebabBookId(activeKebabBookId === pdfBook.id ? null : pdfBook.id);
+                          }}
+                          className={`p-1.5 rounded-xl transition-all ${
+                            activeKebabBookId === pdfBook.id
+                              ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/30'
+                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white'
+                          }`}
+                          title="Options"
+                        >
+                          <MoreVertical className="w-3.5 h-3.5" />
+                        </button>
+
+                        {activeKebabBookId === pdfBook.id && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-30"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveKebabBookId(null);
+                              }}
+                            />
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="absolute right-0 top-full mt-2 z-40 w-52 rounded-2xl bg-slate-900/95 backdrop-blur-xl border border-slate-700 shadow-2xl py-1.5 text-xs animate-in fade-in zoom-in-95 duration-150"
+                            >
+                              <div className="px-3 py-1.5 border-b border-slate-800/80 mb-1">
+                                <span className="font-semibold text-white block truncate text-[11px]">{pdfBook.title}</span>
+                                <span className="text-[10px] text-slate-400 font-mono block truncate">{pdfBook.author}</span>
+                              </div>
+
+                              <button
+                                onClick={() => handleShareBook(pdfBook)}
+                                className="w-full px-3 py-2 text-left hover:bg-blue-500/15 text-slate-200 hover:text-blue-300 flex items-center gap-2.5 transition-colors"
+                              >
+                                <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400">
+                                  <Share2 className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <div className="font-semibold">Share via App</div>
+                                  <div className="text-[10px] text-slate-400">WhatsApp, Mail, etc.</div>
+                                </div>
+                              </button>
+
+                              {pdfBook.driveWebViewLink && (
+                                <a
+                                  href={pdfBook.driveWebViewLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={() => setActiveKebabBookId(null)}
+                                  className="w-full px-3 py-2 text-left hover:bg-emerald-500/15 text-slate-200 hover:text-emerald-300 flex items-center gap-2.5 transition-colors"
+                                >
+                                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </div>
+                                  <div>
+                                    <div className="font-semibold">Open in Drive</div>
+                                    <div className="text-[10px] text-slate-400">drive.google.com</div>
+                                  </div>
+                                </a>
+                              )}
+
+                              <div className="h-px bg-slate-800 my-1" />
+
+                              <button
+                                onClick={() => {
+                                  setActiveKebabBookId(null);
+                                  setBookPendingDelete(pdfBook);
+                                }}
+                                className="w-full px-3 py-2 text-left hover:bg-rose-500/20 text-rose-300 hover:text-rose-200 flex items-center gap-2.5 transition-colors"
+                              >
+                                <div className="p-1.5 rounded-lg bg-rose-500/20 text-rose-400">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <div className="font-semibold text-rose-300">Delete Book</div>
+                                  <div className="text-[10px] text-rose-400/80">From Drive & locally</div>
+                                </div>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1292,6 +1854,92 @@ export const IBooksLibraryTab: React.FC = () => {
                 <span>Parsing and encrypting PDF into SQLite...</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL: DELETE BOOK CONFIRMATION
+          ========================================================================= */}
+      {bookPendingDelete && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-rose-500/40 rounded-3xl p-6 text-white shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-2xl bg-rose-500/20 text-rose-400">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Delete Book</h3>
+                  <p className="text-xs text-rose-300/80">Remove from Google Drive & local library</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBookPendingDelete(null)}
+                disabled={isDeletingBook}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Title:</span>
+                <span className="font-semibold text-white truncate max-w-[200px]">{bookPendingDelete.title}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Author:</span>
+                <span className="text-slate-300 font-mono text-[11px]">{bookPendingDelete.author}</span>
+              </div>
+              {bookPendingDelete.driveFolderPath && (
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Drive Path:</span>
+                  <span className="text-indigo-300 font-mono text-[10px] truncate max-w-[180px]">{bookPendingDelete.driveFolderPath}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 rounded-2xl bg-rose-950/30 border border-rose-800/40 text-[11px] text-rose-200 space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-rose-300">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>Permanent Removal</span>
+              </div>
+              <p className="leading-relaxed">
+                {bookPendingDelete.driveFileId
+                  ? 'This book will be deleted from your Google Drive (drive.google.com) and removed from your offline bookshelf.'
+                  : 'This book will be removed from your bookshelf and local storage.'}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingBook}
+                onClick={() => setBookPendingDelete(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeletingBook}
+                onClick={handleConfirmDeleteBook}
+                className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-semibold shadow-lg shadow-rose-600/30 transition-all flex items-center gap-1.5"
+              >
+                {isDeletingBook ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Everywhere</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
