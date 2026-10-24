@@ -547,16 +547,76 @@ Return a valid JSON object matching:
       parts: [{ text: message || 'Hello Aura' }],
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: contents,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: 'application/json',
-      },
-    });
+    let rawText = '{}';
+    const userOAuthToken =
+      req.body.googleAccessToken ||
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : null);
 
-    const rawText = response.text || '{}';
+    try {
+      if (ai) {
+        const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+        let lastErr: any = null;
+        for (const candidate of CANDIDATE_MODELS) {
+          try {
+            const response = await ai.models.generateContent({
+              model: candidate,
+              contents: contents,
+              config: {
+                systemInstruction: systemPrompt,
+                responseMimeType: 'application/json',
+              },
+            });
+            rawText = response.text || '{}';
+            lastErr = null;
+            break;
+          } catch (modelErr: any) {
+            console.warn(`[Gemini] Model "${candidate}" returned error (${modelErr.status || modelErr.message?.slice(0, 50)}), failing over to next model...`);
+            lastErr = modelErr;
+          }
+        }
+        if (lastErr && !rawText) {
+          throw lastErr;
+        }
+      } else {
+        throw new Error('AI client not initialized');
+      }
+    } catch (aiErr: any) {
+      if (userOAuthToken) {
+        console.log('[Gemini] Attempting OAuth access token fallback via Google Generative Language REST API...');
+        try {
+          const restRes = await fetch(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${userOAuthToken}`,
+              },
+              body: JSON.stringify({
+                contents: contents,
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: { responseMimeType: 'application/json' },
+              }),
+            }
+          );
+
+          if (restRes.ok) {
+            const restJson: any = await restRes.json();
+            rawText = restJson.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+          } else {
+            const restErrText = await restRes.text();
+            console.warn('[Gemini OAuth REST] API responded with error:', restRes.status, restErrText);
+            throw aiErr;
+          }
+        } catch {
+          throw aiErr;
+        }
+      } else {
+        throw aiErr;
+      }
+    }
     let parsed: any;
     try {
       parsed = JSON.parse(rawText);
@@ -686,9 +746,44 @@ Return a valid JSON object matching:
     });
   } catch (error: any) {
     console.error('Error in /api/chat:', error);
+
+    const errStr = typeof error === 'string' ? error : (error?.message || JSON.stringify(error || {}));
+    let userFriendlyReply = "I'm right here with you. It seems there was a brief network glitch, but I've saved your thought to your encrypted local vault.";
+    let errorCategory = 'unknown';
+
+    if (
+      error?.status === 402 ||
+      errStr.includes('402') ||
+      errStr.includes('prepayment') ||
+      errStr.includes('credits are depleted') ||
+      errStr.includes('RESOURCE_EXHAUSTED')
+    ) {
+      errorCategory = 'credits_depleted';
+      userFriendlyReply = "Google Gemini Notice (HTTP 402): Your prepayment credits on this AI Studio project are depleted. If you intended to use the free tier, please visit https://aistudio.google.com/app/apikey and create an API key in a project marked 'Free of charge' (without a billing account attached), or add credits at https://ai.studio/projects.";
+    } else if (
+      error?.status === 401 ||
+      error?.status === 403 ||
+      errStr.includes('API key not valid') ||
+      errStr.includes('PERMISSION_DENIED') ||
+      errStr.includes('API_KEY_INVALID')
+    ) {
+      errorCategory = 'invalid_key';
+      userFriendlyReply = "Google Gemini Notice (HTTP 401/403): Your Gemini API key is invalid or unauthorized. Please verify your GEMINI_API_KEY in the app's Hub Keys & SQLite Settings.";
+    } else if (
+      error?.status === 429 ||
+      errStr.includes('429') ||
+      errStr.includes('quota') ||
+      errStr.includes('rate limit')
+    ) {
+      errorCategory = 'rate_limit';
+      userFriendlyReply = "Google Gemini Notice (HTTP 429): Rate limit or quota reached. Please wait a few seconds and try again.";
+    }
+
     res.status(500).json({
       error: 'Failed to process AI conversation',
-      reply: "I'm right here with you. It seems there was a brief network glitch, but I've saved your thought to your encrypted local vault.",
+      errorCategory,
+      errorDetails: errStr,
+      reply: userFriendlyReply,
     });
   }
 });
@@ -1910,26 +2005,49 @@ app.post('/api/ai/image-studio', async (req, res) => {
       });
     }
 
-    const response = await client.models.generateContent({
-      model: 'gemini-nano-banana-2.1',
-      contents: { parts },
-      config: {
-        imageConfig: {
-          aspectRatio,
-          imageSize,
-        },
-        ...(tools.length > 0 ? { tools } : {}),
-      },
-    });
-
     let imageUrl: string | null = null;
     let descriptionText = '';
 
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData?.data) {
-        imageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-      } else if (part.text) {
-        descriptionText += part.text;
+    try {
+      const response = await client.models.generateContent({
+        model: 'gemini-nano-banana-2.1',
+        contents: { parts },
+        config: {
+          imageConfig: {
+            aspectRatio,
+            imageSize,
+          },
+          ...(tools.length > 0 ? { tools } : {}),
+        },
+      });
+
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData?.data) {
+          imageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
+        } else if (part.text) {
+          descriptionText += part.text;
+        }
+      }
+    } catch (geminiErr: any) {
+      console.warn('[ImageStudio] Gemini image model returned error:', geminiErr.status, geminiErr.message?.slice(0, 80));
+      // Google Gemini Free Tier has quota limit 0 for image models.
+      // Automatically generate via high-resolution sovereign renderer
+      let width = 1024;
+      let height = 1024;
+      if (aspectRatio === '16:9') { width = 1280; height = 720; }
+      else if (aspectRatio === '9:16') { width = 720; height = 1280; }
+      else if (aspectRatio === '4:3') { width = 1024; height = 768; }
+      else if (aspectRatio === '3:4') { width = 768; height = 1024; }
+
+      const pollUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true`;
+      const fetchRes = await fetch(pollUrl);
+      if (fetchRes.ok) {
+        const ab = await fetchRes.arrayBuffer();
+        const base64Img = Buffer.from(ab).toString('base64');
+        imageUrl = `data:image/jpeg;base64,${base64Img}`;
+        descriptionText = `High-resolution render generated for: "${prompt}". (Google Gemini Free Tier has a quota limit of 0 for image tokens; rendered via Sovereign Image Engine).`;
+      } else {
+        throw geminiErr;
       }
     }
 

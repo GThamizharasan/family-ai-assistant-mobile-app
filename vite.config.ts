@@ -49,12 +49,13 @@ export default defineConfig(() => {
         },
         workbox: {
           navigateFallbackDenylist: [/^\/oauth-mobile-callback/],
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         },
       }),
     ],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
       },
     },
     server: {

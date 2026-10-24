@@ -1,4 +1,5 @@
 import { Capacitor } from '@capacitor/core';
+import { chatWithGeminiDirect, isDirectGeminiAvailable } from './directGemini';
 
 export const DEFAULT_BACKEND_URL = 'https://aura-family-hub-2cgg5gpa7a-nw.a.run.app';
 
@@ -118,6 +119,7 @@ export async function sendChatMessage(payload: {
   currentMood?: string;
   includeSpeechAudio?: boolean;
   currentLanguage?: string;
+  googleAccessToken?: string | null;
   attachment?: {
     name: string;
     mimeType: string;
@@ -131,11 +133,37 @@ export async function sendChatMessage(payload: {
     uploadError?: string;
   } | null;
 }) {
-  return safeFetchJson('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const token =
+    payload.googleAccessToken ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+
+  try {
+    const res = await safeFetchJson('/api/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ ...payload, googleAccessToken: token }),
+    });
+
+    if (res && !res.error) {
+      return res;
+    }
+
+    if (isDirectGeminiAvailable()) {
+      console.log('[Auro] Backend error. Falling back to direct client-side Gemini...');
+      return await chatWithGeminiDirect(payload);
+    }
+    return res;
+  } catch (backendErr: any) {
+    // If backend server.ts is offline, automatically fall back to direct on-device Gemini
+    if (isDirectGeminiAvailable()) {
+      console.log('[Auro] Backend server offline. Running direct client-side Gemini...', backendErr.message);
+      return await chatWithGeminiDirect(payload);
+    }
+    throw backendErr;
+  }
 }
 
 export async function transcribeAudioApi(audioBase64: string, mimeType = 'audio/webm') {

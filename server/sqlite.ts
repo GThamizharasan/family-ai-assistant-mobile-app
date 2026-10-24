@@ -383,6 +383,7 @@ export async function initSqliteDb(): Promise<Database> {
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
+  try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch {}
 
   // Seed default Google Keep notes if empty
   try {
@@ -1117,11 +1118,19 @@ export function saveVoiceConversationToSqlite(record: {
   const familyId = record.familyId || 'family-aura-primary';
   const now = new Date().toISOString();
 
-  db.run(
-    `INSERT INTO voice_assistant_conversations (id, user_email, family_id, role, content, emotion, action_suggestion, timestamp)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, record.userEmail.toLowerCase().trim(), familyId, record.role, record.content, record.emotion || null, record.actionSuggestion || null, now]
-  );
+  try {
+    db.run(
+      `INSERT INTO voice_assistant_conversations (id, user_email, family_id, role, content, emotion, action_suggestion, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, record.userEmail.toLowerCase().trim(), familyId, record.role, record.content, record.emotion || null, record.actionSuggestion || null, now]
+    );
+  } catch {
+    db.run(
+      `INSERT INTO voice_assistant_conversations (id, user_email, family_id, role, content, emotion, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, record.userEmail.toLowerCase().trim(), familyId, record.role, record.content, record.emotion || null, now]
+    );
+  }
   scheduleSave();
 
   return {

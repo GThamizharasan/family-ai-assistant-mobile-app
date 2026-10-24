@@ -288,8 +288,10 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
         }),
       });
 
-      if (data.reply) {
-        setGeminiTestStatus(`Gemini Verified: "${data.reply.slice(0, 80)}..."`);
+      if (data.error || data.errorCategory) {
+        setGeminiTestStatus(`❌ ${data.reply || data.error}`);
+      } else if (data.reply) {
+        setGeminiTestStatus(`✅ Gemini Verified: "${data.reply.slice(0, 80)}..."`);
       } else {
         setGeminiTestStatus('Gemini API replied successfully.');
       }
