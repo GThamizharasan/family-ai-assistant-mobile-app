@@ -445,7 +445,17 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       const res = await generateMusic(musicPrompt, musicMode, imgSource);
       setMusicResult(res);
     } catch (err: any) {
-      alert(`Music generation error: ${err.message}`);
+      let friendlyError = err.message || 'Failed to generate music';
+      try {
+        if (typeof friendlyError === 'string' && friendlyError.includes('{')) {
+          const jsonStart = friendlyError.indexOf('{');
+          const parsed = JSON.parse(friendlyError.slice(jsonStart));
+          if (parsed.error?.message) {
+            friendlyError = parsed.error.message;
+          }
+        }
+      } catch {}
+      alert(`Music generation: ${friendlyError}`);
     } finally {
       setIsGeneratingMusic(false);
     }

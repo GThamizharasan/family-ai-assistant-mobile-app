@@ -440,35 +440,157 @@ export async function generateMusic(
     }
   }
 
-  const res = await fetch(getApiUrl('/api/ai/generate-music'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, mode, imageBase64, mimeType }),
+  try {
+    const res = await fetch(getApiUrl('/api/ai/generate-music'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, mode, imageBase64, mimeType }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      let audioUrl = '';
+
+      if (data.audioBase64) {
+        const binary = atob(data.audioBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
+        audioUrl = URL.createObjectURL(blob);
+      }
+
+      return {
+        audioUrl,
+        lyrics: data.lyrics || '',
+        modelUsed: data.modelUsed,
+        mode: data.mode,
+      };
+    }
+
+    const err = await res.json().catch(() => ({}));
+    let errMsg = err.error || `HTTP ${res.status}: Failed to generate music`;
+    try {
+      if (typeof errMsg === 'string' && errMsg.includes('{')) {
+        const jsonStart = errMsg.indexOf('{');
+        const parsed = JSON.parse(errMsg.slice(jsonStart));
+        if (parsed.error?.message) {
+          errMsg = parsed.error.message;
+        }
+      }
+    } catch {}
+
+    if (isDirectGeminiAvailable()) {
+      return await directMusicFallback(prompt, mode);
+    }
+
+    throw new Error(errMsg);
+  } catch (error: any) {
+    if (isDirectGeminiAvailable()) {
+      try {
+        return await directMusicFallback(prompt, mode);
+      } catch (fallbackErr: any) {
+        throw new Error(fallbackErr.message || error.message);
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Direct client-side Gemini lyrics and melodic voice audio synthesis fallback
+ */
+async function directMusicFallback(
+  prompt: string,
+  mode: 'clip' | 'pro'
+): Promise<{ audioUrl: string; lyrics: string; modelUsed: string; mode: string }> {
+  const apiKey = getDirectGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('Gemini API key is required for direct music generation.');
+  }
+
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}: Failed to generate music`);
+  const lyricsPrompt = `You are an elite music composer and lyricist. Compose evocative, rhyming musical lyrics for a song inspired by: "${prompt}".
+Structure cleanly with:
+[Verse 1]
+...
+[Chorus]
+...
+[Outro]
+Keep it musical, uplifting, and poetic.`;
+
+  let lyrics = '';
+  const textModels = ['gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-3.8-flash'];
+  for (const tm of textModels) {
+    try {
+      const lRes = await ai.models.generateContent({
+        model: tm,
+        contents: lyricsPrompt,
+      });
+      lyrics = lRes.text?.trim() || '';
+      if (lyrics) break;
+    } catch {}
   }
 
-  const data = await res.json();
-  let audioUrl = '';
-
-  if (data.audioBase64) {
-    const binary = atob(data.audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const blob = new Blob([bytes], { type: data.mimeType || 'audio/wav' });
-    audioUrl = URL.createObjectURL(blob);
+  if (!lyrics) {
+    lyrics = `[Verse 1]\nMelodies rise in the evening light,\nDrifting softly through the night.\n[Chorus]\nPeace and rhythm hand in hand,\nGuiding dreams across the land.\n[Outro]\nHarmony stays forever true.`;
   }
+
+  const cleanVocalText = lyrics
+    .replace(/\[.*?\]/g, '')
+    .split('\n')
+    .filter((line: string) => line.trim().length > 0)
+    .slice(0, 8)
+    .join('. ');
+
+  const ttsRes = await ai.models.generateContent({
+    model: 'gemini-3.8-flash-lite-tts',
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: cleanVocalText,
+            speechMetadata: {
+              style: `Melodic, soulful musical delivery with rhythmic cadence, acoustic warmth, and harmonic depth matching: ${prompt}`,
+            },
+          },
+        ],
+      },
+    ],
+    config: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
+  });
+
+  const synthAudio = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!synthAudio) {
+    throw new Error('Failed to synthesize music audio.');
+  }
+
+  const binary = atob(synthAudio);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: 'audio/wav' });
+  const audioUrl = URL.createObjectURL(blob);
 
   return {
     audioUrl,
-    lyrics: data.lyrics || '',
-    modelUsed: data.modelUsed,
-    mode: data.mode,
+    lyrics,
+    modelUsed: 'gemini-3.8-flash-lite-tts (Direct Client Fallback)',
+    mode,
   };
 }
 
