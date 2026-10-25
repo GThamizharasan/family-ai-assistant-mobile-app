@@ -11,6 +11,8 @@
  */
 
 import { getApiUrl } from './api';
+import { GoogleGenAI } from '@google/genai';
+import { getDirectGeminiApiKey, isDirectGeminiAvailable } from './directGemini';
 
 export interface ChatMessage {
   id: string;
@@ -252,24 +254,157 @@ export async function sendMultiTurnChat(
     customSystemInstruction?: string;
   } = {}
 ): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string }> {
-  const res = await fetch(getApiUrl('/api/ai/chat-multiturn'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages,
-      role: options.role || 'executive',
-      taskComplexity: options.taskComplexity || 'general',
-      modelOverride: options.modelOverride,
-      customSystemInstruction: options.customSystemInstruction,
-    }),
-  });
+  try {
+    const res = await fetch(getApiUrl('/api/ai/chat-multiturn'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages,
+        role: options.role || 'executive',
+        taskComplexity: options.taskComplexity || 'general',
+        modelOverride: options.modelOverride,
+        customSystemInstruction: options.customSystemInstruction,
+      }),
+    });
 
-  if (!res.ok) {
+    if (res.ok) {
+      return await res.json();
+    }
+
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `HTTP ${res.status}: Failed to get chat response`);
+    let errMsg = err.error || `HTTP ${res.status}: Failed to get chat response`;
+    // Clean up if it's JSON encoded error from Google API
+    try {
+      if (typeof errMsg === 'string' && errMsg.includes('{')) {
+        const jsonStart = errMsg.indexOf('{');
+        const parsed = JSON.parse(errMsg.slice(jsonStart));
+        if (parsed.error?.message) {
+          errMsg = parsed.error.message;
+        }
+      }
+    } catch {}
+
+    // Check if client-side direct fallback is available
+    if (isDirectGeminiAvailable()) {
+      console.warn('[sendMultiTurnChat] Backend error, falling back to direct client-side Gemini execution...');
+      return await directMultiTurnChatFallback(messages, options);
+    }
+
+    throw new Error(errMsg);
+  } catch (error: any) {
+    if (isDirectGeminiAvailable()) {
+      console.warn('[sendMultiTurnChat] Network or backend failure, attempting direct client-side Gemini fallback...');
+      try {
+        return await directMultiTurnChatFallback(messages, options);
+      } catch (directErr: any) {
+        throw new Error(directErr.message || error.message);
+      }
+    }
+    throw error;
+  }
+}
+
+/**
+ * Direct client-side Gemini multi-turn execution with multi-model failover cascade
+ */
+async function directMultiTurnChatFallback(
+  messages: Array<{ role: 'user' | 'model'; text: string }>,
+  options: {
+    role?: string;
+    taskComplexity?: 'complex' | 'general' | 'fast';
+    modelOverride?: string;
+    customSystemInstruction?: string;
+  }
+): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string }> {
+  const apiKey = getDirectGeminiApiKey();
+  if (!apiKey) {
+    throw new Error('Gemini API key is required for direct client execution.');
   }
 
-  return await res.json();
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+
+  const roleInstructions: Record<string, string> = {
+    executive:
+      'You are the Executive Life OS & Sovereign Strategic Co-pilot for Thamizh and his family. You provide decisive, highly articulate, strategic advice on governance, enterprise technology, and family harmony.',
+    family_counselor:
+      'You are an Empathetic Family Counselor & Harmony Guide. You communicate with warmth, active listening, deep emotional intelligence, and actionable mindfulness practices for parents and children.',
+    venture_strategist:
+      'You are a Silicon Valley Principal Venture Partner & Technologist. You evaluate business models, unit economics, term sheets, cap tables, and emerging market moats with rigorous quantitative clarity.',
+    stem_tutor:
+      'You are an inspiring STEM & Robotics Mentor (specializing in AI simulations, robotics, A* algorithms, and physics). You explain deep technical concepts simply with engaging analogies and code examples.',
+    creative_writer:
+      'You are an award-winning creative author and storytelling consultant, offering vivid prose, emotional cadence, and polished screenplays.',
+  };
+
+  const systemInstruction =
+    options.customSystemInstruction ||
+    (options.role ? roleInstructions[options.role] : '') ||
+    roleInstructions.executive;
+
+  let candidateModels: string[];
+  if (options.modelOverride) {
+    candidateModels = [options.modelOverride, 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+  } else if (options.taskComplexity === 'complex') {
+    candidateModels = [
+      'gemini-4-argon',
+      'gemini-3.7-flash',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
+      'gemini-3.1-flash-lite',
+    ];
+  } else if (options.taskComplexity === 'fast') {
+    candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-3.8-flash',
+    ];
+  } else {
+    candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
+      'gemini-3.1-flash-lite',
+    ];
+  }
+
+  const contents = messages.map((m) => ({
+    role: m.role === 'model' ? 'model' : 'user',
+    parts: [{ text: m.text }],
+  }));
+
+  let lastError: any = null;
+  for (const modelCandidate of candidateModels) {
+    try {
+      const response = await ai.models.generateContent({
+        model: modelCandidate,
+        contents,
+        config: {
+          systemInstruction,
+        },
+      });
+      return {
+        reply: response.text || '',
+        modelUsed: `${modelCandidate} (Direct Client)`,
+        roleUsed: options.role || 'executive',
+        taskComplexity: options.taskComplexity || 'general',
+      };
+    } catch (err: any) {
+      console.warn(`[directMultiTurnChatFallback] Model ${modelCandidate} failed:`, err.message?.slice(0, 60));
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('All candidate models failed to generate response.');
 }
 
 // 6. Music Generation using Lyria (lyria-3-clip-preview & lyria-3-pro-preview)

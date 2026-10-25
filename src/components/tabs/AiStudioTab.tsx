@@ -394,10 +394,21 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
 
       setChatMessages([...newThread, modelMsg]);
     } catch (err: any) {
+      let friendlyError = err.message || 'Network error';
+      try {
+        if (typeof friendlyError === 'string' && friendlyError.includes('{')) {
+          const jsonStart = friendlyError.indexOf('{');
+          const parsed = JSON.parse(friendlyError.slice(jsonStart));
+          if (parsed.error?.message) {
+            friendlyError = parsed.error.message;
+          }
+        }
+      } catch {}
+
       const errorMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'model',
-        text: `Error processing request: ${err.message || 'Network error'}`,
+        text: `Error processing request: ${friendlyError}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
       setChatMessages([...newThread, errorMsg]);

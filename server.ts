@@ -1850,19 +1850,37 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
       roleInstructions[role] ||
       roleInstructions.executive;
 
-    // Model selection based on requirements:
-    // Complex tasks -> gemini-4-argon
-    // General tasks -> gemini-3.8-flash
-    // Fast tasks -> gemini-3.1-flash-lite
-    let targetModel = 'gemini-3.8-flash';
+    // Model selection based on requirements with robust multi-model failover cascade:
+    // Complex tasks -> gemini-4-argon, failing over to 3.7-flash, 3.8-flash, 3.5-flash, 3.6-flash, 3.1-flash-lite
+    // Fast tasks -> gemini-3.1-flash-lite, failing over to 3.5-flash-lite, 3.5-flash, 3.8-flash
+    // General tasks -> gemini-3.8-flash, failing over to 3.7-flash, 3.5-flash, 3.6-flash, 3.1-flash-lite
+    let candidateModels: string[] = [];
     if (modelOverride) {
-      targetModel = modelOverride;
+      candidateModels = [modelOverride, 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
     } else if (taskComplexity === 'complex') {
-      targetModel = 'gemini-4-argon';
+      candidateModels = [
+        'gemini-4-argon',
+        'gemini-3.7-flash',
+        'gemini-3.8-flash',
+        'gemini-3.5-flash',
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+      ];
     } else if (taskComplexity === 'fast') {
-      targetModel = 'gemini-3.1-flash-lite';
+      candidateModels = [
+        'gemini-3.1-flash-lite',
+        'gemini-3.5-flash-lite',
+        'gemini-3.5-flash',
+        'gemini-3.8-flash',
+      ];
     } else {
-      targetModel = 'gemini-3.8-flash';
+      candidateModels = [
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.5-flash',
+        'gemini-3.6-flash',
+        'gemini-3.1-flash-lite',
+      ];
     }
 
     const contents = messages.map((m: any) => ({
@@ -1871,26 +1889,56 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
     }));
 
     const client = getAiClient();
-    const response = await client.models.generateContent({
-      model: targetModel,
-      contents,
-      config: {
-        systemInstruction: baseSystemPrompt,
-      },
-    });
+    let reply = '';
+    let selectedModel = candidateModels[0];
+    let lastError: any = null;
 
-    const reply = response.text || '';
+    for (const candidate of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model: candidate,
+          contents,
+          config: {
+            systemInstruction: baseSystemPrompt,
+          },
+        });
+        reply = response.text || '';
+        selectedModel = candidate;
+        lastError = null;
+        break;
+      } catch (err: any) {
+        console.warn(
+          `[chat-multiturn] Model "${candidate}" failed (${err.status || err.message?.slice(0, 60)}), failing over to next candidate...`
+        );
+        lastError = err;
+      }
+    }
+
+    if (!reply && lastError) {
+      throw lastError;
+    }
+
     res.json({
       reply,
-      modelUsed: targetModel,
+      modelUsed: selectedModel,
       roleUsed: role,
       taskComplexity,
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error('Error in /api/ai/chat-multiturn:', error);
+    let friendlyError = error.message || 'Failed to generate multi-turn chat response';
+    try {
+      if (typeof friendlyError === 'string' && friendlyError.includes('{')) {
+        const jsonStart = friendlyError.indexOf('{');
+        const parsed = JSON.parse(friendlyError.slice(jsonStart));
+        if (parsed.error?.message) {
+          friendlyError = parsed.error.message;
+        }
+      }
+    } catch {}
     res.status(500).json({
-      error: error.message || 'Failed to generate multi-turn chat response',
+      error: friendlyError,
     });
   }
 });
