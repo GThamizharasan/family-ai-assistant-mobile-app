@@ -992,15 +992,25 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         emotion: emotionText,
         audioBase64: result.audioBase64 || null,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('Voice assistant chat request failed:', err);
       setIsThinking(false);
-      const fallbackReply =
+      const errMsg = err?.message || (typeof err === 'string' ? err : JSON.stringify(err || {}));
+      let fallbackReply = "I couldn't connect to the AI assistant service just now. Please check your connection and try again, or type your message below.";
+
+      if (err?.status === 402 || errMsg.includes('402') || errMsg.includes('prepayment') || errMsg.includes('credits are depleted')) {
+        fallbackReply = "Google Gemini Notice: Your API key credits are depleted or require billing on Google AI Studio. Please generate a new key on a free project at aistudio.google.com and update it in Hub Keys & SQLite.";
+      } else if (err?.status === 401 || err?.status === 403 || errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('API key not valid')) {
+        fallbackReply = "Google Gemini Notice: Your Gemini API key is invalid or unauthorized. Please verify your GEMINI_API_KEY in Hub Keys.";
+      } else if (err?.status === 429 || errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('rate limit')) {
+        fallbackReply = "Google Gemini Notice: Model rate limit reached. Please wait a moment and try again.";
+      } else if (
         Capacitor.isNativePlatform() &&
-        err instanceof Error &&
-        err.message.includes('Mobile AI backend is not configured')
-          ? 'Voice recognition worked, but the AI backend is not configured for this APK. Configure VITE_API_BASE_URL to a public HTTPS backend and rebuild the app.'
-          : "I couldn't connect to the AI assistant service just now. Please check your connection and try again, or type your message below.";
+        errMsg.includes('Mobile AI backend is not configured')
+      ) {
+        fallbackReply = 'Voice recognition worked, but the AI backend is not configured for this APK. Configure VITE_API_BASE_URL to a public HTTPS backend and rebuild the app.';
+      }
+
       addVoiceMessage({
         role: 'assistant',
         content: fallbackReply,

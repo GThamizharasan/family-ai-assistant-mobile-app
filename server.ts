@@ -604,7 +604,7 @@ Return a valid JSON object matching:
             lastErr = modelErr;
           }
         }
-        if (lastErr && !rawText) {
+        if (lastErr && (!rawText || rawText === '{}')) {
           throw lastErr;
         }
       } else {

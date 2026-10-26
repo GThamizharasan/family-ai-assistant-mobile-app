@@ -164,8 +164,16 @@ export async function sendChatMessage(payload: {
     }
 
     if (isDirectGeminiAvailable()) {
-      console.log('[Auro] Backend error. Falling back to direct client-side Gemini...');
-      return await chatWithGeminiDirect(completePayload);
+      try {
+        console.log('[Auro] Backend error. Falling back to direct client-side Gemini...');
+        return await chatWithGeminiDirect(completePayload);
+      } catch (directErr) {
+        console.warn('[Auro] Direct Gemini fallback failed:', directErr);
+        if (res && (res.reply || res.error)) {
+          return res;
+        }
+        throw directErr;
+      }
     }
     return res;
   } catch (backendErr: any) {
