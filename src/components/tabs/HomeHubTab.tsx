@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { useApp } from '../../context/AppContext';
+import { AVAILABLE_GEMINI_MODELS } from '../../types';
 import { speechEngine, SUPPORTED_VOICE_LANGUAGES, VoiceLanguage } from '../../services/speech';
 import { TabKey } from '../BottomNav';
 import {
@@ -115,6 +116,8 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
     toggleGcpControlGuardrail,
     pullLiveGcpBillingData,
     isSyncingGcpBilling,
+    selectedVoiceModel,
+    setSelectedVoiceModel,
   } = useApp();
 
   const [dailyQuoteSpoken, setDailyQuoteSpoken] = useState(false);
@@ -236,6 +239,21 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             Switch to {role === 'primary' ? 'Secondary' : 'Primary'}
           </button>
 
+          {/* Hub Voice Model Switcher button */}
+          <button
+            onClick={() => {
+              setHubModalTab('assistant');
+              setShowKeysAndSqliteModal(true);
+            }}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-xl bg-slate-800/80 hover:bg-purple-900/50 text-purple-300 border border-purple-500/30 transition-colors flex items-center gap-1.5 text-xs font-medium"
+            title="Configure Voice Assistant Gemini Model in Hub"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+            <span className="font-mono text-[11px] font-bold">
+              {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name.replace('Gemini ', '') || '3.8 Flash'}
+            </span>
+          </button>
+
           {/* Hub Assistant Language Switcher button */}
           <button
             onClick={() => {
@@ -307,8 +325,19 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
               <span className="text-xs font-bold text-white tracking-wide uppercase">
                 Active Realtime Voice Command Center
               </span>
-              <p className="text-[10px] text-slate-400 font-mono">
-                Gemini 3.8 Flash • Hands-Free Conversational Intelligence
+              <p className="text-[10px] text-slate-400 font-mono flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHubModalTab('assistant');
+                    setShowKeysAndSqliteModal(true);
+                  }}
+                  className="px-1.5 py-0.2 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 font-bold border border-purple-500/30 transition-colors cursor-pointer"
+                  title="Click to change model in Hub Config"
+                >
+                  ⚡ {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name || selectedVoiceModel}
+                </button>
+                <span>• Hands-Free Conversational Intelligence</span>
               </p>
             </div>
           </div>
@@ -455,6 +484,60 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
               <span className="w-1 h-3 rounded-full bg-indigo-400 animate-[pulse_0.7s_ease-in-out_infinite]" />
               <span className="w-1 h-5 rounded-full bg-purple-400 animate-[pulse_1.0s_ease-in-out_infinite]" />
               <span className="w-1 h-2 rounded-full bg-pink-400 animate-[pulse_1.2s_ease-in-out_infinite]" />
+            </div>
+
+            {/* Hub Voice Assistant Gemini Model Switcher */}
+            <div className="w-full my-1.5 p-2 rounded-2xl bg-slate-900/90 border border-purple-500/30">
+              <div className="flex items-center justify-between px-1 mb-1.5 text-[10px]">
+                <span className="font-semibold text-slate-300 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-purple-400" />
+                  <span>Voice Model:</span>
+                  <span className="font-mono text-purple-300 font-bold ml-0.5">
+                    {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name.replace('Gemini ', '') || '3.8 Flash'}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHubModalTab('assistant');
+                    setShowKeysAndSqliteModal(true);
+                  }}
+                  className="text-purple-300 hover:text-purple-200 hover:underline flex items-center gap-0.5 font-medium"
+                  title="Configure Models in Hub Settings"
+                >
+                  <span>Hub Config</span>
+                  <ChevronRight className="w-2.5 h-2.5" />
+                </button>
+              </div>
+
+              {/* Quick Model Selector Pills */}
+              <div className="grid grid-cols-3 gap-1">
+                {AVAILABLE_GEMINI_MODELS.slice(0, 6).map((modelOpt) => {
+                  const isActive = selectedVoiceModel === modelOpt.id;
+                  return (
+                    <button
+                      key={modelOpt.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedVoiceModel(modelOpt.id);
+                        setHomeWaToast(`Voice Model set to ${modelOpt.name}!`);
+                        setTimeout(() => setHomeWaToast(null), 3000);
+                      }}
+                      className={`px-1.5 py-1.5 rounded-xl text-[10px] font-semibold flex flex-col items-center justify-center transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400/60 font-bold'
+                          : 'bg-slate-950/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-slate-800/60'
+                      }`}
+                      title={`${modelOpt.name} - ${modelOpt.tagline} (${modelOpt.speed})`}
+                    >
+                      <span className="truncate max-w-[70px] leading-tight">{modelOpt.name.replace('Gemini ', '')}</span>
+                      <span className={`text-[8px] font-mono leading-none mt-0.5 ${isActive ? 'text-purple-200' : 'text-slate-500'}`}>
+                        {modelOpt.badge}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Hub Voice Assistant Language Switcher */}

@@ -78,6 +78,7 @@ import {
   summarizeCallApi,
   getGcpBillingOptimizationApi,
   getApiUrl,
+  safeFetchJson,
   fetchAssistantMemoriesApi,
   saveAssistantMemoryApi,
   deleteAssistantMemoryApi,
@@ -222,6 +223,8 @@ interface AppContextType {
   storedDocs: UploadedFileDoc[];
   addStoredDoc: (doc: Omit<UploadedFileDoc, 'id'>) => void;
   // Voice & Chat
+  selectedVoiceModel: string;
+  setSelectedVoiceModel: (model: string) => void;
   chatHistory: VoiceMessage[];
   addVoiceMessage: (msg: Omit<VoiceMessage, 'id'>) => void;
   clearChatHistory: () => void;
@@ -999,6 +1002,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [moodEntries, setMoodEntries] = useState<MoodJournalEntry[]>(INITIAL_MOODS);
   const [vaultNotes, setVaultNotes] = useState<EncryptedVaultNote[]>([]);
   const [storedDocs, setStoredDocs] = useState<UploadedFileDoc[]>([]);
+  // Voice Assistant Gemini Model State
+  const [selectedVoiceModel, setSelectedVoiceModelState] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aura_voice_model') || 'gemini-3.8-flash';
+    }
+    return 'gemini-3.8-flash';
+  });
+
+  const setSelectedVoiceModel = (model: string) => {
+    const clean = model?.trim() || 'gemini-3.8-flash';
+    setSelectedVoiceModelState(clean);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('aura_voice_model', clean);
+    }
+    // Also sync to SQLite backend
+    safeFetchJson('/api/config/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        keyName: 'DEFAULT_GEMINI_MODEL',
+        keyValue: clean,
+        description: 'Default Gemini Model for Voice Assistant',
+      }),
+    }).catch(() => {});
+  };
+
   const [chatHistory, setChatHistory] = useState<VoiceMessage[]>(() => {
     try {
       const savedUser = localStorage.getItem('aura_user');
@@ -2497,6 +2526,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteVaultNote,
         storedDocs,
         addStoredDoc,
+        selectedVoiceModel,
+        setSelectedVoiceModel,
         chatHistory,
         addVoiceMessage,
         clearChatHistory,

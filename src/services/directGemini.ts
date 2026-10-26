@@ -8,6 +8,7 @@ export interface DirectChatTurnPayload {
   currentMood?: string;
   includeSpeechAudio?: boolean;
   currentLanguage?: string;
+  model?: string;
   attachment?: {
     name: string;
     mimeType: string;
@@ -134,8 +135,27 @@ Return a valid JSON object matching:
   });
 
   let rawText = '{}';
-  const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+  const configuredDefaultModel =
+    payload.model ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_voice_model') : '') ||
+    'gemini-3.8-flash';
+
+  const defaultPool = [
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.6-flash',
+    'gemini-3.1-flash-lite',
+    'gemini-3.7-flash',
+    'gemini-4-argon',
+    'gemini-2.5-flash',
+  ];
+
+  const CANDIDATE_MODELS = [
+    configuredDefaultModel,
+    ...defaultPool.filter((m) => m !== configuredDefaultModel),
+  ];
   let lastErr: any = null;
+  let successfulModel = configuredDefaultModel;
 
   for (const candidate of CANDIDATE_MODELS) {
     try {
@@ -149,6 +169,7 @@ Return a valid JSON object matching:
       });
       rawText = response.text || '{}';
       lastErr = null;
+      successfulModel = candidate;
       break;
     } catch (modelErr: any) {
       console.warn(`[DirectGemini] Model "${candidate}" quota/error (${modelErr.status || modelErr.message?.slice(0, 50)}), failing over to next model...`);
@@ -196,5 +217,6 @@ Return a valid JSON object matching:
     audioBase64: null,
     savedMemory: savedMemoryRecord,
     isDirectClient: true,
+    modelUsed: successfulModel,
   };
 }

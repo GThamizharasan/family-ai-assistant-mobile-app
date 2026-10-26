@@ -30,6 +30,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { AVAILABLE_GEMINI_MODELS } from '../types';
 import {
   getApiUrl,
   safeFetchJson,
@@ -60,6 +61,8 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
     loadAssistantMemories,
     saveAssistantMemory,
     deleteAssistantMemory,
+    selectedVoiceModel,
+    setSelectedVoiceModel,
   } = useApp();
   const [activeTab, setActiveTab] = useState<'keys' | 'sqlite' | 'assistant'>(initialTab);
 
@@ -230,6 +233,7 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       const keysToSave = [
         { keyName: 'GOOGLE_MAPS_API_KEY', keyValue: googleMapsKey.trim(), description: 'Google Maps GPS & Geocoding Key' },
         { keyName: 'GEMINI_API_KEY', keyValue: geminiKey.trim(), description: 'Google Gemini 3.8 AI & Live Voice API Key' },
+        { keyName: 'DEFAULT_GEMINI_MODEL', keyValue: selectedVoiceModel, description: 'Default Gemini Model for Voice Assistant' },
         { keyName: 'GOOGLE_CLIENT_ID', keyValue: googleClientId.trim(), description: 'Google Identity OAuth Client ID' },
         { keyName: 'WHATSAPP_API_TOKEN', keyValue: whatsAppToken.trim(), description: 'Meta WhatsApp Cloud API Token' },
         { keyName: 'WHATSAPP_PHONE_ID', keyValue: whatsAppPhoneId.trim(), description: 'WhatsApp Business Sender Phone Number ID' },
@@ -562,6 +566,48 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                 <p className="text-[11px] text-slate-400">
                   Stored directly in SQLite (<code className="text-purple-300">hub_api_keys</code>). Powers Aura conversational AI, Live Voice Companion, document summaries, and billionaire roadmap advisory.
                 </p>
+
+                {/* Default Voice Model Selection in Keys Tab */}
+                <div className="pt-3 border-t border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                      <span>Default Voice Assistant Model:</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-bold">
+                      {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name || selectedVoiceModel}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {AVAILABLE_GEMINI_MODELS.map((m) => {
+                      const isSelected = selectedVoiceModel === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedVoiceModel(m.id);
+                            setSaveMessage(`Default model switched to ${m.name}!`);
+                            setTimeout(() => setSaveMessage(null), 3000);
+                          }}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-purple-600/30 border-purple-500 ring-1 ring-purple-400/50 shadow-md shadow-purple-950/50'
+                              : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white text-xs truncate">{m.name.replace('Gemini ', '')}</span>
+                            <span className="text-[8px] px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono font-bold">
+                              {m.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 truncate mt-1">{m.speed}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
 
               {/* Google Maps API Key Card */}
@@ -978,6 +1024,66 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                     <span>{saveMessage}</span>
                   </div>
                 )}
+              </div>
+
+              {/* Gemini Model Selection Section */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-300 text-xs flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Default Gemini Model for Voice Assistant</span>
+                  </label>
+                  <span className="text-[10px] text-purple-300 font-mono font-semibold">
+                    Active: {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name || selectedVoiceModel}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {AVAILABLE_GEMINI_MODELS.map((modelOpt) => {
+                    const isSelected = selectedVoiceModel === modelOpt.id;
+                    return (
+                      <div
+                        key={modelOpt.id}
+                        onClick={() => {
+                          setSelectedVoiceModel(modelOpt.id);
+                          setSaveMessage(`Auro Voice Model configured to ${modelOpt.name}!`);
+                          setTimeout(() => setSaveMessage(null), 3000);
+                        }}
+                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer relative flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-gradient-to-br from-purple-950/70 to-indigo-950/70 border-purple-500 ring-2 ring-purple-500/30 shadow-lg shadow-purple-950/50'
+                            : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 hover:bg-slate-900/60'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="min-w-0 pr-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white text-sm">{modelOpt.name}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-mono font-bold">
+                                {modelOpt.badge}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-1 leading-snug">{modelOpt.tagline}</p>
+                          </div>
+                          <div
+                            className={`w-5 h-5 rounded-full flex items-center justify-center border transition-colors shrink-0 ${
+                              isSelected
+                                ? 'bg-purple-600 border-purple-400 text-white'
+                                : 'border-slate-700 bg-slate-900 text-transparent'
+                            }`}
+                          >
+                            <Check className="w-3 h-3 stroke-[3]" />
+                          </div>
+                        </div>
+
+                        <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
+                          <span className="text-slate-400 font-mono">Speed: <strong className="text-slate-200">{modelOpt.speed}</strong></span>
+                          <span className="text-purple-300 font-medium">{modelOpt.recommendedFor}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Language Selection Grid */}

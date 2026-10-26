@@ -118,16 +118,20 @@ if (process.env.GEMINI_API_KEY) {
 }
 
 function refreshAiClient(): GoogleGenAI | null {
-  if (ai && process.env.GEMINI_API_KEY) return ai;
   try {
     const keys = getHubApiKeysFromSqlite();
+    const modelRecord = keys.find((k) => k.keyName === 'DEFAULT_GEMINI_MODEL' || k.keyName === 'GEMINI_MODEL');
+    if (modelRecord?.keyValue) {
+      process.env.DEFAULT_GEMINI_MODEL = modelRecord.keyValue;
+    }
     const geminiRecord = keys.find((k) => k.keyName === 'GEMINI_API_KEY');
-    if (geminiRecord?.keyValue) {
+    if (geminiRecord?.keyValue && !process.env.GEMINI_API_KEY) {
       process.env.GEMINI_API_KEY = geminiRecord.keyValue;
       ai = getAiClient();
       return ai;
     }
   } catch {}
+  if (ai && process.env.GEMINI_API_KEY) return ai;
   if (process.env.GEMINI_API_KEY) {
     ai = getAiClient();
     return ai;
@@ -139,10 +143,11 @@ function refreshAiClient(): GoogleGenAI | null {
 app.get('/api/health', (_req, res) => {
   refreshAiClient();
   const hasKey = !!process.env.GEMINI_API_KEY;
+  const activeModel = process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash';
   res.json({
     status: 'ok',
     geminiApiKeyConnected: hasKey,
-    model: 'gemini-3.8-flash',
+    model: activeModel,
     modelStatus: hasKey ? 'active_and_verified' : 'ready',
     serverTimestamp: new Date().toISOString(),
     primaryAccount: 'digitaltamilworld@gmail.com',
@@ -554,9 +559,31 @@ Return a valid JSON object matching:
         ? req.headers.authorization.slice(7)
         : null);
 
+    let successfulModel = 'gemini-3.8-flash';
     try {
       if (ai) {
-        const CANDIDATE_MODELS = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.1-flash-lite'];
+        const configuredDefaultModel =
+          req.body.model ||
+          req.body.modelOverride ||
+          process.env.DEFAULT_GEMINI_MODEL ||
+          process.env.GEMINI_MODEL ||
+          'gemini-3.8-flash';
+
+        const defaultPool = [
+          'gemini-3.8-flash',
+          'gemini-3.5-flash',
+          'gemini-3.6-flash',
+          'gemini-3.1-flash-lite',
+          'gemini-3.7-flash',
+          'gemini-4-argon',
+          'gemini-2.5-flash',
+        ];
+
+        const CANDIDATE_MODELS = [
+          configuredDefaultModel,
+          ...defaultPool.filter((m) => m !== configuredDefaultModel),
+        ];
+
         let lastErr: any = null;
         for (const candidate of CANDIDATE_MODELS) {
           try {
@@ -570,6 +597,7 @@ Return a valid JSON object matching:
             });
             rawText = response.text || '{}';
             lastErr = null;
+            successfulModel = candidate;
             break;
           } catch (modelErr: any) {
             console.warn(`[Gemini] Model "${candidate}" returned error (${modelErr.status || modelErr.message?.slice(0, 50)}), failing over to next model...`);
@@ -740,6 +768,7 @@ Return a valid JSON object matching:
     res.json({
       ...parsed,
       audioBase64,
+      modelUsed: successfulModel,
       savedMemory: savedMemoryRecord,
       savedKeepNote: savedKeepNoteRecord,
       savedDriveFile: savedAttachmentRecord,
@@ -2866,6 +2895,8 @@ app.post('/api/config/keys', (req, res) => {
       if (keyValue) {
         ai = getAiClient();
       }
+    } else if (keyName === 'DEFAULT_GEMINI_MODEL' || keyName === 'GEMINI_MODEL') {
+      process.env.DEFAULT_GEMINI_MODEL = keyValue;
     } else if (keyName === 'GOOGLE_MAPS_API_KEY') {
       process.env.GOOGLE_MAPS_API_KEY = keyValue;
     } else if (keyName === 'GOOGLE_CLIENT_ID') {

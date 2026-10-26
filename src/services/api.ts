@@ -120,6 +120,7 @@ export async function sendChatMessage(payload: {
   includeSpeechAudio?: boolean;
   currentLanguage?: string;
   googleAccessToken?: string | null;
+  model?: string;
   attachment?: {
     name: string;
     mimeType: string;
@@ -137,6 +138,17 @@ export async function sendChatMessage(payload: {
     payload.googleAccessToken ||
     (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
 
+  const selectedModel =
+    payload.model ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_voice_model') : null) ||
+    'gemini-3.8-flash';
+
+  const completePayload = {
+    ...payload,
+    googleAccessToken: token,
+    model: selectedModel,
+  };
+
   try {
     const res = await safeFetchJson('/api/chat', {
       method: 'POST',
@@ -144,7 +156,7 @@ export async function sendChatMessage(payload: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ ...payload, googleAccessToken: token }),
+      body: JSON.stringify(completePayload),
     });
 
     if (res && !res.error) {
@@ -153,14 +165,14 @@ export async function sendChatMessage(payload: {
 
     if (isDirectGeminiAvailable()) {
       console.log('[Auro] Backend error. Falling back to direct client-side Gemini...');
-      return await chatWithGeminiDirect(payload);
+      return await chatWithGeminiDirect(completePayload);
     }
     return res;
   } catch (backendErr: any) {
     // If backend server.ts is offline, automatically fall back to direct on-device Gemini
     if (isDirectGeminiAvailable()) {
       console.log('[Auro] Backend server offline. Running direct client-side Gemini...', backendErr.message);
-      return await chatWithGeminiDirect(payload);
+      return await chatWithGeminiDirect(completePayload);
     }
     throw backendErr;
   }

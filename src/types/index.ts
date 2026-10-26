@@ -358,3 +358,70 @@ export interface GcpBillingConfig {
   billingEnabled?: boolean;
 }
 
+export interface GeminiModelOption {
+  id: string;
+  name: string;
+  badge: string;
+  tagline: string;
+  speed: string;
+  color: string;
+  recommendedFor?: string;
+}
+
+export const AVAILABLE_GEMINI_MODELS: GeminiModelOption[] = [
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    badge: 'DEFAULT',
+    tagline: 'Ultra-fast multimodal conversational AI with low latency',
+    speed: 'Ultra-Fast',
+    color: 'emerald',
+    recommendedFor: 'Voice Assistant Default',
+  },
+  {
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    badge: 'BALANCED',
+    tagline: 'High reliability conversational flash with broad quotas',
+    speed: 'Fast',
+    color: 'indigo',
+    recommendedFor: 'Everyday Voice & Chat',
+  },
+  {
+    id: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash-Lite',
+    badge: 'LITE',
+    tagline: 'Lowest latency & lowest quota consumption for rapid turns',
+    speed: 'Lightest',
+    color: 'cyan',
+    recommendedFor: 'Low Quota / Fast Turns',
+  },
+  {
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    badge: 'HYBRID',
+    tagline: 'Hybrid adaptive reasoning with thinking token capability',
+    speed: 'Deep Reasoning',
+    color: 'purple',
+    recommendedFor: 'Complex Advisory',
+  },
+  {
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    badge: 'FRONTIER',
+    tagline: 'Deep strategic reasoning, wealth roadmap & executive planning',
+    speed: 'Frontier AI',
+    color: 'amber',
+    recommendedFor: 'Billionaire Roadmap Analysis',
+  },
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    badge: 'LEGACY',
+    tagline: 'Standard free-tier & Google OAuth fallback model',
+    speed: 'Reliable',
+    color: 'blue',
+    recommendedFor: 'OAuth Token Fallback',
+  },
+];
+

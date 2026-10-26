@@ -31,6 +31,7 @@ import {
   Check,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { AVAILABLE_GEMINI_MODELS } from '../types';
 import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 
@@ -75,6 +76,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
     googleAccessToken,
     signInWithGoogleOAuth,
     syncLiveGoogleData,
+    selectedVoiceModel,
+    setSelectedVoiceModel,
   } = useApp();
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -89,6 +92,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
   const [showMicHelp, setShowMicHelp] = useState(false);
   const [voiceLanguage, setVoiceLanguage] = useState<string>(() => speechEngine.getLanguage());
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [showModelMenu, setShowModelMenu] = useState(false);
   const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
   const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
   const [savedKeepNoteNotice, setSavedKeepNoteNotice] = useState<string | null>(null);
@@ -944,6 +948,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
         currentMood: currentEmotion,
         includeSpeechAudio: !isMuted,
         currentLanguage: voiceLanguage.startsWith('ta') ? 'ta' : 'en',
+        model: selectedVoiceModel,
         attachment: attachmentPayload,
       });
 
@@ -1144,6 +1149,61 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                           <span>{lang.label}</span>
                         </span>
                         {isSelected && <span className="text-emerald-400 text-xs">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Gemini Model Selector Dropdown */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowModelMenu(!showModelMenu)}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30 cursor-pointer"
+                title="Change Voice Assistant Gemini Model"
+              >
+                <Sparkles className="w-3 h-3 text-purple-400" />
+                <span className="font-mono text-[11px] truncate max-w-[100px] sm:max-w-none">
+                  {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name.replace('Gemini ', '') || '3.8 Flash'}
+                </span>
+              </button>
+
+              {showModelMenu && (
+                <div className="absolute right-0 mt-1.5 w-64 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-1.5 z-50">
+                  <div className="px-3 py-1 flex items-center justify-between border-b border-slate-800">
+                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                      Gemini Voice Model
+                    </span>
+                    <span className="text-[9px] text-purple-400 font-mono">SQLite Synced</span>
+                  </div>
+                  {AVAILABLE_GEMINI_MODELS.map((modelOpt) => {
+                    const isSelected = selectedVoiceModel === modelOpt.id;
+                    return (
+                      <button
+                        key={modelOpt.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedVoiceModel(modelOpt.id);
+                          setShowModelMenu(false);
+                        }}
+                        className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-600/30 text-purple-200 font-bold'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white text-xs">{modelOpt.name}</span>
+                            <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-mono font-bold">
+                              {modelOpt.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
+                        </div>
+                        {isSelected && <span className="text-emerald-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
                       </button>
                     );
                   })}
