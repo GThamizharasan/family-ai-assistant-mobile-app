@@ -63,9 +63,9 @@ const CctvLivePlayer: React.FC<{ camera: TapoCameraDevice }> = ({ camera }) => {
   const [isSnapshotFallback, setIsSnapshotFallback] = useState(false);
   const [snapshotUrl, setSnapshotUrl] = useState('');
 
-  const pass = camera.cameraAccountPassword || 'iloveyou';
-  const user = camera.cameraAccountUser || 'thamizh';
-  const ip = camera.localIp || '172.20.10.2';
+  const pass = camera.cameraAccountPassword || 'CMVijayTVK12$';
+  const user = camera.cameraAccountUser || 'thamiz_admin';
+  const ip = camera.localIp || '192.168.1.67';
   const rtspUrl = camera.rtspStreamUrl || `rtsp://${user}:${encodeURIComponent(pass)}@${ip}:554/stream1`;
   const streamUrl = `/api/camera/stream?camId=${camera.id}&url=${encodeURIComponent(rtspUrl)}&t=${key}`;
 
@@ -140,7 +140,7 @@ const CctvLivePlayer: React.FC<{ camera: TapoCameraDevice }> = ({ camera }) => {
           <AlertCircle className="w-8 h-8 text-rose-400" />
           <p className="text-xs font-bold text-white">Camera Offline or Unreachable on LAN</p>
           <p className="text-[10px] text-slate-400 max-w-xs">
-            Verify camera IP ({ip}) and credentials ({user}:iloveyou) on port 554.
+            Verify camera IP ({ip}) and credentials ({user}:••••••••) on port 554.
           </p>
           <button
             onClick={handleRefresh}
@@ -157,7 +157,31 @@ const CctvLivePlayer: React.FC<{ camera: TapoCameraDevice }> = ({ camera }) => {
 export const SmartDevicesTab: React.FC = () => {
   const { user } = useApp();
   const [activeFilter, setActiveFilter] = useState<'all' | 'cameras' | 'watches' | 'settings'>('all');
-  const [cameras, setCameras] = useState<TapoCameraDevice[]>(INITIAL_TAPO_CAMERAS);
+  const [cameras, setCameras] = useState<TapoCameraDevice[]>(() => {
+    try {
+      const saved = localStorage.getItem('aura_tapo_cameras');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((cam: TapoCameraDevice) => {
+            if (cam.id === 'cam-01') {
+              return {
+                ...cam,
+                localIp: cam.localIp || '192.168.1.67',
+                cameraAccountUser: cam.cameraAccountUser || 'thamiz_admin',
+                cameraAccountPassword: cam.cameraAccountPassword || 'CMVijayTVK12$',
+                rtspStreamUrl:
+                  cam.rtspStreamUrl ||
+                  'rtsp://thamiz_admin:CMVijayTVK12$@192.168.1.67:554/stream1',
+              };
+            }
+            return cam;
+          });
+        }
+      }
+    } catch (e) {}
+    return INITIAL_TAPO_CAMERAS;
+  });
   const [watches, setWatches] = useState<SmartWatchDevice[]>(INITIAL_SMART_WATCHES);
   const [tapoAccount, setTapoAccount] = useState<TapoAccountConfig>(INITIAL_TAPO_ACCOUNT);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('cam-01');

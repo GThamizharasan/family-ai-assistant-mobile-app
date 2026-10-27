@@ -25,7 +25,7 @@ export interface UserProfile {
 export interface FamilyMember {
   id: string;
   name: string;
-  relationship: 'Self (Head)' | 'Spouse' | 'Eldest Son' | 'Daughter' | 'Parent';
+  relationship: string;
   role: UserRole;
   email: string;
   phone?: string;
@@ -45,6 +45,9 @@ export interface FamilyMember {
   todayMood: string;
   emergencySosActive: boolean;
   activationCodeUsed?: string;
+  bloodGroup?: string;
+  medicalNotes?: string;
+  emergencyContact?: string;
 }
 
 export interface ActivationCode {

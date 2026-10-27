@@ -125,6 +125,7 @@ type IntercomListener = (msg: IntercomMessage) => void;
 type SosListener = (sos: EmergencySosBroadcast) => void;
 type StateMutationListener = (mutation: { type: string; payload: any; fromDeviceId: string }) => void;
 export type CodeSyncListener = (data: { type: 'code_generated' | 'code_redeemed' | 'code_reactivated'; codeRecord: any; memberName?: string; relationship?: string }) => void;
+export type LocationUpdateListener = (data: { deviceId: string; memberId?: string; location: any }) => void;
 
 class FamilyRelayService {
   private ws: WebSocket | null = null;
@@ -142,6 +143,7 @@ class FamilyRelayService {
   private sosListeners: Set<SosListener> = new Set();
   private stateListeners: Set<StateMutationListener> = new Set();
   private codeListeners: Set<CodeSyncListener> = new Set();
+  private locationListeners: Set<LocationUpdateListener> = new Set();
   private activePeers: ConnectedPeer[] = [];
 
   constructor() {
@@ -289,6 +291,10 @@ class FamilyRelayService {
         this.codeListeners.forEach((listener) => listener(data));
         break;
       }
+      case 'location_update': {
+        this.locationListeners.forEach((listener) => listener(data));
+        break;
+      }
     }
   }
 
@@ -369,6 +375,30 @@ class FamilyRelayService {
   public onCodeSync(listener: CodeSyncListener): () => void {
     this.codeListeners.add(listener);
     return () => this.codeListeners.delete(listener);
+  }
+
+  public broadcastLocation(
+    location: {
+      lat: number;
+      lng: number;
+      address: string;
+      accuracy?: number;
+      batteryLevel?: number;
+      timestamp?: string;
+    },
+    memberId?: string
+  ) {
+    this.send({
+      type: 'location_update',
+      familyId: this.familyId,
+      memberId: memberId || this.memberId,
+      location,
+    });
+  }
+
+  public onLocationUpdate(listener: LocationUpdateListener): () => void {
+    this.locationListeners.add(listener);
+    return () => this.locationListeners.delete(listener);
   }
 
   private notifyPeers() {

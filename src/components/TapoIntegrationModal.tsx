@@ -50,13 +50,22 @@ export const TapoIntegrationModal: React.FC<TapoIntegrationModalProps> = ({
 
   const selectedCam = cameras.find((c) => c.id === selectedCamId) || cameras[0];
 
-  const [camIp, setCamIp] = useState(selectedCam?.localIp || '172.20.10.2');
-  const [camUser, setCamUser] = useState(selectedCam?.cameraAccountUser || 'thamizh');
-  const [camPassword, setCamPassword] = useState(selectedCam?.cameraAccountPassword || 'iloveyou');
+  const [camIp, setCamIp] = useState(selectedCam?.localIp || '192.168.1.67');
+  const [camUser, setCamUser] = useState(selectedCam?.cameraAccountUser || 'thamiz_admin');
+  const [camPassword, setCamPassword] = useState(selectedCam?.cameraAccountPassword || 'CMVijayTVK12$');
   const [showCamPassword, setShowCamPassword] = useState(false);
   const [webrtcUrl, setWebrtcUrl] = useState(
-    selectedCam?.webrtcBridgeUrl || `http://${selectedCam?.localIp || '172.20.10.2'}:1984/stream.html?src=tapo-c210`
+    selectedCam?.webrtcBridgeUrl || `ws://${selectedCam?.localIp || '192.168.1.67'}:1984/api/ws?src=${selectedCam?.id || 'cam-01'}`
   );
+
+  React.useEffect(() => {
+    if (selectedCam) {
+      setCamIp(selectedCam.localIp || '192.168.1.67');
+      setCamUser(selectedCam.cameraAccountUser || 'thamiz_admin');
+      setCamPassword(selectedCam.cameraAccountPassword || 'CMVijayTVK12$');
+      setWebrtcUrl(selectedCam.webrtcBridgeUrl || `ws://${selectedCam.localIp || '192.168.1.67'}:1984/api/ws?src=${selectedCam.id}`);
+    }
+  }, [selectedCamId, selectedCam, isOpen]);
 
   if (!isOpen) return null;
 

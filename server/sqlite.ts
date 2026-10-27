@@ -79,6 +79,37 @@ export interface SharedFamilyRecord {
   updatedAt: string;
 }
 
+export interface FamilyMemberRecord {
+  id: string;
+  familyId: string;
+  name: string;
+  relationship: string;
+  role: 'primary' | 'secondary' | 'guest';
+  email: string;
+  phone?: string;
+  avatar: string;
+  isOnline: boolean;
+  liveLocation: {
+    lat: number;
+    lng: number;
+    address: string;
+    timestamp: string;
+    batteryLevel: number;
+    status: string;
+  };
+  geofenceStatus: string;
+  allowanceMonthly: number;
+  monthlySpent: number;
+  todayMood: string;
+  emergencySosActive: boolean;
+  activationCodeUsed?: string;
+  bloodGroup?: string;
+  medicalNotes?: string;
+  emergencyContact?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface InterInstanceCommunicationRecord {
   id: string;
   familyId: string;
@@ -291,6 +322,30 @@ export async function initSqliteDb(): Promise<Database> {
       title TEXT NOT NULL,
       data_json TEXT NOT NULL,
       updated_by_device TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS family_members (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      relationship TEXT NOT NULL,
+      role TEXT NOT NULL,
+      email TEXT,
+      phone TEXT,
+      avatar TEXT,
+      is_online INTEGER DEFAULT 1,
+      live_location_json TEXT,
+      geofence_status TEXT,
+      allowance_monthly REAL DEFAULT 0,
+      monthly_spent REAL DEFAULT 0,
+      today_mood TEXT,
+      emergency_sos_active INTEGER DEFAULT 0,
+      activation_code_used TEXT,
+      blood_group TEXT,
+      medical_notes TEXT,
+      emergency_contact TEXT,
+      created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 
@@ -538,6 +593,178 @@ export async function initSqliteDb(): Promise<Database> {
     }
   }
 
+  // Seed and synchronize canonical family members with user-specified personal details
+  const canonicalSeed = [
+    {
+      id: 'fam-01',
+      family_id: 'family-aura-primary',
+      name: 'Thamizh (Primary)',
+      relationship: 'Self (Head)',
+      role: 'primary',
+      email: 'chinna.tamil2000@gmail.com',
+      phone: '+44 7721877710',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      is_online: 1,
+      live_location_json: JSON.stringify({
+        lat: 51.58931,
+        lng: 0.05054,
+        address: 'Live GPS Device Position (±215m)',
+        timestamp: 'Just now',
+        batteryLevel: 87,
+        status: 'Safe at Home',
+      }),
+      geofence_status: 'home',
+      allowance_monthly: 4500,
+      monthly_spent: 8400,
+      today_mood: 'Laser Focused & Energized ⚡',
+      emergency_sos_active: 0,
+      activation_code_used: 'AURA-HEAD-0001',
+      blood_group: 'O+',
+      medical_notes: 'Allergies: None. Routine wellness check: Optimal.',
+      emergency_contact: '+91 98408 05665',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: 'fam-02',
+      family_id: 'family-aura-primary',
+      name: 'Selvapriya (Spouse)',
+      relationship: 'Spouse',
+      role: 'secondary',
+      email: 'selvapriya2005@gmail.com',
+      phone: '+44 7721977705',
+      avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
+      is_online: 1,
+      live_location_json: JSON.stringify({
+        lat: 13.04187,
+        lng: 80.23383,
+        address: 'Wellness & Design Center, T. Nagar, Chennai',
+        timestamp: '2 mins ago',
+        batteryLevel: 73,
+        status: 'Safe at Home',
+      }),
+      geofence_status: 'home',
+      allowance_monthly: 4500,
+      monthly_spent: 6200,
+      today_mood: 'Calm & Creative ✨',
+      emergency_sos_active: 0,
+      activation_code_used: '8492-7104-9932-1845',
+      blood_group: 'B+',
+      medical_notes: 'Daily routine vitamins.',
+      emergency_contact: '+44 7721877710',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: 'fam-03',
+      family_id: 'family-aura-primary',
+      name: 'Maaran (Son)',
+      relationship: 'Younger Son',
+      role: 'secondary',
+      email: 'thamizharasangurusamy@gmail.com',
+      phone: '+44 7721 877687',
+      avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
+      is_online: 1,
+      live_location_json: JSON.stringify({
+        lat: 13.01185,
+        lng: 80.23391,
+        address: 'Robotics & STEM Lab, IIT Madras',
+        timestamp: '5 mins ago',
+        batteryLevel: 63,
+        status: 'Safe at Home',
+      }),
+      geofence_status: 'home',
+      allowance_monthly: 0,
+      monthly_spent: 1850,
+      today_mood: 'Curious & Inquisitive 🔬',
+      emergency_sos_active: 0,
+      activation_code_used: '4190-2856-7719-3320',
+      blood_group: 'A+',
+      medical_notes: 'Youth sports clearance verified.',
+      emergency_contact: '+44 7721877710',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    {
+      id: 'fam-04',
+      family_id: 'family-aura-primary',
+      name: 'Kavinmozhi',
+      relationship: 'Daughter',
+      role: 'secondary',
+      email: 'kavinmozhiselvapriya@gmail.com',
+      phone: '+44 7721877692',
+      avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+      is_online: 1,
+      live_location_json: JSON.stringify({
+        lat: 13.08304,
+        lng: 80.27077,
+        address: 'Innovation Campus, Anna Nagar, Chennai',
+        timestamp: 'Just now',
+        batteryLevel: 93,
+        status: 'Safe at Home',
+      }),
+      geofence_status: 'home',
+      allowance_monthly: 0,
+      monthly_spent: 0,
+      today_mood: 'Happy & Energized 🌟',
+      emergency_sos_active: 0,
+      activation_code_used: '9021-4873-1129-8834',
+      blood_group: 'O+',
+      medical_notes: 'Routine pediatric wellness verified.',
+      emergency_contact: '+44 7721877710',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+  ];
+
+  for (const m of canonicalSeed) {
+    db.run(
+      `INSERT INTO family_members (id, family_id, name, relationship, role, email, phone, avatar, is_online, live_location_json, geofence_status, allowance_monthly, monthly_spent, today_mood, emergency_sos_active, activation_code_used, blood_group, medical_notes, emergency_contact, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         name=excluded.name,
+         relationship=excluded.relationship,
+         role=excluded.role,
+         email=excluded.email,
+         phone=excluded.phone,
+         avatar=excluded.avatar,
+         is_online=excluded.is_online,
+         live_location_json=excluded.live_location_json,
+         geofence_status=excluded.geofence_status,
+         allowance_monthly=excluded.allowance_monthly,
+         monthly_spent=excluded.monthly_spent,
+         today_mood=excluded.today_mood,
+         emergency_sos_active=excluded.emergency_sos_active,
+         blood_group=excluded.blood_group,
+         medical_notes=excluded.medical_notes,
+         emergency_contact=excluded.emergency_contact,
+         updated_at=excluded.updated_at`,
+      [
+        m.id,
+        m.family_id,
+        m.name,
+        m.relationship,
+        m.role,
+        m.email,
+        m.phone,
+        m.avatar,
+        m.is_online,
+        m.live_location_json,
+        m.geofence_status,
+        m.allowance_monthly,
+        m.monthly_spent,
+        m.today_mood,
+        m.emergency_sos_active,
+        m.activation_code_used,
+        m.blood_group,
+        m.medical_notes,
+        m.emergency_contact,
+        m.created_at,
+        m.updated_at,
+      ]
+    );
+  }
+
   // Seed initial Hub API keys from environment if present
   const defaultKeys = [
     {
@@ -661,6 +888,52 @@ export function redeemActivationCodeInSqlite(
     `UPDATE activation_codes SET status = 'redeemed', redeemed_by = ?, updated_at = ? WHERE code = ?`,
     [`${memberName}${relationship ? ` (${relationship})` : ''}`, new Date().toISOString(), found.code]
   );
+
+  // Link or create member in family_members table
+  try {
+    const existingMembers = getFamilyMembersFromSqlite('family-aura-primary');
+    const match = existingMembers.find(
+      (m) =>
+        m.name.toLowerCase() === memberName.toLowerCase() ||
+        (relationship && m.relationship.toLowerCase() === relationship.toLowerCase())
+    );
+
+    if (match) {
+      upsertFamilyMemberInSqlite({
+        ...match,
+        activationCodeUsed: found.code,
+        isOnline: true,
+      });
+    } else {
+      upsertFamilyMemberInSqlite({
+        id: `fam-${Date.now()}`,
+        familyId: 'family-aura-primary',
+        name: memberName,
+        relationship: relationship || 'Family Member',
+        role: 'secondary',
+        email: `${memberName.toLowerCase().replace(/[^a-z0-9]/g, '')}@family.aura`,
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+        isOnline: true,
+        liveLocation: {
+          lat: 13.0827,
+          lng: 80.2707,
+          address: 'Chennai Residence (Safe Geofence)',
+          timestamp: 'Just now',
+          batteryLevel: 95,
+          status: 'Safe at Home',
+        },
+        geofenceStatus: 'home',
+        allowanceMonthly: 5000,
+        monthlySpent: 0,
+        todayMood: 'Welcomed into Family Circle 💖',
+        emergencySosActive: false,
+        activationCodeUsed: found.code,
+      });
+    }
+  } catch (e) {
+    console.warn('[SQLite] Could not auto-link redeemed member to family table:', e);
+  }
+
   scheduleSave();
 
   found.status = 'redeemed';
@@ -966,6 +1239,134 @@ export function getSharedFamilyRecordsFromSqlite(familyId: string, recordType?: 
     updatedByDevice: row[5] as string,
     updatedAt: row[6] as string,
   }));
+}
+
+// -------------------------------------------------------------
+// Family Members in SQLite
+// -------------------------------------------------------------
+export function getFamilyMembersFromSqlite(familyId = 'family-aura-primary'): FamilyMemberRecord[] {
+  if (!db) return [];
+  const res = db.exec(
+    `SELECT id, family_id, name, relationship, role, email, phone, avatar, is_online, live_location_json, geofence_status, allowance_monthly, monthly_spent, today_mood, emergency_sos_active, activation_code_used, blood_group, medical_notes, emergency_contact, created_at, updated_at
+     FROM family_members WHERE family_id = ? ORDER BY created_at ASC`,
+    [familyId]
+  );
+  if (!res.length) return [];
+  return res[0].values.map((row) => {
+    let loc = {
+      lat: 13.0827,
+      lng: 80.2707,
+      address: 'Chennai Global Campus',
+      timestamp: 'Just now',
+      batteryLevel: 90,
+      status: 'Safe at Home',
+    };
+    try {
+      if (row[9]) loc = JSON.parse(row[9] as string);
+    } catch {}
+
+    return {
+      id: row[0] as string,
+      familyId: row[1] as string,
+      name: row[2] as string,
+      relationship: row[3] as string,
+      role: row[4] as 'primary' | 'secondary' | 'guest',
+      email: (row[5] as string) || '',
+      phone: (row[6] as string) || '',
+      avatar: (row[7] as string) || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+      isOnline: Boolean(row[8]),
+      liveLocation: loc,
+      geofenceStatus: (row[10] as string) || 'home',
+      allowanceMonthly: Number(row[11]) || 0,
+      monthlySpent: Number(row[12]) || 0,
+      todayMood: (row[13] as string) || 'Calm & Focused ✨',
+      emergencySosActive: Boolean(row[14]),
+      activationCodeUsed: (row[15] as string) || undefined,
+      bloodGroup: (row[16] as string) || undefined,
+      medicalNotes: (row[17] as string) || undefined,
+      emergencyContact: (row[18] as string) || undefined,
+      createdAt: row[19] as string,
+      updatedAt: row[20] as string,
+    };
+  });
+}
+
+export function upsertFamilyMemberInSqlite(
+  member: Partial<FamilyMemberRecord> & { id: string; name: string }
+): FamilyMemberRecord {
+  if (!db) throw new Error('SQLite DB not initialized');
+  const now = new Date().toISOString();
+  const familyId = member.familyId || 'family-aura-primary';
+
+  const defaultLoc = member.liveLocation || {
+    lat: 13.0827,
+    lng: 80.2707,
+    address: 'Chennai Innovation Campus',
+    timestamp: 'Just now',
+    batteryLevel: 90,
+    status: 'Safe at Home',
+  };
+
+  db.run(
+    `INSERT INTO family_members (
+       id, family_id, name, relationship, role, email, phone, avatar, is_online, live_location_json,
+       geofence_status, allowance_monthly, monthly_spent, today_mood, emergency_sos_active, activation_code_used,
+       blood_group, medical_notes, emergency_contact, created_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       relationship = excluded.relationship,
+       role = excluded.role,
+       email = excluded.email,
+       phone = excluded.phone,
+       avatar = excluded.avatar,
+       is_online = excluded.is_online,
+       live_location_json = excluded.live_location_json,
+       geofence_status = excluded.geofence_status,
+       allowance_monthly = excluded.allowance_monthly,
+       monthly_spent = excluded.monthly_spent,
+       today_mood = excluded.today_mood,
+       emergency_sos_active = excluded.emergency_sos_active,
+       activation_code_used = COALESCE(excluded.activation_code_used, family_members.activation_code_used),
+       blood_group = excluded.blood_group,
+       medical_notes = excluded.medical_notes,
+       emergency_contact = excluded.emergency_contact,
+       updated_at = excluded.updated_at`,
+    [
+      member.id,
+      familyId,
+      member.name,
+      member.relationship || 'Family Member',
+      member.role || 'secondary',
+      member.email || '',
+      member.phone || '',
+      member.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+      member.isOnline !== false ? 1 : 0,
+      JSON.stringify(defaultLoc),
+      member.geofenceStatus || 'home',
+      member.allowanceMonthly !== undefined ? member.allowanceMonthly : 5000,
+      member.monthlySpent !== undefined ? member.monthlySpent : 0,
+      member.todayMood || 'Calm & Focused ✨',
+      member.emergencySosActive ? 1 : 0,
+      member.activationCodeUsed || null,
+      member.bloodGroup || null,
+      member.medicalNotes || null,
+      member.emergencyContact || null,
+      member.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  const members = getFamilyMembersFromSqlite(familyId);
+  return members.find((m) => m.id === member.id)!;
+}
+
+export function deleteFamilyMemberFromSqlite(id: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM family_members WHERE id = ?', [id]);
+  scheduleSave();
+  return true;
 }
 
 // -------------------------------------------------------------

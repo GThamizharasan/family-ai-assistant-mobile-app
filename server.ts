@@ -1,6 +1,6 @@
 import express from 'express';
 import http from 'http';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, GenerateVideosOperation, Modality, LiveServerMessage } from '@google/genai';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -43,9 +43,13 @@ import {
   deleteGoogleDriveFileFromSqlite,
   saveDeviceStorageMetricsToSqlite,
   getLatestDeviceStorageMetricsFromSqlite,
+  getFamilyMembersFromSqlite,
+  upsertFamilyMemberInSqlite,
+  deleteFamilyMemberFromSqlite,
   getSqliteDbStats,
   formatFamilyCode,
   normalizeFamilyCode,
+  type FamilyMemberRecord,
   type ActivationCodeRecord,
   type AssistantMemoryRecord,
   type VoiceConversationRecord,
@@ -2483,6 +2487,124 @@ app.post('/api/family/codes/reactivate', (req, res) => {
   }
 });
 
+// =========================================================================
+// FAMILY MEMBERS CRUD API (SQLite Authoritative & Multi-Device Sync)
+// =========================================================================
+app.get('/api/family/members', (req, res) => {
+  try {
+    const familyId = (req.query.familyId as string) || 'family-aura-primary';
+    const members = getFamilyMembersFromSqlite(familyId);
+    res.json({ success: true, storage: 'sqlite', members });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/family/members', (req, res) => {
+  try {
+    const {
+      name,
+      relationship = 'Family Member',
+      role = 'secondary',
+      email = '',
+      phone = '',
+      avatar,
+      allowanceMonthly = 5000,
+      bloodGroup,
+      medicalNotes,
+      emergencyContact,
+      liveLocation,
+      geofenceStatus = 'home',
+      todayMood = 'Calm & Happy ✨',
+    } = req.body || {};
+
+    if (!name?.trim()) {
+      return res.status(400).json({ success: false, error: 'Member name is required' });
+    }
+
+    const id = req.body.id || `fam-${Date.now()}`;
+    const newMember = upsertFamilyMemberInSqlite({
+      id,
+      familyId: 'family-aura-primary',
+      name: name.trim(),
+      relationship,
+      role,
+      email: email.trim(),
+      phone: phone.trim(),
+      avatar: avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      isOnline: true,
+      allowanceMonthly: Number(allowanceMonthly) || 0,
+      monthlySpent: 0,
+      bloodGroup,
+      medicalNotes,
+      emergencyContact,
+      liveLocation: liveLocation || {
+        lat: 13.0827,
+        lng: 80.2707,
+        address: 'Innovation Campus, Anna Nagar, Chennai',
+        timestamp: 'Just now',
+        batteryLevel: 98,
+        status: 'Safe at Home',
+      },
+      geofenceStatus,
+      todayMood,
+      emergencySosActive: false,
+    });
+
+    broadcastToFamily('family-aura-primary', {
+      type: 'family_member_added',
+      member: newMember,
+      storage: 'sqlite',
+    });
+
+    res.json({ success: true, member: newMember, storage: 'sqlite' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/family/members/:id', (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ success: false, error: 'Member ID required' });
+
+    const updated = upsertFamilyMemberInSqlite({
+      ...req.body,
+      id,
+      name: req.body.name || 'Member',
+    });
+
+    broadcastToFamily('family-aura-primary', {
+      type: 'family_member_updated',
+      member: updated,
+      storage: 'sqlite',
+    });
+
+    res.json({ success: true, member: updated, storage: 'sqlite' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/family/members/:id', (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ success: false, error: 'Member ID required' });
+
+    deleteFamilyMemberFromSqlite(id);
+
+    broadcastToFamily('family-aura-primary', {
+      type: 'family_member_deleted',
+      memberId: id,
+      storage: 'sqlite',
+    });
+
+    res.json({ success: true, memberId: id, storage: 'sqlite' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // REST Diagnostics: Get currently active instances in family circle (merged SQLite + WS)
 app.get('/api/family/peers', (req, res) => {
   try {
@@ -2916,6 +3038,68 @@ app.post('/api/config/keys', (req, res) => {
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// =========================================================================
+// GIT REPOSITORY STATUS & SYNCHRONIZATION API
+// =========================================================================
+app.get('/api/git/status', (_req, res) => {
+  exec('git status -s && git log -n 1 --oneline && git remote -v', (err, stdout) => {
+    if (err) {
+      return res.json({ hasGit: false, error: err.message });
+    }
+    exec('git rev-parse --abbrev-ref HEAD', (_bErr, bStdout) => {
+      exec('git remote get-url origin', (_rErr, rStdout) => {
+        exec('git log -n 1 --pretty=format:"%h - %s (%cr)"', (_lErr, lStdout) => {
+          res.json({
+            success: true,
+            hasGit: true,
+            branch: bStdout?.trim() || 'main',
+            remotes: rStdout?.trim() || 'https://github.com/GThamizharasan/family-ai-assistant-mobile-app.git',
+            lastCommit: lStdout?.trim() || '',
+            status: stdout?.trim() || 'Working tree clean',
+          });
+        });
+      });
+    });
+  });
+});
+
+app.post('/api/git/sync', (req, res) => {
+  const { repoUrl, branch = 'main', token } = req.body;
+  const targetRepo = repoUrl ? repoUrl.trim() : 'https://github.com/GThamizharasan/family-ai-assistant-mobile-app.git';
+  const targetBranch = branch ? branch.trim() : 'main';
+
+  // Construct safe remote url if token provided
+  let authUrl = targetRepo;
+  if (token && targetRepo.startsWith('https://')) {
+    authUrl = targetRepo.replace('https://', `https://${token}@`);
+  }
+
+  const cmd = `git remote set-url origin "${authUrl}" && git fetch origin ${targetBranch} && git reset --hard origin/${targetBranch}`;
+
+  exec(cmd, { timeout: 35000 }, (err, stdout, stderr) => {
+    // Sanitize any token from output
+    const cleanStdout = token ? stdout.replaceAll(token, 'ghp_••••') : stdout;
+    const cleanStderr = token ? stderr.replaceAll(token, 'ghp_••••') : stderr;
+
+    if (err) {
+      return res.status(500).json({
+        success: false,
+        error: `Git sync failed: ${err.message}`,
+        stderr: cleanStderr,
+      });
+    }
+
+    exec('git log -n 1 --pretty=format:"%h - %s (%cr)"', (_lErr, lStdout) => {
+      res.json({
+        success: true,
+        message: `Successfully synchronized with GitHub (${targetBranch})`,
+        latestCommit: lStdout?.trim(),
+        pullLog: cleanStdout || 'Updated cleanly to HEAD',
+      });
+    });
+  });
 });
 
 // Start Server with Vite Middleware in Development

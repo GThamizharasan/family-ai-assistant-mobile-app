@@ -51,8 +51,10 @@ import {
   CreditCard,
   FileText,
   Languages,
+  FolderGit2,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
+import { GitHubSyncModal } from '../GitHubSyncModal';
 import { useApp } from '../../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../../types';
 import { speechEngine, SUPPORTED_VOICE_LANGUAGES, VoiceLanguage } from '../../services/speech';
@@ -125,6 +127,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
   const [selectedHomeEmail, setSelectedHomeEmail] = useState<GoogleEmailMessage | null>(null);
   const [showHomeDigestModal, setShowHomeDigestModal] = useState(false);
   const [showKeysAndSqliteModal, setShowKeysAndSqliteModal] = useState(false);
+  const [showGitHubSyncModal, setShowGitHubSyncModal] = useState(false);
   const [hubModalTab, setHubModalTab] = useState<'keys' | 'sqlite' | 'assistant'>('keys');
   const [hubVoiceLang, setHubVoiceLang] = useState<string>(() => speechEngine.getLanguage());
 
@@ -283,6 +286,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
           >
             <Key className="w-4 h-4 text-indigo-400" />
             <span className="hidden sm:inline">Keys & SQLite</span>
+          </button>
+
+          {/* GitHub Repository Sync button */}
+          <button
+            onClick={() => setShowGitHubSyncModal(true)}
+            className="p-2 rounded-xl bg-slate-800/80 hover:bg-emerald-950/50 text-emerald-300 border border-emerald-500/30 transition-colors flex items-center gap-1.5 text-xs font-medium"
+            title="Pull and sync latest source code from GitHub repository"
+          >
+            <FolderGit2 className="w-4 h-4 text-emerald-400" />
+            <span className="hidden sm:inline">GitHub Sync</span>
           </button>
 
           {/* Biometric Lock button */}
@@ -2400,6 +2413,12 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
         isOpen={showKeysAndSqliteModal}
         onClose={() => setShowKeysAndSqliteModal(false)}
         initialTab={hubModalTab}
+      />
+
+      {/* GitHub Repository Live Sync Modal */}
+      <GitHubSyncModal
+        isOpen={showGitHubSyncModal}
+        onClose={() => setShowGitHubSyncModal(false)}
       />
     </div>
   );

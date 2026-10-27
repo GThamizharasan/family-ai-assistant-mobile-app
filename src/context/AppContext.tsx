@@ -84,6 +84,11 @@ import {
   deleteAssistantMemoryApi,
   fetchVoiceConversationsApi,
   clearVoiceConversationsApi,
+  fetchFamilyMembersApi,
+  addFamilyMemberApi,
+  updateFamilyMemberApi,
+  deleteFamilyMemberApi,
+  redeemFamilyCodeApi,
   type AssistantMemoryItem,
 } from '../services/api';
 import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
@@ -192,6 +197,14 @@ interface AppContextType {
   triggerEmergencySos: (memberId: string) => void;
   clearEmergencySos: (memberId: string) => void;
   updateMemberAllowance: (memberId: string, allowance: number) => void;
+  updateMemberLocation: (
+    memberId: string,
+    location: Partial<FamilyMember['liveLocation']>,
+    geofenceStatus?: FamilyMember['geofenceStatus']
+  ) => void;
+  addFamilyMember: (memberData: Partial<FamilyMember> & { name: string; relationship: string }) => Promise<FamilyMember>;
+  updateFamilyMember: (id: string, updates: Partial<FamilyMember>) => Promise<FamilyMember>;
+  deleteFamilyMember: (id: string) => Promise<boolean>;
   // Tasks (Eisenhower)
   tasks: EisenhowerTask[];
   addTask: (task: Omit<EisenhowerTask, 'id'>) => void;
@@ -280,70 +293,107 @@ const INITIAL_FAMILY: FamilyMember[] = [
     relationship: 'Self (Head)',
     role: 'primary',
     email: 'chinna.tamil2000@gmail.com',
-    phone: '+91 98408 05665',
+    phone: '+44 7721877710',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
-      lat: 13.0827,
-      lng: 80.2707,
-      address: 'Innovation Campus, Chennai / Global Family Office',
+      lat: 51.58931,
+      lng: 0.05054,
+      address: 'Live GPS Device Position (±215m)',
       timestamp: 'Just now',
-      batteryLevel: 94,
+      batteryLevel: 87,
       status: 'Safe at Home',
     },
     geofenceStatus: 'home',
-    allowanceMonthly: 25000,
+    allowanceMonthly: 4500,
     monthlySpent: 8400,
     todayMood: 'Laser Focused & Energized ⚡',
     emergencySosActive: false,
+    bloodGroup: 'O+',
+    medicalNotes: 'Allergies: None. Routine wellness check: Optimal.',
+    emergencyContact: '+91 98408 05665',
+    activationCodeUsed: 'AURA-HEAD-0001',
   },
   {
     id: 'fam-02',
     name: 'Selvapriya (Spouse)',
     relationship: 'Spouse',
     role: 'secondary',
-    email: 'selvapriya.family@gmail.com',
-    phone: '+91 96779 01342',
+    email: 'selvapriya2005@gmail.com',
+    phone: '+44 7721977705',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
-      lat: 13.0418,
-      lng: 80.2341,
-      address: 'Wellness & Design Center, T. Nagar',
+      lat: 13.04187,
+      lng: 80.23383,
+      address: 'Wellness & Design Center, T. Nagar, Chennai',
       timestamp: '2 mins ago',
-      batteryLevel: 82,
-      status: 'At Work / Campus',
+      batteryLevel: 73,
+      status: 'Safe at Home',
     },
-    geofenceStatus: 'work',
-    allowanceMonthly: 15000,
+    geofenceStatus: 'home',
+    allowanceMonthly: 4500,
     monthlySpent: 6200,
     todayMood: 'Calm & Creative ✨',
     emergencySosActive: false,
     activationCodeUsed: '8492-7104-9932-1845',
+    bloodGroup: 'B+',
+    medicalNotes: 'Daily routine vitamins.',
+    emergencyContact: '+44 7721877710',
   },
   {
     id: 'fam-03',
     name: 'Maaran (Son)',
-    relationship: 'Eldest Son',
+    relationship: 'Younger Son',
     role: 'secondary',
-    email: 'maaran.k@gmail.com',
-    phone: '+44 7721 877710',
+    email: 'thamizharasangurusamy@gmail.com',
+    phone: '+44 7721 877687',
     avatar: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&auto=format&fit=crop&q=80',
     isOnline: true,
     liveLocation: {
-      lat: 13.0112,
-      lng: 80.2337,
+      lat: 13.01185,
+      lng: 80.23391,
       address: 'Robotics & STEM Lab, IIT Madras',
       timestamp: '5 mins ago',
-      batteryLevel: 67,
-      status: 'At Work / Campus',
+      batteryLevel: 63,
+      status: 'Safe at Home',
     },
-    geofenceStatus: 'school',
-    allowanceMonthly: 4000,
+    geofenceStatus: 'home',
+    allowanceMonthly: 0,
     monthlySpent: 1850,
     todayMood: 'Curious & Inquisitive 🔬',
     emergencySosActive: false,
     activationCodeUsed: '4190-2856-7719-3320',
+    bloodGroup: 'A+',
+    medicalNotes: 'Youth sports clearance verified.',
+    emergencyContact: '+44 7721877710',
+  },
+  {
+    id: 'fam-04',
+    name: 'Kavinmozhi',
+    relationship: 'Daughter',
+    role: 'secondary',
+    email: 'kavinmozhiselvapriya@gmail.com',
+    phone: '+44 7721877692',
+    avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80',
+    isOnline: true,
+    liveLocation: {
+      lat: 13.08304,
+      lng: 80.27077,
+      address: 'Innovation Campus, Anna Nagar, Chennai',
+      timestamp: 'Just now',
+      batteryLevel: 93,
+      status: 'Safe at Home',
+    },
+    geofenceStatus: 'home',
+    allowanceMonthly: 0,
+    monthlySpent: 0,
+    todayMood: 'Happy & Energized 🌟',
+    emergencySosActive: false,
+    activationCodeUsed: '9021-4873-1129-8834',
+    bloodGroup: 'O+',
+    medicalNotes: 'Routine pediatric wellness verified.',
+    emergencyContact: '+44 7721877710',
   },
 ];
 
@@ -871,18 +921,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (saved) {
       try {
         const parsed: FamilyMember[] = JSON.parse(saved);
-        return parsed.map((m) => {
-          if (m.name.includes('Karthik') || m.name.includes('Thamiz')) {
-            return { ...m, name: 'Thamizh (Primary)', phone: '+91 98408 05665' };
-          }
-          if (m.name.includes('Ananya') || m.name.includes('Selvapriya')) {
-            return { ...m, name: 'Selvapriya (Spouse)', phone: '+91 96779 01342', email: 'selvapriya.family@gmail.com' };
-          }
-          if (m.name.includes('Aravind') || m.name.includes('Maaran')) {
-            return { ...m, name: 'Maaran (Son)', phone: '+44 7721 877710', email: 'maaran.k@gmail.com' };
-          }
-          return m;
-        });
+        if (Array.isArray(parsed) && parsed.length >= 4) {
+          return parsed.map((m) => {
+            if (m.id === 'fam-01' || m.name.includes('Thamiz')) {
+              return { ...m, name: 'Thamizh (Primary)', phone: '+44 7721877710', email: 'chinna.tamil2000@gmail.com' };
+            }
+            if (m.id === 'fam-02' || m.name.includes('Selvapriya')) {
+              return { ...m, name: 'Selvapriya (Spouse)', phone: '+44 7721977705', email: 'selvapriya2005@gmail.com' };
+            }
+            if (m.id === 'fam-03' || m.name.includes('Maaran')) {
+              return { ...m, name: 'Maaran (Son)', phone: '+44 7721 877687', email: 'thamizharasangurusamy@gmail.com' };
+            }
+            if (m.id === 'fam-04' || m.name.includes('Kavinmozhi')) {
+              return { ...m, name: 'Kavinmozhi', phone: '+44 7721877692', email: 'kavinmozhiselvapriya@gmail.com' };
+            }
+            return m;
+          });
+        }
       } catch {
         return INITIAL_FAMILY;
       }
@@ -1338,6 +1393,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             m.id === mutation.payload.memberId ? { ...m, allowanceMonthly: mutation.payload.allowance } : m
           )
         );
+      } else if (mutation.type === 'family_member_added' && mutation.payload?.member) {
+        setFamilyMembers((prev) => {
+          if (prev.some((m) => m.id === mutation.payload.member.id)) return prev;
+          return [...prev, mutation.payload.member];
+        });
+      } else if (mutation.type === 'family_member_updated' && mutation.payload?.member) {
+        setFamilyMembers((prev) =>
+          prev.map((m) => (m.id === mutation.payload.member.id ? { ...m, ...mutation.payload.member } : m))
+        );
+      } else if (mutation.type === 'family_member_deleted' && mutation.payload?.memberId) {
+        setFamilyMembers((prev) => prev.filter((m) => m.id !== mutation.payload.memberId));
       }
     });
 
@@ -1383,14 +1449,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     });
 
+    const unsubLocation = familyRelay.onLocationUpdate((data) => {
+      if (data.location && data.memberId) {
+        setFamilyMembers((prev) =>
+          prev.map((m) => {
+            const targetId = data.memberId || '';
+            if (m.id === targetId || (targetId && m.name.toLowerCase().includes(targetId.toLowerCase()))) {
+              return {
+                ...m,
+                liveLocation: {
+                  ...m.liveLocation,
+                  lat: data.location.lat,
+                  lng: data.location.lng,
+                  address: data.location.address || m.liveLocation.address,
+                  timestamp: data.location.timestamp || 'Just now',
+                  batteryLevel: data.location.batteryLevel !== undefined ? data.location.batteryLevel : m.liveLocation.batteryLevel,
+                  status: data.location.status || m.liveLocation.status,
+                },
+                geofenceStatus: data.location.geofenceStatus || m.geofenceStatus,
+              };
+            }
+            return m;
+          })
+        );
+      }
+    });
+
     return () => {
       unsubPeers();
       unsubIntercom();
       unsubSos();
       unsubMutations();
       unsubCodeSync();
+      unsubLocation();
     };
   }, [user.email, user.name, user.id, role]);
+
+  // Synchronize authoritative family members from SQLite backend on mount
+  useEffect(() => {
+    fetchFamilyMembersApi()
+      .then((res) => {
+        if (res?.success && Array.isArray(res.members) && res.members.length > 0) {
+          setFamilyMembers(res.members);
+        }
+      })
+      .catch((err) => {
+        console.warn('Could not fetch family members from SQLite:', err);
+      });
+  }, []);
 
   // Sync server-authoritative activation codes on mount
   useEffect(() => {
@@ -1799,6 +1905,124 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateMemberAllowance = (memberId: string, allowance: number) => {
     setFamilyMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, allowanceMonthly: allowance } : m)));
+  };
+
+  const updateMemberLocation = (
+    memberId: string,
+    location: Partial<FamilyMember['liveLocation']>,
+    geofenceStatus?: FamilyMember['geofenceStatus']
+  ) => {
+    setFamilyMembers((prev) =>
+      prev.map((m) => {
+        if (m.id === memberId) {
+          const updatedLoc = {
+            ...m.liveLocation,
+            ...location,
+            timestamp: location.timestamp || 'Just now',
+          };
+          return {
+            ...m,
+            liveLocation: updatedLoc,
+            geofenceStatus: geofenceStatus || m.geofenceStatus,
+          };
+        }
+        return m;
+      })
+    );
+
+    // Relay across active peer instances
+    if (location.lat && location.lng) {
+      familyRelay.broadcastLocation(
+        {
+          lat: location.lat,
+          lng: location.lng,
+          address: location.address || '',
+          batteryLevel: location.batteryLevel,
+          timestamp: location.timestamp || 'Just now',
+        },
+        memberId
+      );
+    }
+  };
+
+  const addFamilyMember = async (memberData: Partial<FamilyMember> & { name: string; relationship: string }) => {
+    const id = memberData.id || `fam-${Date.now()}`;
+    const newMember: FamilyMember = {
+      id,
+      name: memberData.name.trim(),
+      relationship: memberData.relationship || 'Family Member',
+      role: memberData.role || 'secondary',
+      email: memberData.email?.trim() || `${memberData.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@family.aura`,
+      phone: memberData.phone?.trim() || '',
+      avatar: memberData.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+      isOnline: true,
+      liveLocation: memberData.liveLocation || {
+        lat: 13.0827,
+        lng: 80.2707,
+        address: 'Innovation Campus, Anna Nagar, Chennai',
+        timestamp: 'Just now',
+        batteryLevel: 98,
+        status: 'Safe at Home',
+      },
+      geofenceStatus: memberData.geofenceStatus || 'home',
+      allowanceMonthly: memberData.allowanceMonthly !== undefined ? memberData.allowanceMonthly : 5000,
+      monthlySpent: memberData.monthlySpent || 0,
+      todayMood: memberData.todayMood || 'Calm & Happy ✨',
+      emergencySosActive: false,
+      bloodGroup: memberData.bloodGroup,
+      medicalNotes: memberData.medicalNotes,
+      emergencyContact: memberData.emergencyContact,
+    };
+
+    setFamilyMembers((prev) => [...prev.filter((m) => m.id !== id), newMember]);
+
+    try {
+      await addFamilyMemberApi(newMember);
+    } catch (e) {
+      console.warn('Could not persist new member to SQLite:', e);
+    }
+
+    familyRelay.broadcastStateMutation('family_member_added', { member: newMember });
+    return newMember;
+  };
+
+  const updateFamilyMember = async (id: string, updates: Partial<FamilyMember>) => {
+    let updatedMember: FamilyMember | null = null;
+    setFamilyMembers((prev) =>
+      prev.map((m) => {
+        if (m.id === id) {
+          updatedMember = {
+            ...m,
+            ...updates,
+            liveLocation: updates.liveLocation ? { ...m.liveLocation, ...updates.liveLocation } : m.liveLocation,
+          };
+          return updatedMember;
+        }
+        return m;
+      })
+    );
+
+    if (updatedMember) {
+      try {
+        await updateFamilyMemberApi(id, updatedMember);
+      } catch (e) {
+        console.warn('Could not persist member update to SQLite:', e);
+      }
+      familyRelay.broadcastStateMutation('family_member_updated', { member: updatedMember });
+      return updatedMember;
+    }
+    throw new Error('Member not found');
+  };
+
+  const deleteFamilyMember = async (id: string) => {
+    setFamilyMembers((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await deleteFamilyMemberApi(id);
+    } catch (e) {
+      console.warn('Could not delete member from SQLite:', e);
+    }
+    familyRelay.broadcastStateMutation('family_member_deleted', { memberId: id });
+    return true;
   };
 
   // Tasks
@@ -2503,6 +2727,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         triggerEmergencySos,
         clearEmergencySos,
         updateMemberAllowance,
+        updateMemberLocation,
+        addFamilyMember,
+        updateFamilyMember,
+        deleteFamilyMember,
         tasks,
         addTask,
         toggleTask,

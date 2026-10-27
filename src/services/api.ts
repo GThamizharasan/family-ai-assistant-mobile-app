@@ -401,3 +401,40 @@ export async function clearVoiceConversationsApi(userEmail: string): Promise<{ s
     }
   );
 }
+
+// -------------------------------------------------------------
+// Family Members & 16-Digit Code API
+// -------------------------------------------------------------
+export async function fetchFamilyMembersApi(): Promise<any> {
+  return safeFetchJson('/api/family/members');
+}
+
+export async function addFamilyMemberApi(memberData: any): Promise<any> {
+  return safeFetchJson('/api/family/members', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(memberData),
+  });
+}
+
+export async function updateFamilyMemberApi(id: string, memberData: any): Promise<any> {
+  return safeFetchJson(`/api/family/members/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(memberData),
+  });
+}
+
+export async function deleteFamilyMemberApi(id: string): Promise<any> {
+  return safeFetchJson(`/api/family/members/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function redeemFamilyCodeApi(code: string, memberName: string, relationship?: string): Promise<any> {
+  return safeFetchJson('/api/family/codes/redeem', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, memberName, relationship }),
+  });
+}
