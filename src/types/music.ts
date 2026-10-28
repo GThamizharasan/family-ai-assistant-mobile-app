@@ -45,6 +45,8 @@ export const MUSIC_GENRES: MusicGenre[] = [
   'Lo-Fi Chill',
 ];
 
+export type EqualizerPreset = 'lossless' | 'bass_boost' | 'vocal' | 'acoustic' | 'ambient';
+
 export interface AudioPlaybackState {
   currentTrack: MusicTrack | null;
   isPlaying: boolean;
@@ -57,4 +59,7 @@ export interface AudioPlaybackState {
   shuffle: boolean;
   sleepTimerMinutes: number | null;
   sleepTimerRemainingSeconds: number | null;
+  equalizerPreset?: EqualizerPreset;
+  queueLength?: number;
 }
+

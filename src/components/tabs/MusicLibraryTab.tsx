@@ -25,6 +25,11 @@ import {
   Trash2,
   Sliders,
   Share2,
+  SkipBack,
+  SkipForward,
+  Repeat,
+  Shuffle,
+  AlignLeft,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { MusicTrack, MusicGenre, MUSIC_GENRES, AudioPlaybackState } from '../../types/music';
@@ -95,6 +100,7 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
     try {
       const data = await fetchMusicTracks(user?.email);
       setTracks(data);
+      musicAudioEngine.setQueue(data);
     } catch (e) {
       console.warn('loadTracks error:', e);
     } finally {
@@ -106,7 +112,8 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
     if (playbackState.currentTrack?.id === track.id) {
       musicAudioEngine.togglePlay();
     } else {
-      await musicAudioEngine.playTrack(track);
+      const activeQueue = filteredTracks.length > 0 ? filteredTracks : tracks;
+      await musicAudioEngine.playTrack(track, activeQueue);
       await incrementTrackPlay(track.id);
       // Increment local minutes listened
       setTodayMinutesListened((prev) => {
@@ -118,17 +125,11 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
   };
 
   const handleNextTrack = () => {
-    if (!tracks.length) return;
-    const currentIdx = tracks.findIndex((t) => t.id === playbackState.currentTrack?.id);
-    const nextIdx = (currentIdx + 1) % tracks.length;
-    handlePlayTrack(tracks[nextIdx]);
+    musicAudioEngine.nextTrack();
   };
 
   const handlePreviousTrack = () => {
-    if (!tracks.length) return;
-    const currentIdx = tracks.findIndex((t) => t.id === playbackState.currentTrack?.id);
-    const prevIdx = currentIdx <= 0 ? tracks.length - 1 : currentIdx - 1;
-    handlePlayTrack(tracks[prevIdx]);
+    musicAudioEngine.previousTrack();
   };
 
   const handleToggleFavorite = async (track: MusicTrack, e: React.MouseEvent) => {
@@ -997,6 +998,122 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Production Apple Music Mini-Player Bar (when a track is loaded/playing and modal is closed) */}
+      {playbackState.currentTrack && !isPlayerModalOpen && (
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-6 sm:w-[420px] z-40 animate-in slide-in-from-bottom duration-300">
+          <div
+            onClick={() => setIsPlayerModalOpen(true)}
+            className="group relative overflow-hidden rounded-2xl bg-slate-900/95 hover:bg-slate-900 backdrop-blur-xl border border-indigo-500/35 p-2.5 shadow-2xl shadow-indigo-950/60 cursor-pointer transition-all hover:scale-[1.01]"
+          >
+            {/* Top Micro Progress Bar */}
+            <div className="absolute top-0 left-0 right-0 h-1 bg-slate-800">
+              <div
+                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 transition-all duration-300"
+                style={{
+                  width: `${playbackState.duration > 0 ? (playbackState.currentTime / playbackState.duration) * 100 : 0}%`,
+                }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2.5 pt-0.5">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                <div className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-slate-700 shadow-md">
+                  <img
+                    src={playbackState.currentTrack.artworkUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80'}
+                    alt={playbackState.currentTrack.title}
+                    className="w-full h-full object-cover"
+                  />
+                  {playbackState.isPlaying && (
+                    <div className="absolute inset-0 bg-indigo-950/40 flex items-center justify-center">
+                      <span className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-bold text-white truncate max-w-[150px]">
+                      {playbackState.currentTrack.title}
+                    </h4>
+                    {playbackState.currentTrack.lyrics && (
+                      <span className="px-1 py-0.2 rounded bg-indigo-500/20 text-indigo-300 text-[8px] font-mono font-bold">
+                        Lyrics
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-400 truncate">
+                    {playbackState.currentTrack.artist}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Controls */}
+              <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                {/* Shuffle toggle */}
+                <button
+                  onClick={() => musicAudioEngine.toggleShuffle()}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    playbackState.shuffle ? 'text-indigo-400 bg-indigo-500/20' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title={playbackState.shuffle ? 'Shuffle On' : 'Shuffle Off'}
+                >
+                  <Shuffle className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Previous */}
+                <button
+                  onClick={() => musicAudioEngine.previousTrack()}
+                  className="p-1.5 text-slate-400 hover:text-white transition-colors"
+                  title="Previous"
+                >
+                  <SkipBack className="w-4 h-4 fill-current" />
+                </button>
+
+                {/* Play/Pause */}
+                <button
+                  onClick={() => musicAudioEngine.togglePlay()}
+                  className="p-2 rounded-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-md shadow-indigo-600/30 transition-all active:scale-95"
+                  title={playbackState.isPlaying ? 'Pause' : 'Play'}
+                >
+                  {playbackState.isPlaying ? (
+                    <Pause className="w-4 h-4 fill-white" />
+                  ) : (
+                    <Play className="w-4 h-4 fill-white translate-x-0.5" />
+                  )}
+                </button>
+
+                {/* Next */}
+                <button
+                  onClick={() => musicAudioEngine.nextTrack()}
+                  className="p-1.5 text-slate-400 hover:text-white transition-colors"
+                  title="Next"
+                >
+                  <SkipForward className="w-4 h-4 fill-current" />
+                </button>
+
+                {/* Repeat */}
+                <button
+                  onClick={() => musicAudioEngine.toggleRepeat()}
+                  className={`relative p-1.5 rounded-lg transition-colors ${
+                    playbackState.repeatMode !== 'off'
+                      ? 'text-indigo-400 bg-indigo-500/20 font-bold'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                  title={`Repeat: ${playbackState.repeatMode}`}
+                >
+                  <Repeat className="w-3.5 h-3.5" />
+                  {playbackState.repeatMode === 'one' && (
+                    <span className="absolute -top-1 -right-0.5 px-0.5 bg-indigo-600 text-white text-[7px] font-bold rounded-full">
+                      1
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

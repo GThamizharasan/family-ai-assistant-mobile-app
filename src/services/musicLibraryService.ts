@@ -23,7 +23,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 210,
-    lyrics: 'Harmonies of lifelong love, generational wisdom, and steady guidance...',
+    lyrics: `[00:05] Harmonies of lifelong love and deep gratitude
+[00:30] Generational wisdom, integrity, and steady guidance
+[00:58] Walking forward hand in hand through every horizon
+[01:28] Building a lasting foundation of joy and peace
+[01:58] Safe in our family circle, united forever`,
     driveFileId: 'gdf-music-001',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / Classical & Wellness',
@@ -42,7 +46,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=chill-abstract-intention-12099.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 180,
-    lyrics: 'Deep focus, crystal clarity, visionary architecture, effortless momentum...',
+    lyrics: `[00:04] Deep focus, crystal clarity, and effortless flow
+[00:25] Visionary architecture shaped by discipline and grit
+[00:52] Mastering every moment with calm confidence
+[01:20] Creating high-leverage outcomes for our future
+[01:45] Unstoppable momentum, grounded in purpose`,
     driveFileId: 'gdf-music-002',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / Ambient & Study',
@@ -61,7 +69,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=sweet-lullaby-piano-version-10906.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1532767153582-b1a0e5145009?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 240,
-    lyrics: 'Sleep peacefully under starlight, dreaming of infinite worlds and boundless courage...',
+    lyrics: `[00:06] Sleep peacefully under starlight, Maaran and Kavinmozhi
+[00:35] Dreaming of infinite worlds, boundless play, and courage
+[01:10] The gentle night wraps you in warmth and peace
+[01:45] Tomorrow awaits with sunshine and loving hearts
+[02:10] Rest sweet dreams, protected and cherished always`,
     driveFileId: 'gdf-music-003',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / Family Lullaby',
@@ -80,7 +92,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2021/09/06/audio_73e721a329.mp3?filename=indian-meditation-flute-7848.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 225,
-    lyrics: 'மகிழ்ச்சியும் அமைதியும் நிறைந்த பண்பாட்டு நல்லிசை...',
+    lyrics: `[00:06] மகிழ்ச்சியும் அமைதியும் நிறைந்த பண்பாட்டு நல்லிசை
+[00:32] தலைமுறை தலைமுறையாய் ஒளிரும் அன்பு நெறி
+[01:05] வீணை நாதமும் புல்லாங்குழல் இசையும் தரும் அமைதி
+[01:40] குடும்பத்தின் வலிமை நமது கூட்டுப் பண்பாடு
+[02:08] என்றென்றும் செழிக்கும் அன்பு இல்லம்`,
     driveFileId: 'gdf-music-004',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / Tamil Melodies & Tradition',
@@ -99,7 +115,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_c3501258ef.mp3?filename=cinematic-epic-emotional-112423.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 195,
-    lyrics: 'Rise with purpose, build lasting institutions, empower generations...',
+    lyrics: `[00:06] Rise with unshakeable purpose and fearless vision
+[00:30] Build lasting institutions that stand the test of time
+[00:58] Empowering generations with honor, strength, and grace
+[01:28] Our legacy written in courage and compassion
+[01:55] True sovereignty is elevating everyone around you`,
     driveFileId: 'gdf-music-005',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / Cinematic',
@@ -118,7 +138,11 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=tropical-summer-music-111658.mp3',
     artworkUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600&auto=format&fit=crop&q=80',
     durationSeconds: 165,
-    lyrics: 'Warm breeze along the coast, sun dipping beneath the golden horizon...',
+    lyrics: `[00:04] Warm ocean breeze along the Chennai and London coasts
+[00:26] Sun dipping beneath the golden glowing horizon
+[00:52] Celebrations of health, vitality, and family happiness
+[01:20] Joyful melodies echoing through the evening sky
+[01:45] Peace in our hearts, gratitude for another beautiful day`,
     driveFileId: 'gdf-music-006',
     driveWebViewLink: 'https://drive.google.com',
     driveFolderPath: 'Family Circle / Apple Music / AI Studio Lyria',

@@ -1,7 +1,7 @@
 // Sovereign Musical Library Real Audio Engine (Web Audio & HTML5 Audio Hybrid)
 // Supports real streaming, MP3/WAV playback, synthesized harmonic themes, and live AudioContext AnalyserNode frequency waveforms.
 
-import { MusicTrack, AudioPlaybackState } from '../types/music';
+import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../types/music';
 import { getApiUrl } from './api';
 
 export type AudioEngineListener = (state: AudioPlaybackState) => void;
@@ -11,10 +11,15 @@ class MusicAudioEngine {
   private audioCtx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private sourceNode: MediaElementAudioSourceNode | null = null;
+  private eqBassNode: BiquadFilterNode | null = null;
+  private eqMidNode: BiquadFilterNode | null = null;
+  private eqTrebleNode: BiquadFilterNode | null = null;
   private synthGainNode: GainNode | null = null;
   private synthInterval: number | null = null;
   private sleepTimerId: number | null = null;
   private retryStage: number = 0;
+  private queue: MusicTrack[] = [];
+  private shuffledQueue: MusicTrack[] = [];
   private listeners: Set<AudioEngineListener> = new Set();
 
   private state: AudioPlaybackState = {
@@ -29,6 +34,8 @@ class MusicAudioEngine {
     shuffle: false,
     sleepTimerMinutes: null,
     sleepTimerRemainingSeconds: null,
+    equalizerPreset: 'lossless',
+    queueLength: 0,
   };
 
   constructor() {
@@ -114,8 +121,7 @@ class MusicAudioEngine {
         this.seek(0);
         this.play();
       } else {
-        this.state.isPlaying = false;
-        this.notify();
+        this.nextTrack(true);
       }
     });
 
@@ -178,10 +184,36 @@ class MusicAudioEngine {
         this.analyser.fftSize = 128;
         this.analyser.smoothingTimeConstant = 0.8;
 
+        // Create 3-Band Equalizer (Bass 100Hz, Mid 1kHz, Treble 4kHz)
+        this.eqBassNode = this.audioCtx.createBiquadFilter();
+        this.eqBassNode.type = 'lowshelf';
+        this.eqBassNode.frequency.value = 100;
+        this.eqBassNode.gain.value = 0;
+
+        this.eqMidNode = this.audioCtx.createBiquadFilter();
+        this.eqMidNode.type = 'peaking';
+        this.eqMidNode.frequency.value = 1000;
+        this.eqMidNode.Q.value = 1.0;
+        this.eqMidNode.gain.value = 0;
+
+        this.eqTrebleNode = this.audioCtx.createBiquadFilter();
+        this.eqTrebleNode.type = 'highshelf';
+        this.eqTrebleNode.frequency.value = 4000;
+        this.eqTrebleNode.gain.value = 0;
+
+        // Apply saved preset if any
+        if (this.state.equalizerPreset) {
+          this.setEqualizerPreset(this.state.equalizerPreset);
+        }
+
         if (this.audioEl && !this.sourceNode) {
           try {
             this.sourceNode = this.audioCtx.createMediaElementSource(this.audioEl);
-            this.sourceNode.connect(this.analyser);
+            // Chain: source -> eqBass -> eqMid -> eqTreble -> analyser -> destination
+            this.sourceNode.connect(this.eqBassNode);
+            this.eqBassNode.connect(this.eqMidNode);
+            this.eqMidNode.connect(this.eqTrebleNode);
+            this.eqTrebleNode.connect(this.analyser);
             this.analyser.connect(this.audioCtx.destination);
           } catch (connErr) {
             console.warn('[MusicAudioEngine] MediaElementSource connect notice:', connErr);
@@ -210,12 +242,58 @@ class MusicAudioEngine {
     return { ...this.state };
   }
 
-  public async playTrack(track: MusicTrack) {
+  public setQueue(tracks: MusicTrack[], keepCurrent = true) {
+    if (!Array.isArray(tracks) || tracks.length === 0) return;
+    this.queue = [...tracks];
+    this.state.queueLength = this.queue.length;
+
+    if (this.state.shuffle) {
+      this.generateShuffledQueue(keepCurrent ? this.state.currentTrack?.id : undefined);
+    }
+
+    this.notify();
+  }
+
+  public getQueue(): MusicTrack[] {
+    return this.state.shuffle && this.shuffledQueue.length > 0
+      ? [...this.shuffledQueue]
+      : [...this.queue];
+  }
+
+  private generateShuffledQueue(firstTrackId?: string) {
+    if (!this.queue.length) {
+      this.shuffledQueue = [];
+      return;
+    }
+    const pool = [...this.queue];
+    const current = pool.find((t) => t.id === firstTrackId);
+    const others = pool.filter((t) => t.id !== firstTrackId);
+
+    // Modern Fisher-Yates shuffle
+    for (let i = others.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [others[i], others[j]] = [others[j], others[i]];
+    }
+
+    this.shuffledQueue = current ? [current, ...others] : others;
+  }
+
+  public async playTrack(track: MusicTrack, queueContext?: MusicTrack[]) {
     this.stopSynthesizer();
     this.retryStage = 0;
     this.initAudioContext();
     if (this.audioCtx?.state === 'suspended') {
       await this.audioCtx.resume().catch(() => {});
+    }
+
+    if (queueContext && queueContext.length > 0) {
+      this.setQueue(queueContext, true);
+    } else if (!this.queue.some((t) => t.id === track.id)) {
+      this.queue.push(track);
+      this.state.queueLength = this.queue.length;
+      if (this.state.shuffle) {
+        this.generateShuffledQueue(track.id);
+      }
     }
 
     this.state.currentTrack = track;
@@ -233,13 +311,83 @@ class MusicAudioEngine {
         this.state.isPlaying = true;
       } catch (err) {
         console.warn('[MusicAudioEngine] Playback start notice:', err);
-        // Start harmonic synth playback for smooth listening experience
         this.startHarmonicSynthesizer(track.genre);
       }
     } else {
       this.startHarmonicSynthesizer(track.genre);
     }
     this.notify();
+  }
+
+  public async nextTrack(fromEnded = false) {
+    if (fromEnded && this.state.repeatMode === 'one') {
+      this.seek(0);
+      await this.play();
+      return;
+    }
+
+    const activeList = this.state.shuffle && this.shuffledQueue.length > 0
+      ? this.shuffledQueue
+      : this.queue;
+
+    if (!activeList.length) return;
+
+    const currentId = this.state.currentTrack?.id;
+    let currentIdx = activeList.findIndex((t) => t.id === currentId);
+    if (currentIdx === -1) currentIdx = 0;
+
+    const nextIdx = currentIdx + 1;
+
+    if (nextIdx < activeList.length) {
+      await this.playTrack(activeList[nextIdx]);
+    } else {
+      // Reached the end of the playlist
+      if (this.state.repeatMode === 'all') {
+        if (this.state.shuffle) {
+          this.generateShuffledQueue();
+          if (this.shuffledQueue.length > 0) {
+            await this.playTrack(this.shuffledQueue[0]);
+          }
+        } else {
+          await this.playTrack(activeList[0]);
+        }
+      } else {
+        // Repeat mode is OFF
+        if (fromEnded) {
+          this.pause();
+          this.seek(0);
+        } else {
+          // User clicked Next manually, loop back to start
+          await this.playTrack(activeList[0]);
+        }
+      }
+    }
+  }
+
+  public async previousTrack() {
+    // If more than 3 seconds in, restart track like Apple Music
+    if (this.state.currentTime > 3) {
+      this.seek(0);
+      return;
+    }
+
+    const activeList = this.state.shuffle && this.shuffledQueue.length > 0
+      ? this.shuffledQueue
+      : this.queue;
+
+    if (!activeList.length) return;
+
+    const currentId = this.state.currentTrack?.id;
+    let currentIdx = activeList.findIndex((t) => t.id === currentId);
+    if (currentIdx === -1) currentIdx = 0;
+
+    if (currentIdx > 0) {
+      await this.playTrack(activeList[currentIdx - 1]);
+    } else if (this.state.repeatMode === 'all') {
+      await this.playTrack(activeList[activeList.length - 1]);
+    } else {
+      this.seek(0);
+    }
   }
 
   public async play() {
@@ -321,15 +469,65 @@ class MusicAudioEngine {
     this.notify();
   }
 
-  public toggleRepeat() {
+  public toggleRepeat(): 'off' | 'all' | 'one' {
     const modes: Array<'off' | 'all' | 'one'> = ['off', 'all', 'one'];
     const nextIdx = (modes.indexOf(this.state.repeatMode) + 1) % modes.length;
     this.state.repeatMode = modes[nextIdx];
     this.notify();
+    return this.state.repeatMode;
   }
 
-  public toggleShuffle() {
+  public toggleShuffle(): boolean {
     this.state.shuffle = !this.state.shuffle;
+    if (this.state.shuffle) {
+      this.generateShuffledQueue(this.state.currentTrack?.id);
+    }
+    this.notify();
+    return this.state.shuffle;
+  }
+
+  public setEqualizerPreset(preset: EqualizerPreset) {
+    this.state.equalizerPreset = preset;
+    if (!this.audioCtx) return;
+
+    let bassGain = 0;
+    let midGain = 0;
+    let trebleGain = 0;
+
+    switch (preset) {
+      case 'bass_boost':
+        bassGain = 6;
+        midGain = 0;
+        trebleGain = 1.5;
+        break;
+      case 'vocal':
+        bassGain = -2;
+        midGain = 5;
+        trebleGain = 2.5;
+        break;
+      case 'acoustic':
+        bassGain = 2;
+        midGain = 2;
+        trebleGain = 4;
+        break;
+      case 'ambient':
+        bassGain = 4;
+        midGain = -1;
+        trebleGain = 1;
+        break;
+      case 'lossless':
+      default:
+        bassGain = 0;
+        midGain = 0;
+        trebleGain = 0;
+        break;
+    }
+
+    const t = this.audioCtx.currentTime;
+    if (this.eqBassNode) this.eqBassNode.gain.setValueAtTime(bassGain, t);
+    if (this.eqMidNode) this.eqMidNode.gain.setValueAtTime(midGain, t);
+    if (this.eqTrebleNode) this.eqTrebleNode.gain.setValueAtTime(trebleGain, t);
+
     this.notify();
   }
 
