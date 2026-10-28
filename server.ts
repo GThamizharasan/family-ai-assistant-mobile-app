@@ -49,6 +49,8 @@ import {
   deleteMusicTrackFromSqlite,
   toggleMusicTrackFavoriteInSqlite,
   incrementMusicTrackPlayCountInSqlite,
+  saveTrackAudioContentToSqlite,
+  getTrackAudioContentFromSqlite,
   saveDeviceStorageMetricsToSqlite,
   getLatestDeviceStorageMetricsFromSqlite,
   getFamilyMembersFromSqlite,
@@ -3028,6 +3030,118 @@ app.post('/api/music/library', (req, res) => {
       timestamp: new Date().toISOString(),
     });
     res.json({ success: true, track });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Local SQLite & Drive Streaming Audio Player Endpoint
+app.get('/api/music/library/:id/audio', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const audioData = getTrackAudioContentFromSqlite(id);
+
+    // 1. If audio binary content is stored in SQLite, stream directly with range support
+    if (audioData?.audioContentBase64 && audioData.audioContentBase64.length > 20) {
+      const buffer = Buffer.from(audioData.audioContentBase64, 'base64');
+      const mimeType = audioData.mimeType || 'audio/mpeg';
+      const range = req.headers.range;
+
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : buffer.length - 1;
+        const chunkSize = end - start + 1;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${buffer.length}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': mimeType,
+          'Cache-Control': 'public, max-age=31536000',
+        });
+        return res.end(buffer.subarray(start, end + 1));
+      } else {
+        res.writeHead(200, {
+          'Content-Length': buffer.length,
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=31536000',
+        });
+        return res.end(buffer);
+      }
+    }
+
+    // 2. If not stored yet in SQLite, but has driveFileId, attempt to stream/cache from Drive if token provided
+    const userOAuthToken =
+      (req.query.accessToken as string) ||
+      (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+
+    if (audioData?.driveFileId && userOAuthToken) {
+      try {
+        const driveRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${audioData.driveFileId}?alt=media`,
+          { headers: { Authorization: `Bearer ${userOAuthToken}` } }
+        );
+        if (driveRes.ok) {
+          const ab = await driveRes.arrayBuffer();
+          const driveBuf = Buffer.from(ab);
+          const mime = driveRes.headers.get('content-type') || 'audio/mpeg';
+
+          // Asynchronously persist into SQLite so subsequent plays/refreshes are instant!
+          saveTrackAudioContentToSqlite(id, driveBuf.toString('base64'), mime);
+
+          res.writeHead(200, {
+            'Content-Length': driveBuf.length,
+            'Content-Type': mime,
+            'Accept-Ranges': 'bytes',
+          });
+          return res.end(driveBuf);
+        }
+      } catch (dErr) {
+        console.warn('Drive stream fetch notice:', dErr);
+      }
+    }
+
+    // 3. Fallback: check tracks in SQLite for remote audioUrl
+    const tracks = getMusicTracksFromSqlite();
+    const track = tracks.find((t) => t.id === id);
+    if (track?.audioUrl && !track.audioUrl.startsWith('/api/') && !track.audioUrl.includes('drive.google.com/file/d/')) {
+      try {
+        const remoteRes = await fetch(track.audioUrl);
+        if (remoteRes.ok) {
+          const ab = await remoteRes.arrayBuffer();
+          const remoteBuf = Buffer.from(ab);
+          const mime = remoteRes.headers.get('content-type') || 'audio/mpeg';
+          saveTrackAudioContentToSqlite(id, remoteBuf.toString('base64'), mime);
+          res.writeHead(200, {
+            'Content-Length': remoteBuf.length,
+            'Content-Type': mime,
+            'Accept-Ranges': 'bytes',
+          });
+          return res.end(remoteBuf);
+        }
+      } catch (rErr) {
+        console.warn('Remote stream fetch notice:', rErr);
+      }
+    }
+
+    res.status(404).send('Audio stream not available for this track');
+  } catch (err: any) {
+    res.status(500).send(`Stream error: ${err.message}`);
+  }
+});
+
+// Cache audio content directly into SQLite for a track
+app.post('/api/music/library/:id/cache-audio', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { audioContentBase64, mimeType = 'audio/mpeg' } = req.body;
+    if (!audioContentBase64) {
+      return res.status(400).json({ success: false, error: 'audioContentBase64 is required' });
+    }
+    const ok = saveTrackAudioContentToSqlite(id, audioContentBase64, mimeType);
+    res.json({ success: ok, audioUrl: `/api/music/library/${id}/audio` });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -14,6 +14,8 @@ export interface MusicTrack {
   driveFileId?: string;
   driveWebViewLink?: string;
   driveFolderPath?: string;
+  audioContentBase64?: string;
+  audioMimeType?: string;
   isFavorite: boolean;
   playCount: number;
   lastPlayedAt?: string;

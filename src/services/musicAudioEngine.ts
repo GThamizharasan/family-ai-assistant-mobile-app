@@ -2,6 +2,7 @@
 // Supports real streaming, MP3/WAV playback, synthesized harmonic themes, and live AudioContext AnalyserNode frequency waveforms.
 
 import { MusicTrack, AudioPlaybackState } from '../types/music';
+import { getApiUrl } from './api';
 
 export type AudioEngineListener = (state: AudioPlaybackState) => void;
 
@@ -13,6 +14,7 @@ class MusicAudioEngine {
   private synthGainNode: GainNode | null = null;
   private synthInterval: number | null = null;
   private sleepTimerId: number | null = null;
+  private retryStage: number = 0;
   private listeners: Set<AudioEngineListener> = new Set();
 
   private state: AudioPlaybackState = {
@@ -33,6 +35,46 @@ class MusicAudioEngine {
     if (typeof window !== 'undefined') {
       this.initAudioElement();
     }
+  }
+
+  private resolvePlayableUrl(track: MusicTrack): string {
+    const token =
+      (typeof localStorage !== 'undefined' &&
+        (localStorage.getItem('aura_google_access_token') ||
+          localStorage.getItem('google_access_token'))) ||
+      '';
+    const tokenParam = token ? `accessToken=${encodeURIComponent(token)}` : '';
+
+    const url = track.audioUrl || '';
+
+    // If already pointing to an internal API endpoint
+    if (url.startsWith('/api/')) {
+      let resolved = getApiUrl(url);
+      if (tokenParam && !resolved.includes('accessToken=')) {
+        resolved += (resolved.includes('?') ? '&' : '?') + tokenParam;
+      }
+      return resolved;
+    }
+
+    // If it's a blob URL (which is invalid after refresh) or Google Drive link or empty
+    if (
+      url.startsWith('blob:') ||
+      url.includes('drive.google.com/file/d/') ||
+      url.includes('drive.google.com') ||
+      !url ||
+      track.driveFileId
+    ) {
+      const sqliteAudioEndpoint = `/api/music/library/${track.id}/audio${tokenParam ? `?${tokenParam}` : ''}`;
+      return getApiUrl(sqliteAudioEndpoint);
+    }
+
+    // If it's a direct data URI (base64)
+    if (url.startsWith('data:audio/')) {
+      return url;
+    }
+
+    // Default: use url, or fallback to SQLite audio endpoint
+    return url;
   }
 
   private initAudioElement() {
@@ -77,8 +119,48 @@ class MusicAudioEngine {
       }
     });
 
-    this.audioEl.addEventListener('error', (e) => {
-      console.warn('[MusicAudioEngine] HTML5 Audio load notice, falling back to harmonic synthesizer:', e);
+    this.audioEl.addEventListener('error', async (e) => {
+      console.warn('[MusicAudioEngine] HTML5 Audio load notice:', e);
+      const current = this.state.currentTrack;
+      if (!current) return;
+
+      // Retry step 1: If current src wasn't the SQLite stream endpoint, switch to it
+      if (this.retryStage === 0 && this.audioEl) {
+        this.retryStage = 1;
+        const token =
+          (typeof localStorage !== 'undefined' &&
+            (localStorage.getItem('aura_google_access_token') ||
+              localStorage.getItem('google_access_token'))) ||
+          '';
+        const sqliteUrl = getApiUrl(
+          `/api/music/library/${current.id}/audio${token ? `?accessToken=${encodeURIComponent(token)}` : ''}`
+        );
+        if (this.audioEl.src !== sqliteUrl) {
+          try {
+            console.log('[MusicAudioEngine] Retrying playback with SQLite audio endpoint:', sqliteUrl);
+            this.audioEl.src = sqliteUrl;
+            await this.audioEl.play();
+            return;
+          } catch (rErr) {
+            console.warn('[MusicAudioEngine] SQLite audio stream retry failed:', rErr);
+          }
+        }
+      }
+
+      // Retry step 2: If external URL exists and failed CORS, try audio proxy
+      if (this.retryStage === 1 && current.audioUrl && current.audioUrl.startsWith('http') && this.audioEl) {
+        this.retryStage = 2;
+        try {
+          const proxyUrl = getApiUrl(`/api/audio/proxy?url=${encodeURIComponent(current.audioUrl)}`);
+          console.log('[MusicAudioEngine] Retrying playback via audio proxy:', proxyUrl);
+          this.audioEl.src = proxyUrl;
+          await this.audioEl.play();
+          return;
+        } catch (pErr) {
+          console.warn('[MusicAudioEngine] Audio proxy retry failed:', pErr);
+        }
+      }
+
       // Fallback: If remote URL fails or is blocked by CORS/offline, start synthesized harmonic music
       if (this.state.isPlaying) {
         this.startHarmonicSynthesizer(this.state.currentTrack?.genre || 'Ambient');
@@ -130,6 +212,7 @@ class MusicAudioEngine {
 
   public async playTrack(track: MusicTrack) {
     this.stopSynthesizer();
+    this.retryStage = 0;
     this.initAudioContext();
     if (this.audioCtx?.state === 'suspended') {
       await this.audioCtx.resume().catch(() => {});
@@ -142,7 +225,8 @@ class MusicAudioEngine {
 
     if (this.audioEl) {
       try {
-        this.audioEl.src = track.audioUrl;
+        const playableUrl = this.resolvePlayableUrl(track);
+        this.audioEl.src = playableUrl;
         this.audioEl.playbackRate = this.state.playbackRate;
         this.audioEl.volume = this.state.isMuted ? 0 : this.state.volume;
         await this.audioEl.play();

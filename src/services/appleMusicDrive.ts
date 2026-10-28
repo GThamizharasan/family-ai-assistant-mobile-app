@@ -366,6 +366,34 @@ export async function uploadTrackToAppleMusicDrive(
     console.warn('[Apple Music Drive] SQLite mirror notice:', err);
   }
 
+  // 6.5 Persist audio binary content directly into SQLite for instant playback across app refreshes
+  try {
+    if (fileBlob && fileBlob.size > 0 && typeof FileReader !== 'undefined') {
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const res = reader.result as string;
+          resolve(res.includes(',') ? res.split(',')[1] : res);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(fileBlob);
+      });
+      const audioContentBase64 = await base64Promise;
+      if (audioContentBase64) {
+        await fetch(getApiUrl(`/api/music/library/${track.id}/cache-audio`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioContentBase64,
+            mimeType: fileBlob.type || fileMime,
+          }),
+        });
+      }
+    }
+  } catch (cacheErr) {
+    console.warn('[Apple Music Drive] SQLite audio caching notice:', cacheErr);
+  }
+
   return {
     driveFileId: driveData.id,
     driveFolderId: categoryFolder.id,
@@ -434,14 +462,15 @@ export async function refreshAppleMusicFromDrive(
           artist = parts.slice(1).join(' - ').trim();
         }
 
+        const trackId = `track-drive-${f.id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 16)}`;
         const discoveredTrack: MusicTrack = {
-          id: `track-drive-${f.id.slice(0, 8)}`,
+          id: trackId,
           userEmail,
           title,
           artist,
           album: `Apple Music - ${catFolder.name}`,
           genre: catFolder.name,
-          audioUrl: f.webContentLink || f.webViewLink || 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
+          audioUrl: getApiUrl(`/api/music/library/${trackId}/audio`),
           artworkUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
           durationSeconds: 195,
           driveFileId: f.id,
@@ -453,6 +482,13 @@ export async function refreshAppleMusicFromDrive(
           updatedAt: new Date().toISOString(),
           localCached: true,
         };
+
+        // Mirror discovered track into backend SQLite
+        fetch(getApiUrl('/api/music/library'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(discoveredTrack),
+        }).catch(() => {});
 
         newlyDiscovered.push(discoveredTrack);
         existingIds.add(f.id);

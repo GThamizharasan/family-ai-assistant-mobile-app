@@ -479,6 +479,8 @@ export async function initSqliteDb(): Promise<Database> {
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
   try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch {}
   try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN lyrics TEXT;'); } catch {}
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_content_base64 TEXT;'); } catch {}
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_mime_type TEXT DEFAULT "audio/mpeg";'); } catch {}
   try { db.run('ALTER TABLE ai_studio_creations ADD COLUMN drive_sync_status TEXT DEFAULT "synced";'); } catch {}
   try {
     db.run("UPDATE musical_library_tracks SET drive_folder_path = REPLACE(drive_folder_path, 'Musical Library', 'Apple Music') WHERE drive_folder_path LIKE '%Musical Library%';");
@@ -2337,6 +2339,8 @@ export interface MusicalTrackRecord {
   driveFileId?: string;
   driveWebViewLink?: string;
   driveFolderPath?: string;
+  audioContentBase64?: string;
+  audioMimeType?: string;
   isFavorite: boolean;
   playCount: number;
   lastPlayedAt?: string;
@@ -2349,17 +2353,39 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
   artist: string;
   audioUrl: string;
   genre: string;
+  audioContentBase64?: string;
+  audioMimeType?: string;
 }): MusicalTrackRecord {
   if (!db) throw new Error('Database not initialized');
   const now = new Date().toISOString();
   const id = track.id || `track-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   const cleanEmail = (track.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
   const duration = track.durationSeconds || 180;
-  const driveFolderPath = track.driveFolderPath || `Family Circle / Musical Library / ${track.genre || 'General'}`;
+  const driveFolderPath =
+    track.driveFolderPath && !track.driveFolderPath.includes('Musical Library')
+      ? track.driveFolderPath
+      : `Family Circle / Apple Music / ${track.genre || 'General'}`;
+
+  // If local base64 audio content is provided, the canonical audioUrl is our SQLite stream endpoint
+  let finalAudioUrl = track.audioUrl;
+  if (track.audioContentBase64 && track.audioContentBase64.length > 20) {
+    finalAudioUrl = `/api/music/library/${id}/audio`;
+  } else if (track.audioUrl.startsWith('data:audio/')) {
+    finalAudioUrl = `/api/music/library/${id}/audio`;
+  }
+
+  // Extract base64 if audioUrl itself was a data URL
+  let audioBase64ToStore = track.audioContentBase64 || null;
+  let audioMimeToStore = track.audioMimeType || 'audio/mpeg';
+  if (!audioBase64ToStore && track.audioUrl.startsWith('data:')) {
+    const parts = track.audioUrl.split(',');
+    audioMimeToStore = parts[0].match(/:(.*?);/)?.[1] || 'audio/mpeg';
+    audioBase64ToStore = parts[1];
+  }
 
   db.run(
-    `INSERT INTO musical_library_tracks (id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, last_played_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO musical_library_tracks (id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, audio_content_base64, audio_mime_type, is_favorite, play_count, last_played_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title,
        artist = excluded.artist,
@@ -2369,9 +2395,11 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
        artwork_url = excluded.artwork_url,
        duration_seconds = excluded.duration_seconds,
        lyrics = excluded.lyrics,
-       drive_file_id = excluded.drive_file_id,
-       drive_web_view_link = excluded.drive_web_view_link,
+       drive_file_id = COALESCE(excluded.drive_file_id, musical_library_tracks.drive_file_id),
+       drive_web_view_link = COALESCE(excluded.drive_web_view_link, musical_library_tracks.drive_web_view_link),
        drive_folder_path = excluded.drive_folder_path,
+       audio_content_base64 = COALESCE(excluded.audio_content_base64, musical_library_tracks.audio_content_base64),
+       audio_mime_type = COALESCE(excluded.audio_mime_type, musical_library_tracks.audio_mime_type),
        is_favorite = excluded.is_favorite,
        play_count = excluded.play_count,
        last_played_at = excluded.last_played_at,
@@ -2383,13 +2411,15 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
       track.artist,
       track.album || 'Aura Family Music Collection',
       track.genre,
-      track.audioUrl,
+      finalAudioUrl,
       track.artworkUrl || null,
       duration,
       track.lyrics || null,
       track.driveFileId || null,
       track.driveWebViewLink || null,
       driveFolderPath,
+      audioBase64ToStore,
+      audioMimeToStore,
       track.isFavorite ? 1 : 0,
       track.playCount || 0,
       track.lastPlayedAt || null,
@@ -2406,13 +2436,15 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
     artist: track.artist,
     album: track.album || 'Aura Family Music Collection',
     genre: track.genre,
-    audioUrl: track.audioUrl,
+    audioUrl: finalAudioUrl,
     artworkUrl: track.artworkUrl,
     durationSeconds: duration,
     lyrics: track.lyrics,
     driveFileId: track.driveFileId,
     driveWebViewLink: track.driveWebViewLink,
     driveFolderPath,
+    audioContentBase64: audioBase64ToStore || undefined,
+    audioMimeType: audioMimeToStore || undefined,
     isFavorite: !!track.isFavorite,
     playCount: track.playCount || 0,
     lastPlayedAt: track.lastPlayedAt,
@@ -2421,12 +2453,42 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
   };
 }
 
+export function saveTrackAudioContentToSqlite(id: string, audioBase64: string, mimeType = 'audio/mpeg'): boolean {
+  if (!db) return false;
+  db.run(
+    `UPDATE musical_library_tracks 
+     SET audio_content_base64 = ?, 
+         audio_mime_type = ?, 
+         audio_url = '/api/music/library/' || id || '/audio',
+         updated_at = ?
+     WHERE id = ?`,
+    [audioBase64, mimeType, new Date().toISOString(), id]
+  );
+  scheduleSave();
+  return true;
+}
+
+export function getTrackAudioContentFromSqlite(id: string): { audioContentBase64: string; mimeType: string; title: string; driveFileId?: string } | null {
+  if (!db) return null;
+  const res = db.exec('SELECT audio_content_base64, audio_mime_type, title, drive_file_id FROM musical_library_tracks WHERE id = ?', [id]);
+  if (!res.length || !res[0].values.length) return null;
+  const row = res[0].values[0];
+  const audioContentBase64 = row[0] as string | null;
+  return {
+    audioContentBase64: audioContentBase64 || '',
+    mimeType: (row[1] as string) || 'audio/mpeg',
+    title: (row[2] as string) || 'Track',
+    driveFileId: (row[3] as string) || undefined,
+  };
+}
+
 export function getMusicTracksFromSqlite(userEmail?: string, genreFilter?: string): MusicalTrackRecord[] {
   if (!db) return [];
   const cleanEmail = (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
 
   let query = `
-    SELECT id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, last_played_at, created_at, updated_at
+    SELECT id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, last_played_at, created_at, updated_at,
+           (audio_content_base64 IS NOT NULL AND length(audio_content_base64) > 10) as has_audio_blob
     FROM musical_library_tracks
     WHERE (user_email = ? OR user_email = 'chinna.tamil2000@gmail.com')
   `;
@@ -2442,26 +2504,40 @@ export function getMusicTracksFromSqlite(userEmail?: string, genreFilter?: strin
   const res = db.exec(query, params);
   if (!res.length) return [];
 
-  return res[0].values.map((row) => ({
-    id: row[0] as string,
-    userEmail: row[1] as string,
-    title: row[2] as string,
-    artist: row[3] as string,
-    album: (row[4] as string) || undefined,
-    genre: row[5] as string,
-    audioUrl: row[6] as string,
-    artworkUrl: (row[7] as string) || undefined,
-    durationSeconds: Number(row[8]) || 180,
-    lyrics: (row[9] as string) || undefined,
-    driveFileId: (row[10] as string) || undefined,
-    driveWebViewLink: (row[11] as string) || undefined,
-    driveFolderPath: (row[12] as string) || undefined,
-    isFavorite: Number(row[13]) === 1,
-    playCount: Number(row[14]) || 0,
-    lastPlayedAt: (row[15] as string) || undefined,
-    createdAt: row[16] as string,
-    updatedAt: row[17] as string,
-  }));
+  return res[0].values.map((row) => {
+    const id = row[0] as string;
+    let audioUrl = row[6] as string;
+    const hasAudioBlob = Number(row[18]) === 1;
+
+    // If audio content is stored in SQLite, always point to local SQLite stream endpoint
+    if (hasAudioBlob) {
+      audioUrl = `/api/music/library/${id}/audio`;
+    } else if (audioUrl.includes('drive.google.com/file/d/')) {
+      // If it's a Google Drive web view URL, route through the streaming audio endpoint
+      audioUrl = `/api/music/library/${id}/audio`;
+    }
+
+    return {
+      id,
+      userEmail: row[1] as string,
+      title: row[2] as string,
+      artist: row[3] as string,
+      album: (row[4] as string) || undefined,
+      genre: row[5] as string,
+      audioUrl,
+      artworkUrl: (row[7] as string) || undefined,
+      durationSeconds: Number(row[8]) || 180,
+      lyrics: (row[9] as string) || undefined,
+      driveFileId: (row[10] as string) || undefined,
+      driveWebViewLink: (row[11] as string) || undefined,
+      driveFolderPath: (row[12] as string) || undefined,
+      isFavorite: Number(row[13]) === 1,
+      playCount: Number(row[14]) || 0,
+      lastPlayedAt: (row[15] as string) || undefined,
+      createdAt: row[16] as string,
+      updatedAt: row[17] as string,
+    };
+  });
 }
 
 export function deleteMusicTrackFromSqlite(id: string, userEmail?: string): boolean {

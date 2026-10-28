@@ -192,6 +192,34 @@ export async function saveMusicTrack(
       ? trackData.driveFolderPath
       : `Family Circle / Apple Music / ${subfolderName}`;
 
+  let audioContentBase64 = trackData.audioContentBase64;
+  let audioMimeType = trackData.audioMimeType || audioFile?.type || 'audio/mpeg';
+
+  if (!audioContentBase64 && audioFile) {
+    try {
+      audioContentBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = reader.result as string;
+          resolve(res.includes(',') ? res.split(',')[1] : res);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioFile);
+      });
+    } catch (e) {
+      console.warn('[Music Library] Failed to convert audioFile to base64:', e);
+    }
+  } else if (!audioContentBase64 && trackData.audioUrl?.startsWith('data:')) {
+    const parts = trackData.audioUrl.split(',');
+    audioMimeType = parts[0].match(/:(.*?);/)?.[1] || 'audio/mpeg';
+    audioContentBase64 = parts[1];
+  }
+
+  // Ensure persistent audio streaming URL backed by SQLite
+  const persistentAudioUrl = audioContentBase64
+    ? getApiUrl(`/api/music/library/${id}/audio`)
+    : trackData.audioUrl;
+
   const track: MusicTrack = {
     ...trackData,
     id,
@@ -199,6 +227,7 @@ export async function saveMusicTrack(
     genre: trackData.genre || subfolderName,
     album: trackData.album || `Apple Music - ${subfolderName}`,
     artworkUrl: trackData.artworkUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+    audioUrl: persistentAudioUrl,
     durationSeconds: trackData.durationSeconds || 180,
     isFavorite: !!trackData.isFavorite,
     playCount: trackData.playCount || 0,
@@ -213,13 +242,28 @@ export async function saveMusicTrack(
   const updatedLocal = [track, ...local.filter((t) => t.id !== id)];
   saveLocalTracks(updatedLocal);
 
-  // 2. Save in SQLite backend
+  // 2. Save in SQLite backend with audio binary content
   try {
     await fetch(getApiUrl('/api/music/library'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(track),
+      body: JSON.stringify({
+        ...track,
+        audioContentBase64,
+        audioMimeType,
+      }),
     });
+
+    if (audioContentBase64) {
+      await fetch(getApiUrl(`/api/music/library/${id}/cache-audio`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioContentBase64,
+          mimeType: audioMimeType,
+        }),
+      }).catch(() => {});
+    }
   } catch (err) {
     console.warn('[Music Library] Backend save notice:', err);
   }
@@ -245,7 +289,11 @@ export async function saveMusicTrack(
         await fetch(getApiUrl('/api/music/library'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(track),
+          body: JSON.stringify({
+            ...track,
+            audioContentBase64,
+            audioMimeType,
+          }),
         }).catch(() => {});
       }
     } catch (dErr) {
