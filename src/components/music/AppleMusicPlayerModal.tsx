@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../../types/music';
 import { musicAudioEngine } from '../../services/musicAudioEngine';
-import { toggleTrackFavorite, saveMusicTrack } from '../../services/musicLibraryService';
+import { toggleTrackFavorite, saveMusicTrack, downloadTrackAudio } from '../../services/musicLibraryService';
 import { AppleMusicLyricsView } from './AppleMusicLyricsView';
 
 interface AppleMusicPlayerModalProps {
@@ -54,6 +54,7 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
   const [showTimerMenu, setShowTimerMenu] = useState(false);
   const [showEqMenu, setShowEqMenu] = useState(false);
   const [isFavorite, setIsFavorite] = useState(activeTrack?.isFavorite || false);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animFrameRef = useRef<number | null>(null);
 
@@ -137,6 +138,58 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
     await toggleTrackFavorite(activeTrack.id, next);
   };
 
+  const handleShareTrack = async () => {
+    if (!activeTrack) return;
+    const shareUrl = activeTrack.driveWebViewLink || activeTrack.audioUrl || window.location.href;
+    const shareText = `🎵 ${activeTrack.title} by ${activeTrack.artist}${activeTrack.album ? ` (${activeTrack.album})` : ''} • Apple Music`;
+
+    const shareData = {
+      title: activeTrack.title,
+      text: shareText,
+      url: shareUrl,
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setShareNotice(`✓ Shared "${activeTrack.title}"!`);
+        setTimeout(() => setShareNotice(null), 3500);
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        console.warn('Native share failed, fallback to clipboard:', err);
+      }
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        const copyContent = `${shareText}\n${shareUrl}`;
+        await navigator.clipboard.writeText(copyContent);
+        setShareNotice(`✓ Link copied to clipboard!`);
+        setTimeout(() => setShareNotice(null), 3500);
+        return;
+      }
+    } catch (clipErr) {
+      console.warn('Clipboard write failed:', clipErr);
+    }
+
+    if (shareUrl && shareUrl !== window.location.href) {
+      window.open(shareUrl, '_blank');
+    }
+  };
+
+  const handleDownloadTrack = async () => {
+    if (!activeTrack) return;
+    setShareNotice(`Downloading "${activeTrack.title}"...`);
+    const res = await downloadTrackAudio(activeTrack);
+    if (res.success) {
+      setShareNotice(`✓ Downloaded "${activeTrack.title}"!`);
+    } else {
+      setShareNotice(`⚠️ ${res.error || 'Download failed'}`);
+    }
+    setTimeout(() => setShareNotice(null), 3500);
+  };
+
   const handleNext = () => {
     if (onNext) {
       onNext();
@@ -194,7 +247,7 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={handleToggleFavorite}
               className={`p-2 rounded-full transition-colors ${
@@ -206,8 +259,30 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
             >
               <Heart className={`w-4 h-4 ${isFavorite ? 'fill-rose-500' : ''}`} />
             </button>
+            <button
+              onClick={handleShareTrack}
+              className="p-2 rounded-full text-slate-400 hover:text-indigo-300 hover:bg-slate-800/80 bg-slate-800/60 transition-colors"
+              title="Share Track Externally"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleDownloadTrack}
+              className="p-2 rounded-full text-slate-400 hover:text-emerald-300 hover:bg-slate-800/80 bg-slate-800/60 transition-colors"
+              title="Download Track (MP3)"
+            >
+              <Download className="w-4 h-4" />
+            </button>
           </div>
         </div>
+
+        {/* Share Feedback Toast */}
+        {shareNotice && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full bg-indigo-600/95 text-white text-xs font-medium shadow-xl backdrop-blur-md flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{shareNotice}</span>
+          </div>
+        )}
 
         {/* Center: Album Artwork or Lyrics View */}
         <div className="py-4 my-auto">

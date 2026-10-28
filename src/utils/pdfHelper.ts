@@ -1,7 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { Book, Chapter } from '../types/book';
-import { savePdfToStorage } from './pdfStorage';
+import { savePdfToStorage, getPdfFromStorage } from './pdfStorage';
 import { getApiUrl } from '../services/api';
+import { downloadBookContentFromDrive } from '../services/appleBooksDrive';
 
 // Configure PDF.js worker safely for Vite / Browser environment
 if (typeof window !== 'undefined' && 'Worker' in window) {
@@ -472,4 +473,119 @@ export async function syncBookToSqlite(
     console.warn('SQLite sync warning:', e);
     return false;
   }
+}
+
+/**
+ * Triggers a device download for any book (PDF file, Google Drive file, or formatted Markdown/Text book)
+ */
+export async function downloadBookFile(
+  book: Book,
+  googleAccessToken?: string | null
+): Promise<{ success: boolean; filename: string; error?: string }> {
+  try {
+    const safeTitle = (book.title || 'book').replace(/[/\\?%*:|"<>]/g, '_').trim();
+
+    // 1. Check if book already has a direct pdfUrl
+    let pdfDataUrl = book.pdfUrl;
+
+    // 2. If not, check IndexedDB storage
+    if (!pdfDataUrl) {
+      pdfDataUrl = (await getPdfFromStorage(book.id)) || undefined;
+    }
+
+    // If we have a base64 or blob PDF data URL:
+    if (pdfDataUrl) {
+      const filename = book.pdfFileName || `${safeTitle}.pdf`;
+      if (pdfDataUrl.startsWith('data:')) {
+        const bytes = dataUrlToUint8Array(pdfDataUrl);
+        const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+        triggerBrowserFileDownload(blob, filename);
+        return { success: true, filename };
+      } else {
+        const a = document.createElement('a');
+        a.href = pdfDataUrl;
+        a.download = filename;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return { success: true, filename };
+      }
+    }
+
+    // 3. If book is linked to Google Drive
+    if (book.driveFileId) {
+      const filename = book.pdfFileName || `${safeTitle}.pdf`;
+      const token =
+        googleAccessToken ||
+        (typeof localStorage !== 'undefined' &&
+          (localStorage.getItem('aura_google_access_token') ||
+            localStorage.getItem('google_access_token'))) ||
+        '';
+
+      if (token) {
+        try {
+          const driveDataUrl = await downloadBookContentFromDrive(token, book.driveFileId);
+          if (driveDataUrl) {
+            const bytes = dataUrlToUint8Array(driveDataUrl);
+            const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+            triggerBrowserFileDownload(blob, filename);
+            return { success: true, filename };
+          }
+        } catch (dErr) {
+          console.warn('Drive direct download failed, fallback to direct export:', dErr);
+        }
+      }
+
+      // Fallback: trigger Google Drive download link
+      const driveDownloadUrl = `https://drive.google.com/uc?export=download&id=${book.driveFileId}`;
+      const a = document.createElement('a');
+      a.href = driveDownloadUrl;
+      a.download = filename;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return { success: true, filename };
+    }
+
+    // 4. Curated Book or AI-woven chapter book:
+    // Generate a clean, readable formatted Markdown ebook
+    const filename = `${safeTitle}.md`;
+    let bookContent = `# ${book.title}\n\n`;
+    bookContent += `**Author:** ${book.author}\n\n`;
+    bookContent += `**Genre:** ${book.genre}\n\n`;
+    if (book.subtitle) {
+      bookContent += `*${book.subtitle}*\n\n`;
+    }
+    bookContent += `### Overview\n${book.description}\n\n`;
+    bookContent += `---\n\n## Table of Contents\n`;
+    (book.chapters || []).forEach((ch, idx) => {
+      bookContent += `${idx + 1}. [${ch.title}](#chapter-${idx + 1})\n`;
+    });
+    bookContent += `\n---\n\n`;
+
+    (book.chapters || []).forEach((ch, idx) => {
+      bookContent += `## <a name="chapter-${idx + 1}"></a>${ch.title}\n\n`;
+      bookContent += `${(ch.content || []).join('\n\n')}\n\n---\n\n`;
+    });
+
+    const blob = new Blob([bookContent], { type: 'text/markdown;charset=utf-8' });
+    triggerBrowserFileDownload(blob, filename);
+    return { success: true, filename };
+  } catch (err: any) {
+    console.error('downloadBookFile error:', err);
+    return { success: false, filename: `${book.title}.pdf`, error: err.message || 'Download failed' };
+  }
+}
+
+function triggerBrowserFileDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }

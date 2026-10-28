@@ -35,7 +35,7 @@ import {
 import { Book, Chapter, Highlight, Bookmark as BookmarkType, ReaderTheme, ReaderFont } from '../../types/book';
 import { ambientAudio, SoundscapeType } from '../../services/ambientAudio';
 import { getPdfFromStorage, savePdfToStorage, safeSetLocalStorage } from '../../utils/pdfStorage';
-import { generateReadablePdfDocumentUrl, extractPdfChaptersAndPages } from '../../utils/pdfHelper';
+import { generateReadablePdfDocumentUrl, extractPdfChaptersAndPages, downloadBookFile } from '../../utils/pdfHelper';
 import { getPageContent, PageContent } from '../../utils/paginationHelper';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
 import { downloadBookContentFromDrive } from '../../services/appleBooksDrive';
@@ -132,6 +132,18 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
   // Dynamic PDF URL resolution (loads from IndexedDB or generates on-demand)
   const [activePdfUrl, setActivePdfUrl] = useState<string | null>(safeBook.pdfUrl || null);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+
+  const handleDownloadBook = async () => {
+    setDownloadNotice(`Downloading "${safeBook.title}"...`);
+    const res = await downloadBookFile(safeBook);
+    if (res.success) {
+      setDownloadNotice(`✓ Downloaded "${res.filename}"!`);
+    } else {
+      setDownloadNotice(`⚠️ ${res.error || 'Download failed'}`);
+    }
+    setTimeout(() => setDownloadNotice(null), 3500);
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -667,19 +679,14 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
         {/* Right Tools: Appearance, Audio, AI, Bookmark, Search */}
         <div className="flex items-center gap-1 sm:gap-1.5">
-          {/* Download Original PDF (if available) */}
-          {activePdfUrl && (
-            <a
-              href={activePdfUrl}
-              download={safeBook.pdfFileName || `${safeBook.title}.pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-2 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-colors hidden sm:flex items-center gap-1 text-xs text-amber-500"
-              title="Download PDF"
-            >
-              <Download className="w-4 h-4" />
-            </a>
-          )}
+          {/* Download Book to Device */}
+          <button
+            onClick={handleDownloadBook}
+            className="p-2 rounded-xl hover:bg-black/10 dark:hover:bg-white/10 transition-colors flex items-center gap-1 text-xs text-amber-500"
+            title="Download Book to Device (PDF / eBook)"
+          >
+            <Download className="w-4 h-4" />
+          </button>
 
           {/* In-Book Search */}
           <button
@@ -746,6 +753,14 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           </button>
         </div>
       </header>
+ 
+      {/* Download Feedback Toast */}
+      {downloadNotice && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl bg-amber-950/95 border border-amber-500/40 backdrop-blur-xl text-white text-xs font-semibold shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <Sparkles className="w-4 h-4 text-amber-400" />
+          <span>{downloadNotice}</span>
+        </div>
+      )}
 
       {/* =========================================================================
           APPEARANCE & THEMES POPOVER (APPLE BOOKS STYLE)

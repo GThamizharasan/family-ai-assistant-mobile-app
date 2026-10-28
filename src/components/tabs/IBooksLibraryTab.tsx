@@ -46,7 +46,7 @@ import { useApp } from '../../context/AppContext';
 import { Book, Highlight, Bookmark as BookmarkType } from '../../types/book';
 import { INITIAL_BOOKS } from '../../data/initialBooks';
 import { AppleBookReaderModal } from '../books/AppleBookReaderModal';
-import { parsePdfFileToBook, syncBookToSqlite } from '../../utils/pdfHelper';
+import { parsePdfFileToBook, syncBookToSqlite, downloadBookFile } from '../../utils/pdfHelper';
 import {
   safeSetLocalStorage,
   manageRecentBooksCache,
@@ -134,6 +134,20 @@ export const IBooksLibraryTab: React.FC = () => {
   const [bookPendingDelete, setBookPendingDelete] = useState<Book | null>(null);
   const [isDeletingBook, setIsDeletingBook] = useState(false);
   const [bookShareNotice, setBookShareNotice] = useState<string | null>(null);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+
+  const handleDownloadBook = async (book: Book, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setActiveKebabBookId(null);
+    setDownloadNotice(`Downloading "${book.title}"...`);
+    const res = await downloadBookFile(book, googleAccessToken);
+    if (res.success) {
+      setDownloadNotice(`✓ Downloaded "${res.filename}"!`);
+    } else {
+      setDownloadNotice(`⚠️ ${res.error || 'Download failed'}`);
+    }
+    setTimeout(() => setDownloadNotice(null), 3500);
+  };
 
   const handleShareBook = async (book: Book) => {
     setActiveKebabBookId(null);
@@ -572,6 +586,27 @@ export const IBooksLibraryTab: React.FC = () => {
                 </div>
               </button>
 
+              {/* Download Book */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveKebabBookId(null);
+                  handleDownloadBook(book, e);
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-emerald-500/15 text-slate-200 hover:text-emerald-300 flex items-center gap-2.5 transition-colors"
+              >
+                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <Download className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div className="font-semibold">Download Book</div>
+                  <div className="text-[10px] text-slate-400">
+                    {book.isPdf ? 'Save PDF file' : 'Save readable copy'}
+                  </div>
+                </div>
+              </button>
+
               {/* Open in Google Drive */}
               {book.driveWebViewLink && (
                 <a
@@ -746,6 +781,16 @@ export const IBooksLibraryTab: React.FC = () => {
         }
       }}
     >
+      {/* Toast Notice (Download / Share / Drive Sync) */}
+      {(downloadNotice || bookShareNotice || driveSyncNotice) && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[90%] px-4 py-2.5 rounded-2xl bg-amber-950/95 border border-amber-500/40 backdrop-blur-xl text-white text-xs shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="truncate flex-1 font-medium">
+            {downloadNotice || bookShareNotice || driveSyncNotice}
+          </span>
+        </div>
+      )}
+
       {/* Hidden File Input for PDF Books */}
       <input
         type="file"
@@ -1006,6 +1051,15 @@ export const IBooksLibraryTab: React.FC = () => {
                     >
                       <Upload className="w-3.5 h-3.5 text-amber-400" />
                       <span>Import Another PDF</span>
+                    </button>
+
+                    <button
+                      onClick={(e) => handleDownloadBook(featuredBook, e)}
+                      className="px-3.5 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors border border-slate-700"
+                      title="Download Book to Device"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Download</span>
                     </button>
 
                     {renderBookKebabMenu(
@@ -1316,6 +1370,14 @@ export const IBooksLibraryTab: React.FC = () => {
                       </span>
                       <div className="flex items-center gap-1.5">
                         <span className="text-amber-400 font-bold">{book.progressPercent}%</span>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDownloadBook(book, e)}
+                          className="p-1 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800 transition-colors"
+                          title="Download Book"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
                         {renderBookKebabMenu(
                           book,
                           `p-1 rounded-lg transition-colors ${
@@ -1411,6 +1473,14 @@ export const IBooksLibraryTab: React.FC = () => {
                       <Heart className={`w-4 h-4 ${book.isFavorite ? 'fill-current' : ''}`} />
                     </button>
 
+                    <button
+                      onClick={(e) => handleDownloadBook(book, e)}
+                      className="p-2 rounded-xl text-slate-500 hover:text-emerald-400 hover:bg-slate-800/80 transition-colors"
+                      title="Download Book"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+
                     {renderBookKebabMenu(
                       book,
                       `p-2 rounded-xl transition-all ${
@@ -1498,19 +1568,14 @@ export const IBooksLibraryTab: React.FC = () => {
                           <BookOpen className="w-3.5 h-3.5" />
                           <span>Open & Read</span>
                         </button>
-                        {pdfBook.pdfUrl && (
-                          <a
-                            href={pdfBook.pdfUrl}
-                            download={pdfBook.pdfFileName || `${pdfBook.title}.pdf`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1 transition-colors"
-                          >
-                            <Download className="w-3.5 h-3.5" />
-                            <span>Save</span>
-                          </a>
-                        )}
+                        <button
+                          onClick={(e) => handleDownloadBook(pdfBook, e)}
+                          className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1 transition-colors"
+                          title="Download PDF Book"
+                        >
+                          <Download className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Download</span>
+                        </button>
                       </div>
 
                       {/* Kebab Menu */}
@@ -1578,6 +1643,23 @@ export const IBooksLibraryTab: React.FC = () => {
                                   </div>
                                 </a>
                               )}
+
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveKebabBookId(null);
+                                  handleDownloadBook(pdfBook, e);
+                                }}
+                                className="w-full px-3 py-2 text-left hover:bg-emerald-500/15 text-slate-200 hover:text-emerald-300 flex items-center gap-2.5 transition-colors"
+                              >
+                                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                                  <Download className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <div className="font-semibold">Download Book</div>
+                                  <div className="text-[10px] text-slate-400">Save PDF to device</div>
+                                </div>
+                              </button>
 
                               <div className="h-px bg-slate-800 my-1" />
 

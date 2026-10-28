@@ -25,6 +25,7 @@ import {
   Trash2,
   Sliders,
   Share2,
+  Download,
   SkipBack,
   SkipForward,
   Repeat,
@@ -41,6 +42,7 @@ import {
   incrementTrackPlay,
   syncTrackToAppleMusic,
   refreshAppleMusicFromDrive,
+  downloadTrackAudio,
   INITIAL_MUSIC_TRACKS,
 } from '../../services/musicLibraryService';
 import { musicAudioEngine } from '../../services/musicAudioEngine';
@@ -139,6 +141,58 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
       prev.map((t) => (t.id === track.id ? { ...t, isFavorite: updatedFav } : t))
     );
     await toggleTrackFavorite(track.id, updatedFav);
+  };
+
+  const handleShareTrack = async (track: MusicTrack, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const shareUrl = track.driveWebViewLink || track.audioUrl || window.location.href;
+    const shareText = `🎵 ${track.title} by ${track.artist}${track.album ? ` (${track.album})` : ''} • Apple Music`;
+
+    const shareData = {
+      title: track.title,
+      text: shareText,
+      url: shareUrl,
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(shareData);
+        setSyncNotice(`✓ Shared "${track.title}"!`);
+        setTimeout(() => setSyncNotice(null), 3500);
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        console.warn('Native share failed, fallback to clipboard:', err);
+      }
+    }
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        const copyContent = `${shareText}\n${shareUrl}`;
+        await navigator.clipboard.writeText(copyContent);
+        setSyncNotice(`✓ Track link copied to clipboard: "${track.title}"!`);
+        setTimeout(() => setSyncNotice(null), 3500);
+        return;
+      }
+    } catch (clipErr) {
+      console.warn('Clipboard write failed:', clipErr);
+    }
+
+    if (shareUrl && shareUrl !== window.location.href) {
+      window.open(shareUrl, '_blank');
+    }
+  };
+
+  const handleDownloadTrack = async (track: MusicTrack, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSyncNotice(`Downloading "${track.title}"...`);
+    const res = await downloadTrackAudio(track, googleAccessToken);
+    if (res.success) {
+      setSyncNotice(`✓ Downloaded "${track.title}"!`);
+    } else {
+      setSyncNotice(`⚠️ Download notice: ${res.error || 'Failed'}`);
+    }
+    setTimeout(() => setSyncNotice(null), 3500);
   };
 
   const handleDeleteTrack = async (track: MusicTrack, e: React.MouseEvent) => {
@@ -267,6 +321,14 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
 
   return (
     <div className="space-y-6 pb-28 pt-2">
+      {/* Sync / Share Toast Notice */}
+      {syncNotice && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 max-w-sm w-[90%] px-4 py-2.5 rounded-2xl bg-indigo-950/95 border border-indigo-500/40 backdrop-blur-xl text-white text-xs shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+          <span className="truncate flex-1 font-medium">{syncNotice}</span>
+        </div>
+      )}
+
       {/* Top Header & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80 border border-slate-800 p-4 rounded-3xl shadow-xl">
         <div className="flex items-center gap-3">
@@ -457,6 +519,32 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                     >
                       Open Full Player
                     </button>
+
+                    <button
+                      onClick={(e) => handleToggleFavorite(featuredTrack, e)}
+                      className={`p-2 rounded-xl border border-slate-700 transition-colors ${
+                        featuredTrack.isFavorite ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 hover:text-white bg-slate-800'
+                      }`}
+                      title={featuredTrack.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+                    >
+                      <Heart className={`w-4 h-4 ${featuredTrack.isFavorite ? 'fill-rose-500' : ''}`} />
+                    </button>
+
+                    <button
+                      onClick={(e) => handleShareTrack(featuredTrack, e)}
+                      className="p-2 rounded-xl text-slate-400 hover:text-indigo-400 hover:bg-slate-700 bg-slate-800 border border-slate-700 transition-colors"
+                      title="Share track externally"
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={(e) => handleDownloadTrack(featuredTrack, e)}
+                      className="p-2 rounded-xl text-slate-400 hover:text-emerald-400 hover:bg-slate-700 bg-slate-800 border border-slate-700 transition-colors"
+                      title="Download MP3"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -547,14 +635,29 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={(e) => handleToggleFavorite(t, e)}
                         className={`p-1.5 rounded-lg transition-colors ${
                           t.isFavorite ? 'text-rose-400' : 'text-slate-500 hover:text-slate-300'
                         }`}
+                        title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                       >
                         <Heart className={`w-3.5 h-3.5 ${t.isFavorite ? 'fill-rose-500' : ''}`} />
+                      </button>
+                      <button
+                        onClick={(e) => handleShareTrack(t, e)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-slate-800/60 transition-colors"
+                        title="Share track externally"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDownloadTrack(t, e)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-slate-800/60 transition-colors"
+                        title="Download MP3"
+                      >
+                        <Download className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </div>
@@ -685,8 +788,23 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                             className={`p-1 transition-colors ${
                               t.isFavorite ? 'text-rose-400' : 'text-slate-500 hover:text-slate-300'
                             }`}
+                            title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                           >
                             <Heart className={`w-3 h-3 ${t.isFavorite ? 'fill-rose-500' : ''}`} />
+                          </button>
+                          <button
+                            onClick={(e) => handleShareTrack(t, e)}
+                            className="p-1 text-slate-500 hover:text-indigo-400 transition-colors"
+                            title="Share track externally"
+                          >
+                            <Share2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            onClick={(e) => handleDownloadTrack(t, e)}
+                            className="p-1 text-slate-500 hover:text-emerald-400 transition-colors"
+                            title="Download MP3"
+                          >
+                            <Download className="w-3 h-3" />
                           </button>
                           <button
                             onClick={(e) => handleDeleteTrack(t, e)}
@@ -773,8 +891,23 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                         className={`p-1.5 rounded-lg transition-colors ${
                           t.isFavorite ? 'text-rose-400' : 'text-slate-500 hover:text-slate-300'
                         }`}
+                        title={t.isFavorite ? 'Remove from favorites' : 'Add to favorites'}
                       >
                         <Heart className={`w-3.5 h-3.5 ${t.isFavorite ? 'fill-rose-500' : ''}`} />
+                      </button>
+                      <button
+                        onClick={(e) => handleShareTrack(t, e)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-slate-800/60 transition-colors"
+                        title="Share track externally"
+                      >
+                        <Share2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDownloadTrack(t, e)}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-400 hover:bg-slate-800/60 transition-colors"
+                        title="Download MP3"
+                      >
+                        <Download className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={(e) => handleDeleteTrack(t, e)}

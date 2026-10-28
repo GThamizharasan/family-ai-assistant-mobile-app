@@ -469,3 +469,130 @@ function updateLocalTrack(track: MusicTrack) {
   }
   saveLocalTracks(list);
 }
+
+/**
+ * Download track audio file to user's device (MP3/WAV)
+ */
+export async function downloadTrackAudio(
+  track: MusicTrack,
+  googleAccessToken?: string | null
+): Promise<{ success: boolean; filename?: string; error?: string }> {
+  try {
+    const safeTitle = (track.title || 'track').replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const safeArtist = (track.artist || 'artist').replace(/[/\\?%*:|"<>]/g, '_').trim();
+    const filename = `${safeArtist} - ${safeTitle}.mp3`;
+
+    // 1. Direct Base64 audio content stored in object
+    if (track.audioContentBase64 && track.audioContentBase64.length > 20) {
+      const mime = track.audioMimeType || 'audio/mpeg';
+      const byteChars = atob(track.audioContentBase64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mime });
+      triggerBrowserDownload(blob, filename);
+      return { success: true, filename };
+    }
+
+    // 2. Data URL (data:audio/...)
+    if (track.audioUrl && track.audioUrl.startsWith('data:audio/')) {
+      const parts = track.audioUrl.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'audio/mpeg';
+      const b64 = parts[1];
+      const byteChars = atob(b64);
+      const byteNumbers = new Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        byteNumbers[i] = byteChars.charCodeAt(i);
+      }
+      const blob = new Blob([new Uint8Array(byteNumbers)], { type: mime });
+      triggerBrowserDownload(blob, filename);
+      return { success: true, filename };
+    }
+
+    // 3. Try to fetch from server SQLite audio endpoint
+    const token =
+      googleAccessToken ||
+      (typeof localStorage !== 'undefined' &&
+        (localStorage.getItem('aura_google_access_token') ||
+          localStorage.getItem('google_access_token'))) ||
+      '';
+    const tokenParam = token ? `?accessToken=${encodeURIComponent(token)}` : '';
+    const serverUrl = getApiUrl(`/api/music/library/${track.id}/audio${tokenParam}`);
+
+    try {
+      const res = await fetch(serverUrl);
+      if (res.ok) {
+        const blob = await res.blob();
+        if (blob.size > 100) {
+          triggerBrowserDownload(blob, filename);
+          return { success: true, filename };
+        }
+      }
+    } catch (e) {
+      console.warn('Server audio endpoint download error, falling back:', e);
+    }
+
+    // 4. Try direct track.audioUrl if available and not a blob
+    if (track.audioUrl && !track.audioUrl.startsWith('blob:')) {
+      try {
+        const res = await fetch(track.audioUrl, { mode: 'cors' });
+        if (res.ok) {
+          const blob = await res.blob();
+          triggerBrowserDownload(blob, filename);
+          return { success: true, filename };
+        }
+      } catch {
+        // Direct fetch failed (likely CORS), fallback to direct download anchor
+        const a = document.createElement('a');
+        a.href = track.audioUrl;
+        a.download = filename;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return { success: true, filename };
+      }
+    }
+
+    // 5. If Google Drive file ID is present
+    if (track.driveFileId) {
+      const driveDownloadUrl = `https://drive.google.com/uc?export=download&id=${track.driveFileId}`;
+      const a = document.createElement('a');
+      a.href = driveDownloadUrl;
+      a.download = filename;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return { success: true, filename };
+    }
+
+    // 6. Last resort: open driveWebViewLink or audioUrl
+    const fallbackUrl = track.driveWebViewLink || track.audioUrl;
+    if (fallbackUrl) {
+      window.open(fallbackUrl, '_blank');
+      return { success: true, filename };
+    }
+
+    return { success: false, error: 'No audio source found to download.' };
+  } catch (err: any) {
+    console.error('downloadTrackAudio error:', err);
+    return { success: false, error: err.message || 'Download failed.' };
+  }
+}
+
+function triggerBrowserDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
