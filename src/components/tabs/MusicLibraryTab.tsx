@@ -34,6 +34,8 @@ import {
   deleteMusicTrack,
   toggleTrackFavorite,
   incrementTrackPlay,
+  syncTrackToAppleMusic,
+  refreshAppleMusicFromDrive,
   INITIAL_MUSIC_TRACKS,
 } from '../../services/musicLibraryService';
 import { musicAudioEngine } from '../../services/musicAudioEngine';
@@ -140,7 +142,7 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
 
   const handleDeleteTrack = async (track: MusicTrack, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm(`Remove "${track.title}" from Musical Library?`)) return;
+    if (!confirm(`Remove "${track.title}" from Apple Music?`)) return;
     setTracks((prev) => prev.filter((t) => t.id !== track.id));
     await deleteMusicTrack(track.id, user?.email);
     if (playbackState.currentTrack?.id === track.id) {
@@ -148,13 +150,37 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
     }
   };
 
+  const handleSyncTrackToDrive = async (track: MusicTrack, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSyncNotice(`Syncing "${track.title}" to Google Drive (Family Circle / Apple Music / ${track.genre})...`);
+    try {
+      const res = await syncTrackToAppleMusic(track, googleAccessToken, user?.email);
+      if (res.success && res.track) {
+        setTracks((prev) => prev.map((t) => (t.id === track.id ? res.track : t)));
+        setSyncNotice(`✓ "${track.title}" synced to ${res.track.driveFolderPath || 'Google Drive'}!`);
+      } else {
+        setSyncNotice(`⚠️ Notice: ${res.error || 'Could not sync to Drive'}`);
+      }
+    } catch (err: any) {
+      setSyncNotice(`Sync error: ${err.message}`);
+    } finally {
+      setTimeout(() => setSyncNotice(null), 4000);
+    }
+  };
+
   const handleSyncWithDrive = async () => {
     setIsSyncingDrive(true);
-    setSyncNotice('Synchronizing Musical Library with Family Circle Drive...');
+    setSyncNotice('Scanning Google Drive: Family Circle / Apple Music / [Categories]...');
     try {
-      await loadTracks();
-      setSyncNotice('✓ Synchronized with Family Circle / Musical Library in Google Drive');
-      setTimeout(() => setSyncNotice(null), 4000);
+      const driveScan = await refreshAppleMusicFromDrive(googleAccessToken, tracks, 'Family Circle', user?.email);
+      if (driveScan.newCount > 0) {
+        setTracks(driveScan.tracks);
+        setSyncNotice(`✓ Found ${driveScan.newCount} new track(s) from Family Circle / Apple Music in Drive!`);
+      } else {
+        await loadTracks();
+        setSyncNotice('✓ Synchronized with Family Circle / Apple Music category subfolders');
+      }
+      setTimeout(() => setSyncNotice(null), 4500);
     } catch {
       setSyncNotice('Sync completed with local and server cache');
       setTimeout(() => setSyncNotice(null), 3000);
@@ -168,12 +194,13 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
     if (!uploadTitle.trim()) return;
 
     setIsUploading(true);
+    setSyncNotice(`Storing track & uploading to Google Drive under "Family Circle / Apple Music / ${uploadGenre}"...`);
     try {
       let finalAudioUrl = uploadAudioUrl.trim();
       let finalArtworkUrl = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80';
 
       if (uploadAudioFile) {
-        // Read file into Data URL or Object URL for local playback
+        // Read file into Data URL for local playback
         finalAudioUrl = await new Promise<string>((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result as string);
@@ -196,7 +223,8 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
           durationSeconds: 190,
         },
         googleAccessToken,
-        user?.email
+        user?.email,
+        uploadAudioFile || null
       );
 
       setTracks((prev) => [newTrack, ...prev]);
@@ -204,8 +232,11 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
       setUploadTitle('');
       setUploadAudioFile(null);
       setUploadAudioUrl('');
-      setSyncNotice(`✓ "${newTrack.title}" added to Musical Library & Family Circle Drive!`);
-      setTimeout(() => setSyncNotice(null), 4000);
+      setUploadLyrics('');
+      setSyncNotice(
+        `✓ "${newTrack.title}" saved & organized into Google Drive: "${newTrack.driveFolderPath || `Family Circle / Apple Music / ${uploadGenre}`}"!`
+      );
+      setTimeout(() => setSyncNotice(null), 5000);
     } catch (err: any) {
       alert(`Failed to add track: ${err.message}`);
     } finally {
@@ -243,13 +274,13 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-white tracking-tight">Musical Library</h2>
+              <h2 className="text-base font-bold text-white tracking-tight">Apple Music</h2>
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
                 <Cloud className="w-2.5 h-2.5" /> Drive Synced
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Family Circle / Musical Library • Local offline playback & Apple Music player
+              Family Circle / Apple Music • Categorized in Drive & local offline player
             </p>
           </div>
         </div>
@@ -621,9 +652,33 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                     <div>
                       <h4 className="text-xs font-bold text-white truncate leading-snug">{t.title}</h4>
                       <p className="text-[11px] text-slate-400 truncate">{t.artist}</p>
+                      <div className="flex items-center gap-1 text-[9px] font-mono text-emerald-400/90 pt-0.5 truncate">
+                        <Cloud className="w-2.5 h-2.5 shrink-0" />
+                        <span className="truncate">{t.driveFolderPath || `Family Circle / Apple Music / ${t.genre}`}</span>
+                      </div>
                       <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
                         <span>{Math.floor(t.durationSeconds / 60)}:{(t.durationSeconds % 60).toString().padStart(2, '0')}</span>
                         <div className="flex items-center gap-1.5">
+                          {t.driveWebViewLink ? (
+                            <a
+                              href={t.driveWebViewLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="p-1 text-emerald-400 hover:text-emerald-300 transition-colors"
+                              title="Open in Google Drive"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          ) : (
+                            <button
+                              onClick={(e) => handleSyncTrackToDrive(t, e)}
+                              className="p-1 text-slate-400 hover:text-emerald-300 transition-colors"
+                              title="Sync to Google Drive"
+                            >
+                              <Cloud className="w-3 h-3" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => handleToggleFavorite(t, e)}
                             className={`p-1 transition-colors ${
@@ -681,13 +736,37 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 truncate">{t.artist} • {t.album}</p>
+                        <div className="flex items-center gap-1 text-[9px] font-mono text-emerald-400/90 truncate">
+                          <Cloud className="w-2.5 h-2.5 shrink-0" />
+                          <span className="truncate">{t.driveFolderPath || `Family Circle / Apple Music / ${t.genre}`}</span>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                    <div className="flex items-center gap-2.5 shrink-0 text-xs">
                       <span className="text-[11px] font-mono text-slate-400">
                         {Math.floor(t.durationSeconds / 60)}:{(t.durationSeconds % 60).toString().padStart(2, '0')}
                       </span>
+                      {t.driveWebViewLink ? (
+                        <a
+                          href={t.driveWebViewLink}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="p-1.5 text-emerald-400 hover:text-emerald-300 transition-colors"
+                          title="Open in Google Drive"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      ) : (
+                        <button
+                          onClick={(e) => handleSyncTrackToDrive(t, e)}
+                          className="p-1.5 text-slate-400 hover:text-emerald-300 transition-colors"
+                          title="Sync to Google Drive"
+                        >
+                          <Cloud className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       <button
                         onClick={(e) => handleToggleFavorite(t, e)}
                         className={`p-1.5 rounded-lg transition-colors ${
@@ -800,7 +879,7 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                 <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
                   <Music className="w-4 h-4" />
                 </div>
-                <h3 className="text-base font-bold text-white">Add Music to Library</h3>
+                <h3 className="text-base font-bold text-white">Add Music Track</h3>
               </div>
               <button
                 onClick={() => setIsUploadModalOpen(false)}
@@ -811,8 +890,18 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
             </div>
 
             <p className="text-xs text-slate-400">
-              Upload an audio file (MP3/WAV/M4A) or link a music stream. It will be stored locally and synced into your Google Drive path under <code className="text-indigo-300">Family Circle / Musical Library / [Genre]</code>.
+              Upload an audio file (MP3/WAV/M4A) or link a music stream. Tracks are stored locally and automatically uploaded to Google Drive under their categorized subfolder.
             </p>
+
+            <div className="p-3 rounded-2xl bg-indigo-950/40 border border-indigo-500/30 flex items-center justify-between text-xs">
+              <span className="text-slate-300 flex items-center gap-1.5 font-medium">
+                <Cloud className="w-4 h-4 text-emerald-400" />
+                <span>Drive Location:</span>
+              </span>
+              <span className="text-emerald-300 font-mono text-[11px] font-semibold">
+                Family Circle / Apple Music / {uploadGenre}
+              </span>
+            </div>
 
             <form onSubmit={handleUploadSubmit} className="space-y-3.5">
               <div>

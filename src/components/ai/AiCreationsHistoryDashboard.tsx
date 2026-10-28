@@ -153,12 +153,12 @@ export const AiCreationsHistoryDashboard: React.FC<AiCreationsHistoryDashboardPr
           artworkUrl: creation.thumbnailUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
           lyrics: creation.lyrics || `Prompt: ${creation.prompt}`,
           durationSeconds: 180,
-          driveFolderPath: 'Family Circle / Musical Library / AI Studio Lyria',
+          driveFolderPath: 'Family Circle / Apple Music / AI Studio Lyria',
         },
         accessToken,
         userEmail
       );
-      setNotice(`🎵 "${creation.title}" added to Musical Library & Drive!`);
+      setNotice(`🎵 "${creation.title}" added to Apple Music & Google Drive!`);
       setTimeout(() => setNotice(null), 4000);
       if (onNavigateToMusicTab) {
         onNavigateToMusicTab();

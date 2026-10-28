@@ -211,8 +211,8 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
                     <Cloud className="w-3.5 h-3.5 text-emerald-400" />
                     <span>Family Circle Drive</span>
                   </span>
-                  <span className="text-slate-400 font-mono text-[9px] truncate max-w-[110px]">
-                    {activeTrack.driveFolderPath || 'Musical Library'}
+                  <span className="text-slate-400 font-mono text-[9px] truncate max-w-[130px]">
+                    {activeTrack.driveFolderPath || 'Family Circle / Apple Music'}
                   </span>
                 </div>
               </div>

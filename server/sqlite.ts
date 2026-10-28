@@ -480,6 +480,12 @@ export async function initSqliteDb(): Promise<Database> {
   try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch {}
   try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN lyrics TEXT;'); } catch {}
   try { db.run('ALTER TABLE ai_studio_creations ADD COLUMN drive_sync_status TEXT DEFAULT "synced";'); } catch {}
+  try {
+    db.run("UPDATE musical_library_tracks SET drive_folder_path = REPLACE(drive_folder_path, 'Musical Library', 'Apple Music') WHERE drive_folder_path LIKE '%Musical Library%';");
+  } catch {}
+  try {
+    db.run("UPDATE google_drive_files SET folder_name = REPLACE(folder_name, 'Musical Library', 'Apple Music') WHERE folder_name LIKE '%Musical Library%';");
+  } catch {}
 
   // Seed default Google Keep notes if empty
   try {
@@ -869,7 +875,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'Harmonies of lifelong love, generational wisdom, and steady guidance...',
           driveFileId: 'gdf-music-001',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / Classical & Wellness',
+          driveFolderPath: 'Family Circle / Apple Music / Classical & Wellness',
           isFavorite: 1,
           playCount: 14,
         },
@@ -886,7 +892,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'Deep focus, crystal clarity, visionary architecture, effortless momentum...',
           driveFileId: 'gdf-music-002',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / Ambient & Study',
+          driveFolderPath: 'Family Circle / Apple Music / Ambient & Study',
           isFavorite: 1,
           playCount: 28,
         },
@@ -903,7 +909,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'Sleep peacefully under starlight, dreaming of infinite worlds and boundless courage...',
           driveFileId: 'gdf-music-003',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / Family Lullaby',
+          driveFolderPath: 'Family Circle / Apple Music / Family Lullaby',
           isFavorite: 1,
           playCount: 42,
         },
@@ -920,7 +926,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'மகிழ்ச்சியும் அமைதியும் நிறைந்த பண்பாட்டு நல்லிசை...',
           driveFileId: 'gdf-music-004',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / Tamil Melodies',
+          driveFolderPath: 'Family Circle / Apple Music / Tamil Melodies & Tradition',
           isFavorite: 1,
           playCount: 19,
         },
@@ -937,7 +943,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'Rise with purpose, build lasting institutions, empower generations...',
           driveFileId: 'gdf-music-005',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / Cinematic',
+          driveFolderPath: 'Family Circle / Apple Music / Cinematic',
           isFavorite: 0,
           playCount: 9,
         },
@@ -954,7 +960,7 @@ export async function initSqliteDb(): Promise<Database> {
           lyrics: 'Warm breeze along the coast, sun dipping beneath the golden horizon...',
           driveFileId: 'gdf-music-006',
           driveWebViewLink: 'https://drive.google.com',
-          driveFolderPath: 'Family Circle / Musical Library / AI Studio Lyria',
+          driveFolderPath: 'Family Circle / Apple Music / AI Studio Lyria',
           isFavorite: 1,
           playCount: 31,
         },

@@ -3033,6 +3033,22 @@ app.post('/api/music/library', (req, res) => {
   }
 });
 
+// Audio proxy endpoint for cross-origin audio downloading when uploading to Google Drive
+app.get('/api/audio/proxy', async (req, res) => {
+  try {
+    const audioUrl = req.query.url as string;
+    if (!audioUrl) return res.status(400).send('URL required');
+    const proxyRes = await fetch(audioUrl);
+    if (!proxyRes.ok) return res.status(proxyRes.status).send('Failed to fetch audio stream');
+    const contentType = proxyRes.headers.get('content-type') || 'audio/mpeg';
+    res.setHeader('Content-Type', contentType);
+    const arrayBuffer = await proxyRes.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err: any) {
+    res.status(500).send(err.message);
+  }
+});
+
 app.delete('/api/music/library/:id', (req, res) => {
   try {
     const { id } = req.params;

@@ -1,9 +1,15 @@
-// Sovereign Musical Library Sync & Storage Service
-// Synchronizes music tracks with Google Drive "Family Circle / Musical Library / [Genre]" and local storage.
+// Sovereign Apple Music Library Sync & Storage Service
+// Synchronizes music tracks with Google Drive "Family Circle / Apple Music / [Category]" and local storage.
 
 import { MusicTrack, MusicGenre } from '../types/music';
-import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { getApiUrl, safeFetchJson } from './api';
+import {
+  uploadTrackToAppleMusicDrive,
+  refreshAppleMusicFromDrive,
+  categorizeMusicSubfolder,
+} from './appleMusicDrive';
+
+export { refreshAppleMusicFromDrive, categorizeMusicSubfolder };
 
 const LOCAL_STORAGE_KEY = 'aura_music_library_tracks';
 
@@ -20,7 +26,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'Harmonies of lifelong love, generational wisdom, and steady guidance...',
     driveFileId: 'gdf-music-001',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / Classical & Wellness',
+    driveFolderPath: 'Family Circle / Apple Music / Classical & Wellness',
     isFavorite: true,
     playCount: 14,
     createdAt: new Date().toISOString(),
@@ -39,7 +45,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'Deep focus, crystal clarity, visionary architecture, effortless momentum...',
     driveFileId: 'gdf-music-002',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / Ambient & Study',
+    driveFolderPath: 'Family Circle / Apple Music / Ambient & Study',
     isFavorite: true,
     playCount: 28,
     createdAt: new Date().toISOString(),
@@ -58,7 +64,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'Sleep peacefully under starlight, dreaming of infinite worlds and boundless courage...',
     driveFileId: 'gdf-music-003',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / Family Lullaby',
+    driveFolderPath: 'Family Circle / Apple Music / Family Lullaby',
     isFavorite: true,
     playCount: 42,
     createdAt: new Date().toISOString(),
@@ -77,7 +83,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'மகிழ்ச்சியும் அமைதியும் நிறைந்த பண்பாட்டு நல்லிசை...',
     driveFileId: 'gdf-music-004',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / Tamil Melodies & Tradition',
+    driveFolderPath: 'Family Circle / Apple Music / Tamil Melodies & Tradition',
     isFavorite: true,
     playCount: 19,
     createdAt: new Date().toISOString(),
@@ -96,7 +102,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'Rise with purpose, build lasting institutions, empower generations...',
     driveFileId: 'gdf-music-005',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / Cinematic',
+    driveFolderPath: 'Family Circle / Apple Music / Cinematic',
     isFavorite: false,
     playCount: 9,
     createdAt: new Date().toISOString(),
@@ -115,7 +121,7 @@ export const INITIAL_MUSIC_TRACKS: MusicTrack[] = [
     lyrics: 'Warm breeze along the coast, sun dipping beneath the golden horizon...',
     driveFileId: 'gdf-music-006',
     driveWebViewLink: 'https://drive.google.com',
-    driveFolderPath: 'Family Circle / Musical Library / AI Studio Lyria',
+    driveFolderPath: 'Family Circle / Apple Music / AI Studio Lyria',
     isFavorite: true,
     playCount: 31,
     createdAt: new Date().toISOString(),
@@ -161,22 +167,37 @@ export async function fetchMusicTracks(
 }
 
 /**
- * Add or update a track in the Musical Library, saving locally and syncing to Google Drive.
+ * Add or update a track in the Musical Library, saving locally and syncing to Google Drive under:
+ * Family Circle / Apple Music / [Category]
  */
 export async function saveMusicTrack(
   trackData: Partial<MusicTrack> & { title: string; artist: string; audioUrl: string; genre: string },
   accessToken?: string | null,
-  userEmail = 'chinna.tamil2000@gmail.com'
+  userEmail = 'chinna.tamil2000@gmail.com',
+  audioFile?: File | Blob | null
 ): Promise<MusicTrack> {
   const id = trackData.id || `track-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const now = new Date().toISOString();
-  const driveFolderPath = trackData.driveFolderPath || `Family Circle / Musical Library / ${trackData.genre}`;
+
+  // Categorize track into Apple Music subfolder
+  const { subfolderName } = categorizeMusicSubfolder(
+    trackData.title,
+    trackData.artist,
+    trackData.genre,
+    trackData.lyrics
+  );
+
+  const driveFolderPath =
+    trackData.driveFolderPath && !trackData.driveFolderPath.includes('Musical Library')
+      ? trackData.driveFolderPath
+      : `Family Circle / Apple Music / ${subfolderName}`;
 
   const track: MusicTrack = {
     ...trackData,
     id,
     userEmail,
-    album: trackData.album || 'Aura Family Music Collection',
+    genre: trackData.genre || subfolderName,
+    album: trackData.album || `Apple Music - ${subfolderName}`,
     artworkUrl: trackData.artworkUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
     durationSeconds: trackData.durationSeconds || 180,
     isFavorite: !!trackData.isFavorite,
@@ -203,13 +224,21 @@ export async function saveMusicTrack(
     console.warn('[Music Library] Backend save notice:', err);
   }
 
-  // 3. Sync to Google Drive if access token provided
-  if (accessToken && accessToken.trim()) {
+  // 3. Sync to Google Drive under "Family Circle / Apple Music / [Category]"
+  const effectiveToken = (accessToken && accessToken.trim()) || localStorage.getItem('aura_google_access_token');
+  if (effectiveToken && effectiveToken.trim()) {
     try {
-      const driveMeta = await uploadTrackAudioToDrive(track, accessToken, userEmail);
+      const driveMeta = await uploadTrackToAppleMusicDrive(
+        effectiveToken,
+        track,
+        audioFile || null,
+        'Family Circle',
+        userEmail
+      );
       if (driveMeta) {
         track.driveFileId = driveMeta.driveFileId;
         track.driveWebViewLink = driveMeta.driveWebViewLink;
+        track.driveFolderPath = driveMeta.driveFolderPath;
 
         // Re-save with drive metadata
         updateLocalTrack(track);
@@ -220,7 +249,7 @@ export async function saveMusicTrack(
         }).catch(() => {});
       }
     } catch (dErr) {
-      console.warn('[Music Library] Drive upload notice:', dErr);
+      console.warn('[Music Library] Apple Music Drive upload notice:', dErr);
     }
   }
 
@@ -228,113 +257,59 @@ export async function saveMusicTrack(
 }
 
 /**
+ * On-demand sync for an individual track into "Family Circle / Apple Music / [Category]"
+ */
+export async function syncTrackToAppleMusic(
+  track: MusicTrack,
+  accessToken?: string | null,
+  userEmail = 'chinna.tamil2000@gmail.com',
+  audioFile?: File | Blob | null
+): Promise<{ success: boolean; track: MusicTrack; error?: string }> {
+  const token = (accessToken && accessToken.trim()) || localStorage.getItem('aura_google_access_token');
+  if (!token) {
+    return { success: false, track, error: 'Google account authorization is required to sync to Drive.' };
+  }
+
+  try {
+    const driveMeta = await uploadTrackToAppleMusicDrive(
+      token,
+      track,
+      audioFile || null,
+      'Family Circle',
+      userEmail
+    );
+    if (driveMeta) {
+      track.driveFileId = driveMeta.driveFileId;
+      track.driveWebViewLink = driveMeta.driveWebViewLink;
+      track.driveFolderPath = driveMeta.driveFolderPath;
+
+      updateLocalTrack(track);
+      await fetch(getApiUrl('/api/music/library'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(track),
+      }).catch(() => {});
+
+      return { success: true, track };
+    }
+    return { success: false, track, error: 'Drive upload did not return metadata.' };
+  } catch (err: any) {
+    return { success: false, track, error: err.message || 'Drive sync failed' };
+  }
+}
+
+/**
  * Upload track audio file directly into Google Drive under:
- * Family Circle / Musical Library / {Genre}
+ * Family Circle / Apple Music / [Category]
+ * (Backward compatibility alias)
  */
 export async function uploadTrackAudioToDrive(
   track: MusicTrack,
   accessToken: string,
   userEmail = 'chinna.tamil2000@gmail.com'
-): Promise<{ driveFileId: string; driveWebViewLink: string } | null> {
-  if (!accessToken || !accessToken.trim()) return null;
-
-  try {
-    const rootFolder = await getOrCreateGoogleDriveFolder(accessToken, 'Family Circle');
-    const musicFolder = await getOrCreateGoogleDriveFolder(accessToken, 'Musical Library', rootFolder.id);
-    const genreFolder = await getOrCreateGoogleDriveFolder(accessToken, track.genre || 'General', musicFolder.id);
-
-    // Convert audio URL into Blob
-    let fileBlob: Blob;
-    let fileName = `${track.title.replace(/[^a-zA-Z0-9_\- ]/g, '').trim()} - ${track.artist.replace(/[^a-zA-Z0-9_\- ]/g, '').trim()}`;
-
-    if (track.audioUrl.startsWith('data:')) {
-      const parts = track.audioUrl.split(',');
-      const mime = parts[0].match(/:(.*?);/)?.[1] || 'audio/mpeg';
-      const binaryStr = atob(parts[1]);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
-      }
-      fileBlob = new Blob([bytes], { type: mime });
-    } else {
-      try {
-        const res = await fetch(track.audioUrl);
-        fileBlob = await res.blob();
-      } catch {
-        fileBlob = new Blob([`Audio metadata: ${track.title} by ${track.artist}`], { type: 'audio/mpeg' });
-      }
-    }
-
-    if (!fileName.endsWith('.mp3') && !fileName.endsWith('.wav') && !fileName.endsWith('.m4a')) {
-      fileName += '.mp3';
-    }
-
-    const boundary = `-------MusicDriveBoundary${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
-    const metadata = {
-      name: fileName,
-      mimeType: fileBlob.type || 'audio/mpeg',
-      parents: [genreFolder.id],
-      description: `Aura Musical Library [${track.genre}]: "${track.title}" by ${track.artist}\nAlbum: ${track.album || 'Family Music Collection'}`,
-    };
-
-    const bodyBlob = new Blob(
-      [
-        `--${boundary}\r\n`,
-        'Content-Type: application/json; charset=UTF-8\r\n\r\n',
-        JSON.stringify(metadata),
-        `\r\n--${boundary}\r\n`,
-        `Content-Type: ${fileBlob.type || 'audio/mpeg'}\r\n\r\n`,
-        fileBlob,
-        `\r\n--${boundary}--`,
-      ],
-      { type: `multipart/related; boundary=${boundary}` }
-    );
-
-    const driveRes = await fetch(
-      'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,size',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
-        body: bodyBlob,
-      }
-    );
-
-    if (!driveRes.ok) {
-      const errText = await driveRes.text();
-      throw new Error(`Drive upload error (${driveRes.status}): ${errText}`);
-    }
-
-    const driveFile = await driveRes.json();
-
-    // Mirror to server SQLite google_drive_files table
-    try {
-      await fetch(getApiUrl('/api/google/drive/upload'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: driveFile.id,
-          userEmail,
-          name: fileName,
-          mimeType: fileBlob.type || 'audio/mpeg',
-          size: `${(fileBlob.size / (1024 * 1024)).toFixed(1)} MB`,
-          sizeBytes: fileBlob.size,
-          webViewLink: driveFile.webViewLink,
-          folderId: genreFolder.id,
-          folderName: `Family Circle / Musical Library / ${track.genre}`,
-          category: 'Musical Library Track',
-          uploadedBy: 'music_library',
-        }),
-      });
-    } catch {}
-
-    return {
-      driveFileId: driveFile.id,
-      driveWebViewLink: driveFile.webViewLink,
-    };
-  } catch (err) {
-    console.error('uploadTrackAudioToDrive error:', err);
-    throw err;
-  }
+): Promise<{ driveFileId: string; driveWebViewLink: string; driveFolderPath?: string } | null> {
+  const res = await uploadTrackToAppleMusicDrive(accessToken, track, null, 'Family Circle', userEmail);
+  return res ? { driveFileId: res.driveFileId, driveWebViewLink: res.driveWebViewLink, driveFolderPath: res.driveFolderPath } : null;
 }
 
 /**

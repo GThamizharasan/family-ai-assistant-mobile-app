@@ -81,7 +81,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
-    { key: 'music', label: 'Musical Library', category: 'Intelligence', icon: Music },
+    { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'family', label: 'Family Radar', category: 'Family & Safety', icon: Users, badge: emergencyAlertCount },
