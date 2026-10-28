@@ -52,6 +52,7 @@ import {
   FileText,
   Languages,
   FolderGit2,
+  Music,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { GitHubSyncModal } from '../GitHubSyncModal';
@@ -1733,6 +1734,32 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             </div>
             <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-amber-400 font-semibold">
               <span>Continue Reading</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* Card: Apple Musical Library & Playback */}
+          <div
+            onClick={() => onNavigate('music')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-pink-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-pink-500/10 text-pink-400">
+                    <Music className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Apple Musical Library</span>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-pink-400">Drive Sync</span>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200 truncate">Audiophile Playback</h4>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                Curated Tamil Classical, Binaural Focus, Lyria AI Songs, real-time waveform visualizer & synchronized lyrics.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-pink-400 font-semibold">
+              <span>Open Music Player</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </div>
           </div>

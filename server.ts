@@ -41,6 +41,14 @@ import {
   updateGoogleDriveFileFolderInSqlite,
   getGoogleDriveFilesFromSqlite,
   deleteGoogleDriveFileFromSqlite,
+  saveAiCreationToSqlite,
+  getAiCreationsFromSqlite,
+  deleteAiCreationFromSqlite,
+  saveMusicTrackToSqlite,
+  getMusicTracksFromSqlite,
+  deleteMusicTrackFromSqlite,
+  toggleMusicTrackFavoriteInSqlite,
+  incrementMusicTrackPlayCountInSqlite,
   saveDeviceStorageMetricsToSqlite,
   getLatestDeviceStorageMetricsFromSqlite,
   getFamilyMembersFromSqlite,
@@ -56,6 +64,8 @@ import {
   type GoogleKeepNoteRecord,
   type GoogleDriveFileRecord,
   type DeviceStorageRecord,
+  type AiStudioCreationRecord,
+  type MusicalTrackRecord,
 } from './server/sqlite.ts';
 
 dotenv.config();
@@ -2951,6 +2961,105 @@ app.delete('/api/google/drive/:id', (req, res) => {
     const userEmail = req.query.userEmail as string | undefined;
     const ok = deleteGoogleDriveFileFromSqlite(id, userEmail);
     res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// AI Studio Generated Output & Family Drive History Endpoints
+// -------------------------------------------------------------
+app.get('/api/ai/creations', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const type = req.query.type as string | undefined;
+    const creations = getAiCreationsFromSqlite(userEmail, type);
+    res.json({ success: true, count: creations.length, creations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/ai/creations', (req, res) => {
+  try {
+    const creation = saveAiCreationToSqlite(req.body);
+    broadcastToFamily('family-aura-primary', {
+      type: 'ai_creation_added',
+      creation,
+      timestamp: new Date().toISOString(),
+    });
+    res.json({ success: true, creation });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/ai/creations/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteAiCreationFromSqlite(id, userEmail);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Musical Library & Playback Endpoints (Synced with Drive)
+// -------------------------------------------------------------
+app.get('/api/music/library', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const genre = req.query.genre as string | undefined;
+    const tracks = getMusicTracksFromSqlite(userEmail, genre);
+    res.json({ success: true, count: tracks.length, tracks });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/music/library', (req, res) => {
+  try {
+    const track = saveMusicTrackToSqlite(req.body);
+    broadcastToFamily('family-aura-primary', {
+      type: 'music_track_added',
+      track,
+      timestamp: new Date().toISOString(),
+    });
+    res.json({ success: true, track });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/music/library/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteMusicTrackFromSqlite(id, userEmail);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/music/library/:id/favorite', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isFavorite } = req.body;
+    const ok = toggleMusicTrackFavoriteInSqlite(id, isFavorite);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/music/library/:id/play', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = incrementMusicTrackPlayCountInSqlite(id);
+    res.json({ success: ok, id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

@@ -28,6 +28,9 @@ import { PhoneDialerTab } from './components/tabs/PhoneDialerTab';
 import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
 import { AiStudioTab } from './components/tabs/AiStudioTab';
 import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
+import { MusicLibraryTab } from './components/tabs/MusicLibraryTab';
+import { MusicPlayerBar } from './components/music/MusicPlayerBar';
+import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
 
 const AppContent: React.FC = () => {
@@ -37,6 +40,7 @@ const AppContent: React.FC = () => {
   const [activeWhatsAppContactId, setActiveWhatsAppContactId] = useState<string | undefined>(undefined);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
+  const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -108,6 +112,8 @@ const AppContent: React.FC = () => {
         );
       case 'ibooks':
         return <IBooksLibraryTab />;
+      case 'music':
+        return <MusicLibraryTab onOpenPlayer={() => setIsMusicPlayerOpen(true)} />;
       case 'ai-studio':
         return <AiStudioTab onOpenVoiceAssistant={() => setIsVoiceOpen(true)} />;
       case 'family':
@@ -167,10 +173,19 @@ const AppContent: React.FC = () => {
     >
       {renderActiveTab()}
 
+      {/* Floating Mini Player Bar across all tabs */}
+      <MusicPlayerBar onOpenFullPlayer={() => setIsMusicPlayerOpen(true)} />
+
       <BottomNav
         currentTab={currentTab}
         onSelectTab={(tab) => setCurrentTab(tab)}
         onOpenVoice={() => setIsVoiceOpen(true)}
+      />
+
+      {/* Apple Music Full Screen Modal */}
+      <AppleMusicPlayerModal
+        isOpen={isMusicPlayerOpen}
+        onClose={() => setIsMusicPlayerOpen(false)}
       />
 
       <VoiceAssistantModal

@@ -432,6 +432,45 @@ export async function initSqliteDb(): Promise<Database> {
       uploaded_by TEXT DEFAULT 'voice_assistant',
       modified_time TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ai_studio_creations (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      media_url TEXT NOT NULL,
+      thumbnail_url TEXT,
+      model_used TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT,
+      drive_sync_status TEXT DEFAULT 'synced',
+      created_at TEXT NOT NULL,
+      metadata_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS musical_library_tracks (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      artist TEXT NOT NULL,
+      album TEXT,
+      genre TEXT NOT NULL,
+      audio_url TEXT NOT NULL,
+      artwork_url TEXT,
+      duration_seconds INTEGER DEFAULT 180,
+      lyrics TEXT,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT,
+      is_favorite INTEGER DEFAULT 0,
+      play_count INTEGER DEFAULT 0,
+      last_played_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
@@ -439,6 +478,8 @@ export async function initSqliteDb(): Promise<Database> {
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
   try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch {}
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN lyrics TEXT;'); } catch {}
+  try { db.run('ALTER TABLE ai_studio_creations ADD COLUMN drive_sync_status TEXT DEFAULT "synced";'); } catch {}
 
   // Seed default Google Keep notes if empty
   try {
@@ -805,6 +846,215 @@ export async function initSqliteDb(): Promise<Database> {
        VALUES (?, ?, ?, ?)`,
       [k.name, k.value, k.desc, new Date().toISOString()]
     );
+  }
+
+  // Seed initial Musical Library Tracks if empty
+  try {
+    const musicCheck = db.exec('SELECT COUNT(*) FROM musical_library_tracks');
+    const musicCount = musicCheck.length && musicCheck[0].values.length ? (musicCheck[0].values[0][0] as number) : 0;
+    if (musicCount === 0) {
+      const defaultUser = 'chinna.tamil2000@gmail.com';
+      const nowIso = new Date().toISOString();
+      const seedTracks = [
+        {
+          id: 'track-001',
+          userEmail: defaultUser,
+          title: 'Family Circle Symphony',
+          artist: 'Aura Orchestral & Thamizh Family',
+          album: 'Sovereign Family Legacy',
+          genre: 'Classical & Wellness',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 210,
+          lyrics: 'Harmonies of lifelong love, generational wisdom, and steady guidance...',
+          driveFileId: 'gdf-music-001',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / Classical & Wellness',
+          isFavorite: 1,
+          playCount: 14,
+        },
+        {
+          id: 'track-002',
+          userEmail: defaultUser,
+          title: 'Aura Ambient Focus Flow',
+          artist: 'AI Studio Sound Lab',
+          album: 'Executive Mindset Sessions',
+          genre: 'Ambient & Study',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=chill-abstract-intention-12099.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 180,
+          lyrics: 'Deep focus, crystal clarity, visionary architecture, effortless momentum...',
+          driveFileId: 'gdf-music-002',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / Ambient & Study',
+          isFavorite: 1,
+          playCount: 28,
+        },
+        {
+          id: 'track-003',
+          userEmail: defaultUser,
+          title: 'Midnight Lullaby for Maaran & Kavinmozhi',
+          artist: 'Selvapriya & Thamizh',
+          album: 'Family Bedtime Peace',
+          genre: 'Family Lullaby',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=sweet-lullaby-piano-version-10906.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1532767153582-b1a0e5145009?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 240,
+          lyrics: 'Sleep peacefully under starlight, dreaming of infinite worlds and boundless courage...',
+          driveFileId: 'gdf-music-003',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / Family Lullaby',
+          isFavorite: 1,
+          playCount: 42,
+        },
+        {
+          id: 'track-004',
+          userEmail: defaultUser,
+          title: 'Tamil Heritage Veena & Flute Melodies',
+          artist: 'Tamil Isai Classical Ensemble',
+          album: 'Roots & Heritage Vol. 1',
+          genre: 'Tamil Melodies & Tradition',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2021/09/06/audio_73e721a329.mp3?filename=indian-meditation-flute-7848.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 225,
+          lyrics: 'மகிழ்ச்சியும் அமைதியும் நிறைந்த பண்பாட்டு நல்லிசை...',
+          driveFileId: 'gdf-music-004',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / Tamil Melodies',
+          isFavorite: 1,
+          playCount: 19,
+        },
+        {
+          id: 'track-005',
+          userEmail: defaultUser,
+          title: 'Billionaire Empire Motivation',
+          artist: 'Aura Cinematic Soundscapes',
+          album: 'High Stakes Sovereign Vision',
+          genre: 'Cinematic',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/03/10/audio_c3501258ef.mp3?filename=cinematic-epic-emotional-112423.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 195,
+          lyrics: 'Rise with purpose, build lasting institutions, empower generations...',
+          driveFileId: 'gdf-music-005',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / Cinematic',
+          isFavorite: 0,
+          playCount: 9,
+        },
+        {
+          id: 'track-006',
+          userEmail: defaultUser,
+          title: 'AI Studio Lyria Demo: Golden Sunset Groove',
+          artist: 'Google Lyria AI Music Engine',
+          album: 'AI Studio Synthetics',
+          genre: 'AI Studio Lyria',
+          audioUrl: 'https://cdn.pixabay.com/download/audio/2022/05/16/audio_db6591201e.mp3?filename=tropical-summer-music-111658.mp3',
+          artworkUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=600&auto=format&fit=crop&q=80',
+          durationSeconds: 165,
+          lyrics: 'Warm breeze along the coast, sun dipping beneath the golden horizon...',
+          driveFileId: 'gdf-music-006',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / Musical Library / AI Studio Lyria',
+          isFavorite: 1,
+          playCount: 31,
+        },
+      ];
+
+      for (const t of seedTracks) {
+        db.run(
+          `INSERT INTO musical_library_tracks (id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [t.id, t.userEmail, t.title, t.artist, t.album, t.genre, t.audioUrl, t.artworkUrl, t.durationSeconds, t.lyrics, t.driveFileId, t.driveWebViewLink, t.driveFolderPath, t.isFavorite, t.playCount, nowIso, nowIso]
+        );
+      }
+    }
+  } catch (mErr) {
+    console.warn('Seed musical tracks notice:', mErr);
+  }
+
+  // Seed initial AI Studio Creations if empty
+  try {
+    const aicCheck = db.exec('SELECT COUNT(*) FROM ai_studio_creations');
+    const aicCount = aicCheck.length && aicCheck[0].values.length ? (aicCheck[0].values[0][0] as number) : 0;
+    if (aicCount === 0) {
+      const defaultUser = 'chinna.tamil2000@gmail.com';
+      const seedCreations = [
+        {
+          id: 'aic-seed-001',
+          userEmail: defaultUser,
+          type: 'image',
+          title: 'Global Family Office & Eco-Sanctuary',
+          prompt: 'Hyper-realistic cinematic render of a futuristic family sanctuary villa with solar glass and tropical garden pavilion at twilight',
+          mediaUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=1200&auto=format&fit=crop&q=80',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=400&auto=format&fit=crop&q=80',
+          modelUsed: 'imagen-3.0-generate-002',
+          mimeType: 'image/jpeg',
+          driveFileId: 'gdf-aic-001',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / AI Studio Creations / Images',
+          driveSyncStatus: 'synced',
+          createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+        },
+        {
+          id: 'aic-seed-002',
+          userEmail: defaultUser,
+          type: 'video',
+          title: 'Veo 3 Drone Sweep: Green Autonomous Tech Campus',
+          prompt: 'Cinematic 4K drone flythrough across an advanced technological campus with solar canopies and lush foliage at sunrise, 60fps',
+          mediaUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?w=600&auto=format&fit=crop&q=80',
+          modelUsed: 'veo-3.0-generate-001',
+          mimeType: 'video/mp4',
+          driveFileId: 'gdf-aic-002',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / AI Studio Creations / Videos',
+          driveSyncStatus: 'synced',
+          createdAt: new Date(Date.now() - 3600000 * 8).toISOString(),
+        },
+        {
+          id: 'aic-seed-003',
+          userEmail: defaultUser,
+          type: 'music',
+          title: 'Lyria AI: Sovereign Family Circle Anthem',
+          prompt: 'Warm uplifting acoustic melody with gentle cello and ambient pads celebrating family harmony and lifelong vision',
+          mediaUrl: 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80',
+          modelUsed: 'lyria-v2',
+          mimeType: 'audio/mpeg',
+          driveFileId: 'gdf-aic-003',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / AI Studio Creations / Music',
+          driveSyncStatus: 'synced',
+          createdAt: new Date(Date.now() - 3600000 * 16).toISOString(),
+        },
+        {
+          id: 'aic-seed-004',
+          userEmail: defaultUser,
+          type: 'transcript',
+          title: 'Executive Strategy & Family Governance Charter',
+          prompt: 'High accuracy speech-to-text with speaker diarization and key action items',
+          mediaUrl: 'Family Governance Charter Q4: 1. Maintain Family Circle Drive as unified single source of truth. 2. Real-time GPS safety check-ins synchronized every 25s. 3. Monthly capital allocation for venture and wellness protocols.',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1455390582262-044cdead277a?w=600&auto=format&fit=crop&q=80',
+          modelUsed: 'gemini-3.8-flash',
+          mimeType: 'text/plain',
+          driveFileId: 'gdf-aic-004',
+          driveWebViewLink: 'https://drive.google.com',
+          driveFolderPath: 'Family Circle / AI Studio Creations / Transcripts',
+          driveSyncStatus: 'synced',
+          createdAt: new Date(Date.now() - 3600000 * 24).toISOString(),
+        },
+      ];
+
+      for (const c of seedCreations) {
+        db.run(
+          `INSERT INTO ai_studio_creations (id, user_email, type, title, prompt, media_url, thumbnail_url, model_used, mime_type, drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [c.id, c.userEmail, c.type, c.title, c.prompt, c.mediaUrl, c.thumbnailUrl, c.modelUsed, c.mimeType, c.driveFileId, c.driveWebViewLink, c.driveFolderPath, c.driveSyncStatus, c.createdAt]
+        );
+      }
+    }
+  } catch (cErr) {
+    console.warn('Seed AI creations notice:', cErr);
   }
 
   saveSqliteToDisk();
@@ -1924,6 +2174,333 @@ export function deleteGoogleDriveFileFromSqlite(id: string, userEmail?: string):
 }
 
 // -------------------------------------------------------------
+// AI Studio Creations (Image, Video, Music, Transcript) Store
+// -------------------------------------------------------------
+export interface AiStudioCreationRecord {
+  id: string;
+  userEmail: string;
+  type: 'image' | 'video' | 'music' | 'transcript';
+  title: string;
+  prompt: string;
+  mediaUrl: string;
+  thumbnailUrl?: string;
+  modelUsed: string;
+  mimeType: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  driveSyncStatus?: 'synced' | 'pending' | 'local_only' | 'error';
+  createdAt: string;
+  metadataJson?: string;
+}
+
+export function saveAiCreationToSqlite(item: Partial<AiStudioCreationRecord> & {
+  type: 'image' | 'video' | 'music' | 'transcript';
+  title: string;
+  prompt: string;
+  mediaUrl: string;
+  modelUsed: string;
+}): AiStudioCreationRecord {
+  if (!db) throw new Error('Database not initialized');
+  const now = new Date().toISOString();
+  const id = item.id || `aic-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const cleanEmail = (item.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const mimeType = item.mimeType || (item.type === 'video' ? 'video/mp4' : item.type === 'music' ? 'audio/mpeg' : item.type === 'image' ? 'image/png' : 'text/plain');
+  const driveFolderPath = item.driveFolderPath || `Family Circle / AI Studio Creations / ${item.type === 'video' ? 'Videos' : item.type === 'music' ? 'Music' : item.type === 'image' ? 'Images' : 'Transcripts'}`;
+  const driveSyncStatus = item.driveSyncStatus || (item.driveFileId ? 'synced' : 'pending');
+
+  db.run(
+    `INSERT INTO ai_studio_creations (id, user_email, type, title, prompt, media_url, thumbnail_url, model_used, mime_type, drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status, created_at, metadata_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       prompt = excluded.prompt,
+       media_url = excluded.media_url,
+       thumbnail_url = excluded.thumbnail_url,
+       model_used = excluded.model_used,
+       mime_type = excluded.mime_type,
+       drive_file_id = excluded.drive_file_id,
+       drive_web_view_link = excluded.drive_web_view_link,
+       drive_folder_path = excluded.drive_folder_path,
+       drive_sync_status = excluded.drive_sync_status,
+       metadata_json = excluded.metadata_json`,
+    [
+      id,
+      cleanEmail,
+      item.type,
+      item.title,
+      item.prompt,
+      item.mediaUrl,
+      item.thumbnailUrl || null,
+      item.modelUsed,
+      mimeType,
+      item.driveFileId || null,
+      item.driveWebViewLink || null,
+      driveFolderPath,
+      driveSyncStatus,
+      item.createdAt || now,
+      item.metadataJson || null,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: cleanEmail,
+    type: item.type,
+    title: item.title,
+    prompt: item.prompt,
+    mediaUrl: item.mediaUrl,
+    thumbnailUrl: item.thumbnailUrl,
+    modelUsed: item.modelUsed,
+    mimeType,
+    driveFileId: item.driveFileId,
+    driveWebViewLink: item.driveWebViewLink,
+    driveFolderPath,
+    driveSyncStatus,
+    createdAt: item.createdAt || now,
+    metadataJson: item.metadataJson,
+  };
+}
+
+export function getAiCreationsFromSqlite(userEmail?: string, typeFilter?: string): AiStudioCreationRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+
+  let query = `
+    SELECT id, user_email, type, title, prompt, media_url, thumbnail_url, model_used, mime_type, drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status, created_at, metadata_json
+    FROM ai_studio_creations
+    WHERE (user_email = ? OR user_email = 'chinna.tamil2000@gmail.com')
+  `;
+  const params: any[] = [cleanEmail];
+
+  if (typeFilter && typeFilter !== 'all') {
+    query += ` AND type = ?`;
+    params.push(typeFilter);
+  }
+
+  query += ` ORDER BY created_at DESC`;
+
+  const res = db.exec(query, params);
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => ({
+    id: row[0] as string,
+    userEmail: row[1] as string,
+    type: row[2] as 'image' | 'video' | 'music' | 'transcript',
+    title: row[3] as string,
+    prompt: row[4] as string,
+    mediaUrl: row[5] as string,
+    thumbnailUrl: (row[6] as string) || undefined,
+    modelUsed: row[7] as string,
+    mimeType: row[8] as string,
+    driveFileId: (row[9] as string) || undefined,
+    driveWebViewLink: (row[10] as string) || undefined,
+    driveFolderPath: (row[11] as string) || undefined,
+    driveSyncStatus: (row[12] as any) || 'synced',
+    createdAt: row[13] as string,
+    metadataJson: (row[14] as string) || undefined,
+  }));
+}
+
+export function deleteAiCreationFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  if (userEmail) {
+    db.run('DELETE FROM ai_studio_creations WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+  } else {
+    db.run('DELETE FROM ai_studio_creations WHERE id = ?', [id]);
+  }
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// Musical Library Tracks (Synced with Drive and Local Storage)
+// -------------------------------------------------------------
+export interface MusicalTrackRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  artist: string;
+  album?: string;
+  genre: string;
+  audioUrl: string;
+  artworkUrl?: string;
+  durationSeconds: number;
+  lyrics?: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  isFavorite: boolean;
+  playCount: number;
+  lastPlayedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
+  title: string;
+  artist: string;
+  audioUrl: string;
+  genre: string;
+}): MusicalTrackRecord {
+  if (!db) throw new Error('Database not initialized');
+  const now = new Date().toISOString();
+  const id = track.id || `track-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const cleanEmail = (track.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const duration = track.durationSeconds || 180;
+  const driveFolderPath = track.driveFolderPath || `Family Circle / Musical Library / ${track.genre || 'General'}`;
+
+  db.run(
+    `INSERT INTO musical_library_tracks (id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, last_played_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       artist = excluded.artist,
+       album = excluded.album,
+       genre = excluded.genre,
+       audio_url = excluded.audio_url,
+       artwork_url = excluded.artwork_url,
+       duration_seconds = excluded.duration_seconds,
+       lyrics = excluded.lyrics,
+       drive_file_id = excluded.drive_file_id,
+       drive_web_view_link = excluded.drive_web_view_link,
+       drive_folder_path = excluded.drive_folder_path,
+       is_favorite = excluded.is_favorite,
+       play_count = excluded.play_count,
+       last_played_at = excluded.last_played_at,
+       updated_at = excluded.updated_at`,
+    [
+      id,
+      cleanEmail,
+      track.title,
+      track.artist,
+      track.album || 'Aura Family Music Collection',
+      track.genre,
+      track.audioUrl,
+      track.artworkUrl || null,
+      duration,
+      track.lyrics || null,
+      track.driveFileId || null,
+      track.driveWebViewLink || null,
+      driveFolderPath,
+      track.isFavorite ? 1 : 0,
+      track.playCount || 0,
+      track.lastPlayedAt || null,
+      track.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail: cleanEmail,
+    title: track.title,
+    artist: track.artist,
+    album: track.album || 'Aura Family Music Collection',
+    genre: track.genre,
+    audioUrl: track.audioUrl,
+    artworkUrl: track.artworkUrl,
+    durationSeconds: duration,
+    lyrics: track.lyrics,
+    driveFileId: track.driveFileId,
+    driveWebViewLink: track.driveWebViewLink,
+    driveFolderPath,
+    isFavorite: !!track.isFavorite,
+    playCount: track.playCount || 0,
+    lastPlayedAt: track.lastPlayedAt,
+    createdAt: track.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function getMusicTracksFromSqlite(userEmail?: string, genreFilter?: string): MusicalTrackRecord[] {
+  if (!db) return [];
+  const cleanEmail = (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+
+  let query = `
+    SELECT id, user_email, title, artist, album, genre, audio_url, artwork_url, duration_seconds, lyrics, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, last_played_at, created_at, updated_at
+    FROM musical_library_tracks
+    WHERE (user_email = ? OR user_email = 'chinna.tamil2000@gmail.com')
+  `;
+  const params: any[] = [cleanEmail];
+
+  if (genreFilter && genreFilter !== 'All') {
+    query += ` AND genre = ?`;
+    params.push(genreFilter);
+  }
+
+  query += ` ORDER BY updated_at DESC`;
+
+  const res = db.exec(query, params);
+  if (!res.length) return [];
+
+  return res[0].values.map((row) => ({
+    id: row[0] as string,
+    userEmail: row[1] as string,
+    title: row[2] as string,
+    artist: row[3] as string,
+    album: (row[4] as string) || undefined,
+    genre: row[5] as string,
+    audioUrl: row[6] as string,
+    artworkUrl: (row[7] as string) || undefined,
+    durationSeconds: Number(row[8]) || 180,
+    lyrics: (row[9] as string) || undefined,
+    driveFileId: (row[10] as string) || undefined,
+    driveWebViewLink: (row[11] as string) || undefined,
+    driveFolderPath: (row[12] as string) || undefined,
+    isFavorite: Number(row[13]) === 1,
+    playCount: Number(row[14]) || 0,
+    lastPlayedAt: (row[15] as string) || undefined,
+    createdAt: row[16] as string,
+    updatedAt: row[17] as string,
+  }));
+}
+
+export function deleteMusicTrackFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  if (userEmail) {
+    db.run('DELETE FROM musical_library_tracks WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+  } else {
+    db.run('DELETE FROM musical_library_tracks WHERE id = ?', [id]);
+  }
+  scheduleSave();
+  return true;
+}
+
+export function toggleMusicTrackFavoriteInSqlite(id: string, isFavorite?: boolean): boolean {
+  if (!db) return false;
+  try {
+    if (typeof isFavorite === 'boolean') {
+      db.run('UPDATE musical_library_tracks SET is_favorite = ?, updated_at = ? WHERE id = ?', [isFavorite ? 1 : 0, new Date().toISOString(), id]);
+    } else {
+      db.run('UPDATE musical_library_tracks SET is_favorite = (CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END), updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to toggle music track favorite:', err);
+    return false;
+  }
+}
+
+export function incrementMusicTrackPlayCountInSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(
+      'UPDATE musical_library_tracks SET play_count = play_count + 1, last_played_at = ?, updated_at = ? WHERE id = ?',
+      [new Date().toISOString(), new Date().toISOString(), id]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to increment play count:', err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
 export function getSqliteDbStats() {
@@ -1958,6 +2535,8 @@ export function getSqliteDbStats() {
     'google_keep_notes',
     'google_drive_files',
     'device_storage_metrics',
+    'ai_studio_creations',
+    'musical_library_tracks',
   ];
 
   const tableCounts: Record<string, number> = {};

@@ -31,8 +31,12 @@ import {
   Search,
   Maximize2,
   Share2,
+  HardDrive,
+  FolderArchive,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { AiCreationsHistoryDashboard } from '../ai/AiCreationsHistoryDashboard';
+import { registerAiCreation } from '../../services/aiDriveSync';
 import {
   transcribeAudio,
   generateVideoFromText,
@@ -57,7 +61,8 @@ export type AiStudioSubTab =
   | 'chat'
   | 'music'
   | 'images'
-  | 'live-voice';
+  | 'live-voice'
+  | 'history';
 
 interface AiStudioTabProps {
   initialSubTab?: AiStudioSubTab;
@@ -240,6 +245,18 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
     try {
       const res = await transcribeAudio(transcribeAudioBlob, transcribePrompt || undefined);
       setTranscribeResult(res);
+      void registerAiCreation({
+        title: transcribePrompt ? `Transcript: ${transcribePrompt.slice(0, 36)}` : 'Voice Audio Transcription',
+        type: 'transcript',
+        modelUsed: res.modelUsed || 'gemini-2.5-flash',
+        model: res.modelUsed || 'gemini-2.5-flash',
+        prompt: transcribePrompt || 'Audio speech-to-text',
+        mediaUrl: `data:text/plain;charset=utf-8,${encodeURIComponent(res.text)}`,
+        contentPreview: res.text,
+        mimeType: 'text/plain',
+        drivePath: 'Family Circle / AI Studio Creations / Transcripts',
+        tags: ['transcription', 'audio', 'speech-to-text'],
+      });
     } catch (err: any) {
       alert(`Transcription error: ${err.message}`);
     } finally {
@@ -281,6 +298,18 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           const videoBlobUrl = await fetchCompletedVideoBlob(init.operationName);
           setVeoVideoUrl(videoBlobUrl);
           setVeoProgressMsg('Cinematic video generated successfully!');
+          void registerAiCreation({
+            title: `Veo 3: ${veoPrompt.slice(0, 36)}`,
+            type: 'video',
+            modelUsed: 'veo-3.1-lite',
+            model: 'veo-3.1-lite',
+            prompt: veoPrompt,
+            mediaUrl: videoBlobUrl,
+            mimeType: 'video/mp4',
+            drivePath: 'Family Circle / AI Studio Creations / Videos',
+            aspectRatio: veoAspectRatio,
+            tags: ['veo-3', 'cinematic', 'video-generation', veoAspectRatio],
+          });
           break;
         }
       }
@@ -342,6 +371,17 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           const videoBlobUrl = await fetchCompletedVideoBlob(init.operationName);
           setAnimateVideoUrl(videoBlobUrl);
           setAnimateProgressMsg('Photo brought to life successfully!');
+          void registerAiCreation({
+            title: animatePrompt ? `Animate: ${animatePrompt.slice(0, 32)}` : 'Animated Photo Motion',
+            type: 'video',
+            modelUsed: 'veo-3.1-lite',
+            model: 'veo-3.1-lite',
+            prompt: animatePrompt || 'Motion photo animation',
+            mediaUrl: videoBlobUrl,
+            mimeType: 'video/mp4',
+            drivePath: 'Family Circle / AI Studio Creations / Videos',
+            tags: ['veo-animate', 'photo-motion', 'video'],
+          });
           break;
         }
       }
@@ -444,6 +484,19 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       const imgSource = musicImageFile || (musicImagePreview as string) || undefined;
       const res = await generateMusic(musicPrompt, musicMode, imgSource);
       setMusicResult(res);
+      if (res?.audioUrl) {
+        void registerAiCreation({
+          title: `Lyria: ${musicPrompt.slice(0, 32)}`,
+          type: 'music',
+          modelUsed: 'google/lyria-music-2.5',
+          model: 'google/lyria-music-2.5',
+          prompt: musicPrompt,
+          mediaUrl: res.audioUrl,
+          mimeType: 'audio/mp3',
+          drivePath: 'Family Circle / AI Studio Creations / Music',
+          tags: ['lyria', 'song', 'music-generation', musicMode],
+        });
+      }
     } catch (err: any) {
       let friendlyError = err.message || 'Failed to generate music';
       try {
@@ -504,6 +557,20 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
         useSearch: useSearchGrounding,
       });
       setImageResult(res);
+      if (res?.imageUrl) {
+        void registerAiCreation({
+          title: `Banana: ${imagePrompt.slice(0, 32)}`,
+          type: 'image',
+          modelUsed: res.modelUsed || 'imagen-3.0-generate-002',
+          model: res.modelUsed || 'imagen-3.0-generate-002',
+          prompt: imagePrompt,
+          mediaUrl: res.imageUrl,
+          mimeType: 'image/png',
+          drivePath: 'Family Circle / AI Studio Creations / Images',
+          aspectRatio: imageAspectRatio,
+          tags: ['imagen', 'banana-studio', 'visual-art', imageAspectRatio],
+        });
+      }
     } catch (err: any) {
       alert(`Image Studio error: ${err.message}`);
     } finally {
@@ -588,6 +655,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
             { id: 'images', label: 'Banana Studio', icon: ImageIcon },
             { id: 'transcribe', label: 'Transcribe 3.5', icon: Mic },
             { id: 'live-voice', label: 'Live Voice', icon: Radio },
+            { id: 'history', label: 'Drive & History', icon: HardDrive, badge: 'Drive' },
           ].map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -766,6 +834,31 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
               </p>
               <div className="mt-3 flex items-center gap-1 text-[11px] font-semibold text-blue-400">
                 <span>Start Transcribing</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </div>
+            </div>
+
+            {/* Card 7: Drive Path & History */}
+            <div
+              onClick={() => setActiveTab('history')}
+              className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800 transition-all relative overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2.5 rounded-2xl bg-cyan-500/10 text-cyan-400 group-hover:scale-110 transition-transform">
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300">
+                  Drive Sync
+                </span>
+              </div>
+              <h3 className="text-sm font-bold text-white group-hover:text-cyan-400 transition-colors">
+                Family Drive & History Dashboard
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                All generated images, Veo videos, Lyria songs, and audio transcripts auto-archived into Google Drive under Family Circle and cached offline.
+              </p>
+              <div className="mt-3 flex items-center gap-1 text-[11px] font-semibold text-cyan-400">
+                <span>View Creations History</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </div>
             </div>
@@ -1761,6 +1854,15 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
             </div>
           )}
         </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 8. FAMILY CIRCLE DRIVE & CREATIONS HISTORY DASHBOARD */}
+      {/* ==================================================== */}
+      {activeTab === 'history' && (
+        <AiCreationsHistoryDashboard
+          onOpenSubTab={(subTab: string) => setActiveTab(subTab as AiStudioSubTab)}
+        />
       )}
     </div>
   );

@@ -84,7 +84,7 @@ export const IBooksLibraryTab: React.FC = () => {
           return b;
         });
         const existingIds = new Set(sanitized.map((b) => b.id));
-        const missing = INITIAL_BOOKS.filter((b) => !existingIds.has(b.id));
+        const missing = INITIAL_BOOKS.filter((b: Book) => !existingIds.has(b.id));
         return [...sanitized, ...missing];
       }
     } catch {}

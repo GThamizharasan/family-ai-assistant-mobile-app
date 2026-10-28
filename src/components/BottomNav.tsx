@@ -27,12 +27,14 @@ import {
   HardDrive,
   CreditCard,
   Grid,
+  Music,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export type TabKey =
   | 'home'
   | 'ibooks'
+  | 'music'
   | 'ai-studio'
   | 'phone'
   | 'family'
@@ -75,10 +77,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
   const pendingTasksCount = tasks.filter((t) => !t.completed).length;
   const totalUnreadWhatsApp = (whatsAppContacts || []).reduce((sum, c) => sum + c.unreadCount, 0);
 
-  // All 17 Features categorized
+  // All Features categorized
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
+    { key: 'music', label: 'Musical Library', category: 'Intelligence', icon: Music },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'family', label: 'Family Radar', category: 'Family & Safety', icon: Users, badge: emergencyAlertCount },
@@ -100,6 +103,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
   const leftTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
+    { key: 'music', label: 'Music', category: 'Intelligence', icon: Music },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'phone', label: 'Phone', category: 'Core', icon: Phone },
