@@ -53,6 +53,7 @@ import {
   Languages,
   FolderGit2,
   Music,
+  Eye,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { GitHubSyncModal } from '../GitHubSyncModal';
@@ -80,10 +81,16 @@ interface HomeHubTabProps {
     contactId?: string
   ) => void;
   onOpenVoice: () => void;
+  onOpenVision?: () => void;
   onOpenInstaller?: () => void;
 }
 
-export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice, onOpenInstaller }) => {
+export const HomeHubTab: React.FC<HomeHubTabProps> = ({
+  onNavigate,
+  onOpenVoice,
+  onOpenVision,
+  onOpenInstaller,
+}) => {
   const {
     user,
     role,
@@ -602,11 +609,24 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             {/* Launch Voice Assistant Button */}
             <button
               onClick={onOpenVoice}
-              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5 active:scale-95"
+              className="w-full py-2 px-3 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-600/30 flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
             >
               <Mic className="w-3.5 h-3.5" />
               <span>Tap to Speak with Auro</span>
             </button>
+
+            {/* Launch Auro Vision for Blind Button */}
+            {onOpenVision && (
+              <button
+                onClick={onOpenVision}
+                className="w-full mt-2 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-extrabold transition-all shadow-md shadow-amber-500/25 flex items-center justify-center gap-2 active:scale-95 cursor-pointer"
+                title="Auro Computer Vision Guide for Blind and Low-Vision Assistance"
+                aria-label="Open Auro Computer Vision for Blind and Low-Vision Users"
+              >
+                <Eye className="w-4 h-4 text-slate-950" />
+                <span>👁️ Auro Vision (Blind Guide)</span>
+              </button>
+            )}
           </div>
 
           {/* RIGHT WING: Important Features */}
@@ -1760,6 +1780,58 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({ onNavigate, onOpenVoice,
             </div>
             <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-pink-400 font-semibold">
               <span>Open Music Player</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* Card: Voice Memos & Google Drive */}
+          <div
+            onClick={() => onNavigate('memos')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-rose-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-rose-500/10 text-rose-400">
+                    <Mic className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Voice Memos</span>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-rose-400">Drive Cloud</span>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200 truncate">Audio Memos & Transcripts</h4>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                Live waveform recording, automatic Google Drive backup, external sharing, and Gemini speech-to-text.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-rose-400 font-semibold">
+              <span>Open Voice Studio</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          {/* Card: Clock & Smart Alarms */}
+          <div
+            onClick={() => onNavigate('clock')}
+            className="cursor-pointer group p-4 rounded-3xl bg-slate-900/90 hover:bg-slate-850 border border-slate-800 hover:border-amber-500/40 transition-all shadow-md min-w-[260px] sm:min-w-[280px] snap-start flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <span className="text-xs font-bold text-white">Clock & Alarms</span>
+                </div>
+                <span className="text-[10px] font-mono font-bold text-amber-400">World Time</span>
+              </div>
+              <h4 className="text-sm font-semibold text-slate-200 truncate">Alarms, Laps & Timer</h4>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                Precision world clocks for London and Chennai, ringing smart alarms with snooze, millisecond stopwatch & presets.
+              </p>
+            </div>
+            <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-amber-400 font-semibold">
+              <span>Open Clock</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </div>
           </div>

@@ -10,6 +10,7 @@ import {
   Mic,
   Download,
   LogOut,
+  Eye,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -17,6 +18,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 interface MobileFrameProps {
   children: ReactNode;
   onOpenVoice: () => void;
+  onOpenVision?: () => void;
   onOpenInstallerHub: () => void;
   onGoHome: () => void;
 }
@@ -24,6 +26,7 @@ interface MobileFrameProps {
 export const MobileFrame: React.FC<MobileFrameProps> = ({
   children,
   onOpenVoice,
+  onOpenVision,
   onOpenInstallerHub,
   onGoHome,
 }) => {
@@ -55,6 +58,19 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             <Home className="w-3.5 h-3.5 text-indigo-400" />
             <span className="text-[11px] font-semibold">Home</span>
           </button>
+
+          {/* Auro Vision Launcher Button for Blind / Low-Vision Guide */}
+          {onOpenVision && (
+            <button
+              onClick={onOpenVision}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              title="Auro Computer Vision Guide for Blind and Low-Vision Assistance"
+              aria-label="Open Auro Vision Assistant"
+            >
+              <Eye className="w-3.5 h-3.5 text-amber-400" />
+              <span>Vision</span>
+            </button>
+          )}
 
           {/* Install Android APK Button */}
           <PWAInstallButton onOpenInstallerHub={onOpenInstallerHub} />

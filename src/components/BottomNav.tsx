@@ -28,6 +28,8 @@ import {
   CreditCard,
   Grid,
   Music,
+  Clock,
+  Eye,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -35,6 +37,8 @@ export type TabKey =
   | 'home'
   | 'ibooks'
   | 'music'
+  | 'memos'
+  | 'clock'
   | 'ai-studio'
   | 'phone'
   | 'family'
@@ -55,6 +59,7 @@ interface BottomNavProps {
   currentTab: TabKey;
   onSelectTab: (tab: TabKey) => void;
   onOpenVoice: () => void;
+  onOpenVision?: () => void;
 }
 
 interface TabItem {
@@ -65,7 +70,7 @@ interface TabItem {
   badge?: number;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, onOpenVoice }) => {
+export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, onOpenVoice, onOpenVision }) => {
   const { tasks, familyMembers, whatsAppContacts } = useApp();
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
@@ -82,6 +87,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
     { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music },
+    { key: 'memos', label: 'Voice Memos', category: 'Intelligence', icon: Mic },
+    { key: 'clock', label: 'Clock & Alarm', category: 'Core', icon: Clock },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'family', label: 'Family Radar', category: 'Family & Safety', icon: Users, badge: emergencyAlertCount },
@@ -104,6 +111,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
     { key: 'music', label: 'Music', category: 'Intelligence', icon: Music },
+    { key: 'memos', label: 'Memos', category: 'Intelligence', icon: Mic },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'phone', label: 'Phone', category: 'Core', icon: Phone },
@@ -112,6 +120,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
 
   // Important features on the RIGHT of the Active Realtime Voice Assistant
   const rightTabs: TabItem[] = [
+    { key: 'clock', label: 'Clock', category: 'Core', icon: Clock },
     { key: 'finance', label: 'Wealth', category: 'Wealth', icon: Wallet },
     { key: 'billionaire', label: 'Blueprint', category: 'Wealth', icon: TrendingUp },
     { key: 'google', label: 'Google Suite', category: 'Core', icon: Mail, badge: 3 },
@@ -276,6 +285,35 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
 
             {/* Features Grid categorized */}
             <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+              {/* Highlighted Auro Vision Guide Shortcut for Blind Users */}
+              {onOpenVision && (
+                <button
+                  onClick={() => {
+                    setIsAllFeaturesSheetOpen(false);
+                    onOpenVision();
+                  }}
+                  className="w-full p-3 rounded-2xl bg-gradient-to-r from-amber-500/20 via-amber-600/20 to-orange-500/20 border border-amber-500/40 hover:border-amber-400 transition-all flex items-center justify-between group shadow-lg text-left cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-md shadow-amber-500/30">
+                      <Eye className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-white text-xs">Auro Vision (Blind & Low-Vision Guide)</span>
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/30 text-amber-300 font-bold">
+                          Camera AI
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        Obstacle alerts, spatial walking directions, currency reader & instant OCR
+                      </p>
+                    </div>
+                  </div>
+                  <ArrowUpRight className="w-4 h-4 text-amber-400 group-hover:translate-x-0.5 transition-transform" />
+                </button>
+              )}
+
               {['Core', 'Intelligence', 'Family & Safety', 'Wealth', 'Lifestyle'].map((cat) => {
                 const categoryTabs = filteredFeatures.filter((t) => t.category === cat);
                 if (categoryTabs.length === 0) return null;

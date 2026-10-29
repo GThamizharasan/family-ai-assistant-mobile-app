@@ -29,6 +29,7 @@ import {
   Paperclip,
   UploadCloud,
   Check,
+  Eye,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../types';
@@ -39,10 +40,16 @@ import { sendChatMessage, getApiBaseUrl } from '../services/api';
 interface VoiceAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenVision?: () => void;
   onGoHome?: () => void;
 }
 
-export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen, onClose, onGoHome }) => {
+export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
+  isOpen,
+  onClose,
+  onOpenVision,
+  onGoHome,
+}) => {
   const {
     user,
     chatHistory,
@@ -1237,6 +1244,22 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({ isOpen
                 {assistantMemories.length}
               </span>
             </button>
+
+            {/* Auro Vision for Blind / Low-Vision Guide */}
+            {onOpenVision && (
+              <button
+                onClick={onOpenVision}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-all shadow-sm cursor-pointer"
+                title="Auro Computer Vision Guide for Blind and Low-Vision Assistance"
+                aria-label="Auro Vision for Blind and Low-Vision Assistance"
+              >
+                <Eye className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline">Auro Vision</span>
+                <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/25 text-amber-200 font-bold">
+                  Blind
+                </span>
+              </button>
+            )}
 
             <button
               onClick={() => {

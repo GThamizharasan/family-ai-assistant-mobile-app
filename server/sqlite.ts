@@ -471,9 +471,33 @@ export async function initSqliteDb(): Promise<Database> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS voice_recordings (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT DEFAULT 'Personal Memo',
+      audio_url TEXT,
+      audio_content_base64 TEXT,
+      audio_mime_type TEXT DEFAULT 'audio/webm',
+      duration_seconds REAL DEFAULT 0,
+      file_size_bytes INTEGER DEFAULT 0,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Voice Recordings',
+      transcription TEXT,
+      transcription_summary TEXT,
+      detected_language TEXT DEFAULT 'en-US',
+      is_favorite INTEGER DEFAULT 0,
+      play_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
+  try { db.run('ALTER TABLE voice_recordings ADD COLUMN transcription_summary TEXT;'); } catch {}
+  try { db.run('ALTER TABLE voice_recordings ADD COLUMN detected_language TEXT DEFAULT "en-US";'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch {}
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
@@ -2583,6 +2607,232 @@ export function incrementMusicTrackPlayCountInSqlite(id: string): boolean {
 }
 
 // -------------------------------------------------------------
+// Voice Recordings (Google Drive & Local Audio Storage)
+// -------------------------------------------------------------
+export interface VoiceRecordingRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  category: string;
+  audioUrl?: string;
+  audioContentBase64?: string;
+  audioMimeType?: string;
+  durationSeconds: number;
+  fileSizeBytes: number;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  transcription?: string;
+  transcriptionSummary?: string;
+  detectedLanguage?: string;
+  isFavorite: boolean;
+  playCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveVoiceRecordingToSqlite(recording: Partial<VoiceRecordingRecord> & {
+  title: string;
+  durationSeconds: number;
+}): VoiceRecordingRecord {
+  if (!db) throw new Error('Database not initialized');
+  const now = new Date().toISOString();
+  const id = recording.id || `voice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const userEmail = (recording.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const category = recording.category || 'Personal Memo';
+  const audioUrl = recording.audioUrl || '';
+  const audioContentBase64 = recording.audioContentBase64 || null;
+  const audioMimeType = recording.audioMimeType || 'audio/webm';
+  const durationSeconds = Number(recording.durationSeconds || 0);
+  const fileSizeBytes = Number(recording.fileSizeBytes || (audioContentBase64 ? Math.round(audioContentBase64.length * 0.75) : 0));
+  const driveFileId = recording.driveFileId || null;
+  const driveWebViewLink = recording.driveWebViewLink || null;
+  const driveFolderPath = recording.driveFolderPath || 'Family Circle/Voice Recordings';
+  const transcription = recording.transcription || null;
+  const transcriptionSummary = recording.transcriptionSummary || null;
+  const detectedLanguage = recording.detectedLanguage || 'en-US';
+  const isFavorite = recording.isFavorite ? 1 : 0;
+  const playCount = recording.playCount || 0;
+  const createdAt = recording.createdAt || now;
+  const updatedAt = now;
+
+  db.run(
+    `INSERT OR REPLACE INTO voice_recordings (
+      id, user_email, title, category, audio_url, audio_content_base64,
+      audio_mime_type, duration_seconds, file_size_bytes, drive_file_id,
+      drive_web_view_link, drive_folder_path, transcription, transcription_summary,
+      detected_language, is_favorite, play_count, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      userEmail,
+      recording.title,
+      category,
+      audioUrl,
+      audioContentBase64,
+      audioMimeType,
+      durationSeconds,
+      fileSizeBytes,
+      driveFileId,
+      driveWebViewLink,
+      driveFolderPath,
+      transcription,
+      transcriptionSummary,
+      detectedLanguage,
+      isFavorite,
+      playCount,
+      createdAt,
+      updatedAt,
+    ]
+  );
+
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    title: recording.title,
+    category,
+    audioUrl,
+    audioContentBase64: audioContentBase64 || undefined,
+    audioMimeType,
+    durationSeconds,
+    fileSizeBytes,
+    driveFileId: driveFileId || undefined,
+    driveWebViewLink: driveWebViewLink || undefined,
+    driveFolderPath,
+    transcription: transcription || undefined,
+    transcriptionSummary: transcriptionSummary || undefined,
+    detectedLanguage,
+    isFavorite: !!isFavorite,
+    playCount,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function getVoiceRecordingsFromSqlite(userEmail?: string): VoiceRecordingRecord[] {
+  if (!db) return [];
+  try {
+    let query = 'SELECT id, user_email, title, category, audio_url, audio_mime_type, duration_seconds, file_size_bytes, drive_file_id, drive_web_view_link, drive_folder_path, transcription, transcription_summary, detected_language, is_favorite, play_count, created_at, updated_at, (CASE WHEN audio_content_base64 IS NOT NULL AND length(audio_content_base64) > 10 THEN 1 ELSE 0 END) as has_audio_blob FROM voice_recordings';
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: VoiceRecordingRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        category: String(row.category || 'Personal Memo'),
+        audioUrl: row.audio_url ? String(row.audio_url) : undefined,
+        audioMimeType: String(row.audio_mime_type || 'audio/webm'),
+        durationSeconds: Number(row.duration_seconds || 0),
+        fileSizeBytes: Number(row.file_size_bytes || 0),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Voice Recordings'),
+        transcription: row.transcription ? String(row.transcription) : undefined,
+        transcriptionSummary: row.transcription_summary ? String(row.transcription_summary) : undefined,
+        detectedLanguage: String(row.detected_language || 'en-US'),
+        isFavorite: Number(row.is_favorite) === 1,
+        playCount: Number(row.play_count || 0),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Failed to query voice recordings from SQLite:', err);
+    return [];
+  }
+}
+
+export function getVoiceRecordingAudioContentFromSqlite(id: string): { audioContentBase64: string; audioMimeType: string } | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare('SELECT audio_content_base64, audio_mime_type FROM voice_recordings WHERE id = ?');
+    stmt.bind([id]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      stmt.free();
+      if (row.audio_content_base64) {
+        return {
+          audioContentBase64: String(row.audio_content_base64),
+          audioMimeType: String(row.audio_mime_type || 'audio/webm'),
+        };
+      }
+    } else {
+      stmt.free();
+    }
+    return null;
+  } catch (err) {
+    console.warn('Failed to retrieve voice recording audio content:', err);
+    return null;
+  }
+}
+
+export function deleteVoiceRecordingFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  try {
+    if (userEmail && userEmail.trim()) {
+      db.run('DELETE FROM voice_recordings WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+    } else {
+      db.run('DELETE FROM voice_recordings WHERE id = ?', [id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to delete voice recording from SQLite:', err);
+    return false;
+  }
+}
+
+export function toggleVoiceRecordingFavoriteInSqlite(id: string, isFavorite?: boolean): boolean {
+  if (!db) return false;
+  try {
+    if (typeof isFavorite === 'boolean') {
+      db.run('UPDATE voice_recordings SET is_favorite = ?, updated_at = ? WHERE id = ?', [isFavorite ? 1 : 0, new Date().toISOString(), id]);
+    } else {
+      db.run('UPDATE voice_recordings SET is_favorite = (CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END), updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to toggle voice recording favorite:', err);
+    return false;
+  }
+}
+
+export function updateVoiceRecordingTranscriptionInSqlite(
+  id: string,
+  transcription: string,
+  summary?: string,
+  detectedLanguage?: string
+): boolean {
+  if (!db) return false;
+  try {
+    db.run(
+      'UPDATE voice_recordings SET transcription = ?, transcription_summary = ?, detected_language = COALESCE(?, detected_language), updated_at = ? WHERE id = ?',
+      [transcription, summary || null, detectedLanguage || null, new Date().toISOString(), id]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to update voice recording transcription:', err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
 export function getSqliteDbStats() {
@@ -2619,6 +2869,7 @@ export function getSqliteDbStats() {
     'device_storage_metrics',
     'ai_studio_creations',
     'musical_library_tracks',
+    'voice_recordings',
   ];
 
   const tableCounts: Record<string, number> = {};

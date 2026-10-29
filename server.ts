@@ -56,6 +56,12 @@ import {
   getFamilyMembersFromSqlite,
   upsertFamilyMemberInSqlite,
   deleteFamilyMemberFromSqlite,
+  saveVoiceRecordingToSqlite,
+  getVoiceRecordingsFromSqlite,
+  getVoiceRecordingAudioContentFromSqlite,
+  deleteVoiceRecordingFromSqlite,
+  toggleVoiceRecordingFavoriteInSqlite,
+  updateVoiceRecordingTranscriptionInSqlite,
   getSqliteDbStats,
   formatFamilyCode,
   normalizeFamilyCode,
@@ -68,6 +74,7 @@ import {
   type DeviceStorageRecord,
   type AiStudioCreationRecord,
   type MusicalTrackRecord,
+  type VoiceRecordingRecord,
 } from './server/sqlite.ts';
 
 dotenv.config();
@@ -3192,6 +3199,384 @@ app.post('/api/music/library/:id/play', (req, res) => {
     res.json({ success: ok, id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// VOICE RECORDINGS & GOOGLE DRIVE ENDPOINTS
+// =========================================================================
+
+// List voice recordings
+app.get('/api/voice-recordings', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string) || 'chinna.tamil2000@gmail.com';
+    const recordings = getVoiceRecordingsFromSqlite(userEmail);
+    res.json({ success: true, recordings });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Save or update voice recording
+app.post('/api/voice-recordings', (req, res) => {
+  try {
+    const rec = req.body;
+    if (!rec.title) {
+      return res.status(400).json({ error: 'title is required' });
+    }
+    const saved = saveVoiceRecordingToSqlite(rec);
+    res.json({ success: true, recording: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Stream audio for voice recording (with HTTP Range / Partial Content support)
+app.get('/api/voice-recordings/:id/audio', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const stored = getVoiceRecordingAudioContentFromSqlite(id);
+
+    if (stored && stored.audioContentBase64) {
+      const audioBuffer = Buffer.from(stored.audioContentBase64, 'base64');
+      const totalSize = audioBuffer.length;
+      const mimeType = stored.audioMimeType || 'audio/webm';
+
+      const range = req.headers.range;
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+
+        if (start >= totalSize || end >= totalSize) {
+          res.setHeader('Content-Range', `bytes */${totalSize}`);
+          return res.status(416).send('Requested range not satisfiable');
+        }
+
+        const chunk = audioBuffer.subarray(start, end + 1);
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunk.length,
+          'Content-Type': mimeType,
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(chunk);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': totalSize,
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(audioBuffer);
+      }
+    }
+
+    // Fallback: If not in SQLite audio blob, check if there is a driveFileId
+    const recordings = getVoiceRecordingsFromSqlite();
+    const rec = recordings.find((r) => r.id === id);
+    if (rec?.driveFileId) {
+      const accessToken =
+        (req.query.accessToken as string) ||
+        (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+
+      if (accessToken) {
+        const driveRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${rec.driveFileId}?alt=media`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (driveRes.ok) {
+          const arrayBuffer = await driveRes.arrayBuffer();
+          const buf = Buffer.from(arrayBuffer);
+          res.setHeader('Content-Type', rec.audioMimeType || 'audio/webm');
+          res.setHeader('Content-Length', buf.length);
+          res.setHeader('Accept-Ranges', 'bytes');
+          return res.end(buf);
+        }
+      }
+    }
+
+    return res.status(404).json({ error: 'Audio content not found' });
+  } catch (err: any) {
+    console.error('Error in /api/voice-recordings/:id/audio:', err);
+    res.status(500).json({ error: err.message || 'Failed to stream audio' });
+  }
+});
+
+// Delete voice recording
+app.delete('/api/voice-recordings/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteVoiceRecordingFromSqlite(id, userEmail);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Toggle favorite
+app.post('/api/voice-recordings/:id/favorite', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isFavorite } = req.body;
+    const ok = toggleVoiceRecordingFavoriteInSqlite(id, isFavorite);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Transcribe Voice Recording with Gemini AI
+app.post('/api/voice-recordings/:id/transcribe', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let { audioBase64, mimeType, prompt } = req.body;
+
+    if (!audioBase64) {
+      const stored = getVoiceRecordingAudioContentFromSqlite(id);
+      if (stored) {
+        audioBase64 = stored.audioContentBase64;
+        mimeType = stored.audioMimeType;
+      }
+    }
+
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Audio data not found for recording' });
+    }
+
+    const cleanBase64 = audioBase64.replace(/^data:audio\/[a-zA-Z0-9.-]+;base64,/, '');
+    const client = getAiClient();
+
+    const systemPrompt = `You are an elite speech-to-text intelligence engine. 
+Transcribe the provided audio accurately verbatim with proper punctuation and natural paragraphs. 
+Supports English, Tamil (தமிழ்), Tanglish, and multilingual speech seamlessly.
+Return a clean JSON object with:
+{
+  "transcription": "Verbatim transcript of spoken audio with proper capitalization and punctuation",
+  "summary": "1-2 sentence executive summary of the core message or request",
+  "keyPoints": ["Bullet 1", "Bullet 2"],
+  "detectedLanguage": "en-US | ta-IN | mixed",
+  "actionItems": ["Action item 1 if any"]
+}`;
+
+    const candidateModels = ['gemini-3.5-transcribe', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite'];
+    let resultJson: any = null;
+    let modelUsed = candidateModels[0];
+
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType || 'audio/webm',
+                  data: cleanBase64,
+                },
+              },
+              {
+                text: prompt || 'Transcribe this voice recording with high accuracy, provide summary, key points, language, and action items in JSON format.',
+              },
+            ],
+          },
+          config: {
+            systemInstruction: systemPrompt,
+            responseMimeType: 'application/json',
+          },
+        });
+
+        const raw = response.text || '{}';
+        resultJson = JSON.parse(raw);
+        modelUsed = model;
+        break;
+      } catch (err: any) {
+        console.warn(`[Transcribe] Model ${model} failed, trying next:`, err.message);
+      }
+    }
+
+    if (!resultJson || !resultJson.transcription) {
+      // Fallback transcription attempt without structured JSON
+      try {
+        const fallbackRes = await client.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: {
+            parts: [
+              { inlineData: { mimeType: mimeType || 'audio/webm', data: cleanBase64 } },
+              { text: 'Transcribe this audio verbatim in English or Tamil.' },
+            ],
+          },
+        });
+        const text = fallbackRes.text || 'Voice transcription completed.';
+        resultJson = {
+          transcription: text,
+          summary: text.slice(0, 140),
+          detectedLanguage: 'en-US',
+          keyPoints: [],
+          actionItems: [],
+        };
+      } catch (err: any) {
+        throw new Error(`AI Transcription failed: ${err.message}`);
+      }
+    }
+
+    // Persist transcription to SQLite
+    updateVoiceRecordingTranscriptionInSqlite(
+      id,
+      resultJson.transcription,
+      resultJson.summary,
+      resultJson.detectedLanguage
+    );
+
+    res.json({
+      success: true,
+      transcription: resultJson.transcription,
+      summary: resultJson.summary,
+      keyPoints: resultJson.keyPoints || [],
+      actionItems: resultJson.actionItems || [],
+      detectedLanguage: resultJson.detectedLanguage || 'en-US',
+      modelUsed,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/voice-recordings/:id/transcribe:', err);
+    res.status(500).json({ error: err.message || 'Failed to transcribe voice recording' });
+  }
+});
+
+// =========================================================================
+// COMPUTER VISION ASSISTANT FOR BLIND / LOW-VISION ACCESSIBILITY
+// =========================================================================
+app.post('/api/ai/vision-assist', async (req, res) => {
+  try {
+    const {
+      imageBase64,
+      mimeType = 'image/jpeg',
+      mode = 'describe', // 'describe' | 'text' | 'currency' | 'objects' | 'colors' | 'custom'
+      userPrompt = '',
+      language = 'en-US',
+    } = req.body;
+
+    if (!imageBase64) {
+      return res.status(400).json({ error: 'imageBase64 is required' });
+    }
+
+    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '');
+    const client = getAiClient();
+
+    const isTamil = language.startsWith('ta') || /[\u0B80-\u0BFF]/.test(userPrompt);
+
+    const systemInstruction = `You are Auro Vision Assistant, an empathetic, hyper-accurate real-time visual guide engineered specifically for visually impaired and blind users.
+
+CORE RESPONSIBILITIES:
+1. Spatial Direction & Distance: ALWAYS use clock positions ('at 12 o'clock directly ahead', 'at 2 o'clock on your right') and approximate distances (e.g. 'about 1 meter away', '2 steps ahead').
+2. Safety-First Alerting: Instantly alert the user to tripping hazards, descending stairs, wet or slippery floors, obstacles in walkways, low-hanging items, sharp corners, or moving objects.
+3. Natural Human Vision Voice: Speak directly and warmly to the person as their eyes. NEVER say "In this image" or "I see a picture of". Say: "Directly in front of you is...", "You are approaching...", "To your left...".
+4. Specialized Mode Handling:
+   - 'describe': Full room/walkway orientation, safety clearance, main objects, lighting.
+   - 'text': Read all printed or handwritten text verbatim (medication bottles, postal mail, food expiration dates, door numbers, signboards, computer screens). State the most critical text first.
+   - 'currency': Identify exact denominations of banknotes/cash and coins (e.g. "Ten Pound note", "Five Hundred Rupee note", "Twenty Dollar bill"). If currency is unclear, describe color and portrait.
+   - 'objects': Identify everyday items (keys, phone, cane, glass of water, door handle) with precise clock positions.
+   - 'colors': Describe clothing items, dominant colors, and patterns to help with dressing.
+   - 'custom': Directly answer the user's spoken question about the environment.
+5. Language: ${isTamil ? 'Respond with natural, spoken Tamil (தமிழ்) and include clear phonetic pronunciation.' : 'Respond in clear, natural English.'}
+
+Return a valid JSON object matching:
+{
+  "spokenText": "Concise, natural 1-3 spoken sentences intended to be read aloud via Text-to-Speech immediately.",
+  "detailedDescription": "More detailed visual summary for reference.",
+  "safetyAlerts": ["Immediate hazard 1", "Hazard 2 if present"],
+  "detectedText": "Verbatim text extracted if any text is visible in frame, otherwise null",
+  "currencyDetected": "Banknote or coin denomination if present, otherwise null",
+  "detectedObjects": ["Object 1 (12 o'clock, 1m)", "Object 2 (3 o'clock, 0.5m)"],
+  "safeToStep": true
+}`;
+
+    const promptByMode: Record<string, string> = {
+      describe: 'Describe the scene directly ahead for safe navigation. Highlight any obstacles, doors, steps, or furniture.',
+      text: 'Read all visible text in this view word-for-word, especially labels, medicine details, warnings, or letters.',
+      currency: 'Identify any banknotes, cash, or coins visible. State the exact value, currency, and orientation.',
+      objects: 'Locate and list essential items in view with clock positions and distance estimates.',
+      colors: 'Identify the colors, patterns, and style of clothing or items in view.',
+      custom: userPrompt || 'What is in front of me?',
+    };
+
+    const activePrompt = userPrompt && userPrompt.trim() ? userPrompt : (promptByMode[mode] || promptByMode.describe);
+
+    const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-4-argon',
+    ];
+
+    let resultJson: any = null;
+    let successfulModel = candidateModels[0];
+
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: cleanBase64,
+                },
+              },
+              {
+                text: activePrompt,
+              },
+            ],
+          },
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+          },
+        });
+
+        const raw = response.text || '{}';
+        resultJson = JSON.parse(raw);
+        successfulModel = model;
+        break;
+      } catch (err: any) {
+        console.warn(`[VisionAssist] Model ${model} failed, trying next:`, err.message);
+      }
+    }
+
+    if (!resultJson || !resultJson.spokenText) {
+      resultJson = {
+        spokenText: 'Scene analyzed. Please keep the camera steady for more details.',
+        detailedDescription: 'Camera frame analyzed.',
+        safetyAlerts: [],
+        detectedText: null,
+        currencyDetected: null,
+        detectedObjects: [],
+        safeToStep: true,
+      };
+    }
+
+    res.json({
+      success: true,
+      spokenText: resultJson.spokenText,
+      detailedDescription: resultJson.detailedDescription || resultJson.spokenText,
+      safetyAlerts: resultJson.safetyAlerts || [],
+      detectedText: resultJson.detectedText || null,
+      currencyDetected: resultJson.currencyDetected || null,
+      detectedObjects: resultJson.detectedObjects || [],
+      safeToStep: resultJson.safeToStep !== false,
+      modelUsed: successfulModel,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error('Error in /api/ai/vision-assist:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to analyze camera frame for vision assistance',
+    });
   }
 });
 

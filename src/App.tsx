@@ -29,9 +29,14 @@ import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
 import { AiStudioTab } from './components/tabs/AiStudioTab';
 import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
 import { MusicLibraryTab } from './components/tabs/MusicLibraryTab';
+import { VoiceMemosTab } from './components/tabs/VoiceMemosTab';
+import { ClockTab } from './components/tabs/ClockTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
+import { AuroVisionModal } from './components/vision/AuroVisionModal';
+import { ActiveAlarmModal } from './components/clock/ActiveAlarmModal';
+import { Alarm } from './types/clock';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
@@ -39,8 +44,54 @@ const AppContent: React.FC = () => {
   const [googleSubTab, setGoogleSubTab] = useState<ActiveServiceTab>('overview');
   const [activeWhatsAppContactId, setActiveWhatsAppContactId] = useState<string | undefined>(undefined);
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
+  const [isVisionOpen, setIsVisionOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
   const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
+  const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
+
+  // Global Alarm Tick Check
+  useEffect(() => {
+    let lastCheckedMinute = '';
+    const interval = setInterval(() => {
+      try {
+        const now = new Date();
+        const currentMinute = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const currentDay = now.getDay(); // 0-6
+
+        if (currentMinute === lastCheckedMinute) return;
+
+        const raw = localStorage.getItem('aura_alarms_v1');
+        if (!raw) return;
+        const alarms: Alarm[] = JSON.parse(raw);
+
+        for (const a of alarms) {
+          if (!a.enabled) continue;
+          if (a.time === currentMinute) {
+            const matchesDay = a.repeatDays.length === 0 || a.repeatDays.includes(currentDay);
+            if (matchesDay) {
+              lastCheckedMinute = currentMinute;
+              setRingingAlarm(a);
+              break;
+            }
+          }
+        }
+      } catch {}
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleStopAlarm = () => {
+    setRingingAlarm(null);
+  };
+
+  const handleSnoozeAlarm = (alarm: Alarm) => {
+    setRingingAlarm(null);
+    const snoozeMins = alarm.snoozeMinutes || 9;
+    setTimeout(() => {
+      setRingingAlarm(alarm);
+    }, snoozeMins * 60 * 1000);
+  };
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -107,6 +158,7 @@ const AppContent: React.FC = () => {
           <HomeHubTab
             onNavigate={handleNavigate}
             onOpenVoice={() => setIsVoiceOpen(true)}
+            onOpenVision={() => setIsVisionOpen(true)}
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
@@ -114,6 +166,10 @@ const AppContent: React.FC = () => {
         return <IBooksLibraryTab />;
       case 'music':
         return <MusicLibraryTab onOpenPlayer={() => setIsMusicPlayerOpen(true)} />;
+      case 'memos':
+        return <VoiceMemosTab />;
+      case 'clock':
+        return <ClockTab />;
       case 'ai-studio':
         return <AiStudioTab onOpenVoiceAssistant={() => setIsVoiceOpen(true)} />;
       case 'family':
@@ -159,6 +215,7 @@ const AppContent: React.FC = () => {
           <HomeHubTab
             onNavigate={handleNavigate}
             onOpenVoice={() => setIsVoiceOpen(true)}
+            onOpenVision={() => setIsVisionOpen(true)}
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
@@ -168,6 +225,7 @@ const AppContent: React.FC = () => {
   return (
     <MobileFrame
       onOpenVoice={() => setIsVoiceOpen(true)}
+      onOpenVision={() => setIsVisionOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
       onGoHome={() => setCurrentTab('home')}
     >
@@ -180,6 +238,7 @@ const AppContent: React.FC = () => {
         currentTab={currentTab}
         onSelectTab={(tab) => setCurrentTab(tab)}
         onOpenVoice={() => setIsVoiceOpen(true)}
+        onOpenVision={() => setIsVisionOpen(true)}
       />
 
       {/* Apple Music Full Screen Modal */}
@@ -188,13 +247,31 @@ const AppContent: React.FC = () => {
         onClose={() => setIsMusicPlayerOpen(false)}
       />
 
+      {/* Auro Voice Assistant Modal */}
       <VoiceAssistantModal
         isOpen={isVoiceOpen}
         onClose={() => setIsVoiceOpen(false)}
+        onOpenVision={() => {
+          setIsVoiceOpen(false);
+          setIsVisionOpen(true);
+        }}
         onGoHome={() => {
           setIsVoiceOpen(false);
           setCurrentTab('home');
         }}
+      />
+
+      {/* Auro Computer Vision Modal for Blind & Low-Vision Users */}
+      <AuroVisionModal
+        isOpen={isVisionOpen}
+        onClose={() => setIsVisionOpen(false)}
+      />
+
+      {/* Global Ringing Active Alarm Modal */}
+      <ActiveAlarmModal
+        ringingAlarm={ringingAlarm}
+        onStop={handleStopAlarm}
+        onSnooze={handleSnoozeAlarm}
       />
 
       <AndroidInstallerModal
