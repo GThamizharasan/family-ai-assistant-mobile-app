@@ -3767,10 +3767,17 @@ app.post('/api/translate', async (req, res) => {
 
     const cleanInput = text.trim();
 
-    // 1. Try Gemini 3.8 Flash
-    try {
-      const client = getAiClient();
-      const prompt = `You are a world-class polyglot translator and cultural linguist.
+    // 1. Try Gemini models cascade with gemini-2.5-flash, 1.5-flash, etc.
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.5-flash',
+    ];
+
+    const prompt = `You are a world-class polyglot translator and cultural linguist.
 Translate the following text accurately from source language [${sourceLang}] to target language [${targetLang}].
 Tone: ${tone}.
 Maintain exact contextual meaning, cultural nuance, correct grammar, and emotional warmth.
@@ -3790,36 +3797,42 @@ Output JSON matching this exact structure:
   "notes": "short 1-sentence cultural nuance tip or word-by-word explanation"
 }`;
 
-      const translationResponse = await client.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-        },
-      });
+    const client = refreshAiClient();
+    if (client) {
+      for (const model of candidateModels) {
+        try {
+          const translationResponse = await client.models.generateContent({
+            model,
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+            },
+          });
 
-      const raw = (translationResponse.text ?? '{}').trim();
-      let parsed: any = {};
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) parsed = JSON.parse(match[0]);
-      }
+          const raw = (translationResponse.text ?? '{}').trim();
+          let parsed: any = {};
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            const match = raw.match(/\{[\s\S]*\}/);
+            if (match) parsed = JSON.parse(match[0]);
+          }
 
-      if (parsed.translatedText) {
-        return res.json({
-          success: true,
-          translatedText: parsed.translatedText,
-          phonetics: parsed.phonetics || '',
-          detectedSourceLang: parsed.detectedSourceLang || sourceLang,
-          targetLang: parsed.targetLang || targetLang,
-          notes: parsed.notes || '',
-          modelUsed: 'gemini-3.8-flash',
-        });
+          if (parsed && parsed.translatedText) {
+            return res.json({
+              success: true,
+              translatedText: parsed.translatedText,
+              phonetics: parsed.phonetics || '',
+              detectedSourceLang: parsed.detectedSourceLang || sourceLang,
+              targetLang: parsed.targetLang || targetLang,
+              notes: parsed.notes || '',
+              modelUsed: model,
+            });
+          }
+        } catch (apiErr: any) {
+          console.warn(`[Translate] Model ${model} failed, trying next:`, apiErr.message);
+        }
       }
-    } catch (apiErr: any) {
-      console.warn('[Translate] Gemini API call failed, using linguistic engine fallback:', apiErr.message);
     }
 
     // 2. Multilingual Dictionary Fallback for Everyday Family Phrases

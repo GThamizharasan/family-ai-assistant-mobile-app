@@ -5,6 +5,7 @@ import {
   Mic,
   MicOff,
   Volume2,
+  VolumeX,
   Copy,
   Check,
   UploadCloud,
@@ -61,6 +62,26 @@ export const RealtimeTranslatorTab: React.FC = () => {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+
+  // Real-Time Bilingual Conversation Mode State
+  const [activeMode, setActiveMode] = useState<'conversation' | 'direct'>('conversation');
+  const [conversationHistory, setConversationHistory] = useState<Array<{
+    id: string;
+    speaker: 'A' | 'B';
+    speakerLang: string;
+    targetLang: string;
+    originalText: string;
+    translatedText: string;
+    phonetics?: string;
+    notes?: string;
+    timestamp: string;
+  }>>([]);
+  const [activeSpeaker, setActiveSpeaker] = useState<'A' | 'B' | null>(null);
+  const [isAutoSpeak, setIsAutoSpeak] = useState(true);
+  const [isAutoTurn, setIsAutoTurn] = useState(true);
+  const [conversationLiveTranscript, setConversationLiveTranscript] = useState('');
+  const [isConversationTranslating, setIsConversationTranslating] = useState(false);
+  const conversationEndRef = useRef<HTMLDivElement>(null);
 
   // Speech Recognition & MediaRecorder Fallback Refs
   const recognitionRef = useRef<any>(null);
@@ -326,6 +347,196 @@ export const RealtimeTranslatorTab: React.FC = () => {
     }
   };
 
+  // Scroll to bottom of conversation
+  useEffect(() => {
+    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [conversationHistory, conversationLiveTranscript, isConversationTranslating]);
+
+  // Start Conversation Listening for Speaker A (sourceLang) or Speaker B (targetLang)
+  const startConversationListening = async (speaker: 'A' | 'B') => {
+    // If already listening for this speaker, stop and submit
+    if (isListening && activeSpeaker === speaker) {
+      stopListening();
+      if (latestVoiceTextRef.current.trim().length > 0) {
+        void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
+      }
+      return;
+    }
+
+    stopListening();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
+    const speakerLangCode = speaker === 'A' ? sourceLang : targetLang;
+    const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === speakerLangCode);
+    const speechCode = langObj?.speechCode || (speakerLangCode === 'ta' ? 'ta-IN' : 'en-US');
+
+    setActiveSpeaker(speaker);
+    setConversationLiveTranscript('');
+    latestVoiceTextRef.current = '';
+
+    // Request permission explicitly with user gesture
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        await new Promise((r) => setTimeout(r, 120));
+      } catch (permErr: any) {
+        console.warn('Microphone permission request failed:', permErr);
+        showToast('⚠️ Microphone permission required. Please allow access in browser.');
+        setActiveSpeaker(null);
+        return;
+      }
+    }
+
+    const SpeechRecognitionClass =
+      typeof window !== 'undefined'
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
+
+    if (SpeechRecognitionClass) {
+      try {
+        const recognition = new SpeechRecognitionClass();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.lang = speechCode;
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          showToast(`🎙️ Speaker ${speaker === 'A' ? '1' : '2'} (${langObj?.name || speakerLangCode}) listening... Speak now!`);
+        };
+
+        let silenceTimer: any = null;
+
+        recognition.onresult = (event: any) => {
+          let finalTranscript = '';
+          let interimTranscript = '';
+          for (let i = 0; i < event.results.length; ++i) {
+            const chunk = event.results[i][0]?.transcript || '';
+            if (event.results[i].isFinal) {
+              finalTranscript += chunk + ' ';
+            } else {
+              interimTranscript += chunk;
+            }
+          }
+          const combined = (finalTranscript + interimTranscript).trim();
+          if (combined) {
+            latestVoiceTextRef.current = combined;
+            setConversationLiveTranscript(combined);
+
+            clearTimeout(silenceTimer);
+            // Automatic pause detection: 1.3 seconds of silence commits and translates
+            silenceTimer = setTimeout(() => {
+              if (latestVoiceTextRef.current.trim().length > 0) {
+                stopListening();
+                void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
+              }
+            }, 1300);
+          }
+        };
+
+        recognition.onerror = (err: any) => {
+          console.warn('Speech error in conversation mode:', err);
+          if (err.error !== 'no-speech' && err.error !== 'aborted') {
+            showToast(`Mic notice: ${err.error || 'speech issue'}`);
+          }
+          setIsListening(false);
+          setActiveSpeaker(null);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+          setActiveSpeaker(null);
+          clearTimeout(silenceTimer);
+          if (latestVoiceTextRef.current.trim().length > 0) {
+            void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
+          }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+      } catch (err: any) {
+        console.warn('Conversation recognition start failed:', err);
+        setIsListening(false);
+        setActiveSpeaker(null);
+      }
+    } else {
+      showToast('Speech recognition not supported in this browser.');
+      setActiveSpeaker(null);
+    }
+  };
+
+  // Submit and translate a conversational message
+  const handleConversationSubmit = async (speaker: 'A' | 'B', text: string) => {
+    if (!text.trim() || isConversationTranslating) return;
+    setIsConversationTranslating(true);
+    setConversationLiveTranscript('');
+    latestVoiceTextRef.current = '';
+
+    const speakerLangCode = speaker === 'A' ? sourceLang : targetLang;
+    const destLangCode = speaker === 'A' ? targetLang : sourceLang;
+
+    try {
+      const res = await executeTranslation(text, speakerLangCode, destLangCode);
+      const newMsg = {
+        id: `conv_${Date.now()}`,
+        speaker,
+        speakerLang: speakerLangCode,
+        targetLang: destLangCode,
+        originalText: text,
+        translatedText: res.translatedText,
+        phonetics: res.phonetics,
+        notes: res.notes,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+
+      setConversationHistory((prev) => [...prev, newMsg]);
+
+      // Save translation record in background
+      void saveTranslation(
+        {
+          id: newMsg.id,
+          userEmail: user?.email || 'chinna.tamil2000@gmail.com',
+          sourceText: text,
+          translatedText: res.translatedText,
+          sourceLang: speakerLangCode,
+          targetLang: destLangCode,
+          phonetics: res.phonetics,
+          notes: res.notes,
+          driveSyncStatus: googleAccessToken ? 'uploading' : 'local_only',
+          isFavorite: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        googleAccessToken
+      );
+
+      // Automatic spoken response in destination language
+      if (isAutoSpeak) {
+        speakText(res.translatedText, destLangCode, () => {
+          if (isAutoTurn) {
+            const nextSpeaker: 'A' | 'B' = speaker === 'A' ? 'B' : 'A';
+            setTimeout(() => {
+              void startConversationListening(nextSpeaker);
+            }, 600);
+          }
+        });
+      } else if (isAutoTurn) {
+        const nextSpeaker: 'A' | 'B' = speaker === 'A' ? 'B' : 'A';
+        setTimeout(() => {
+          void startConversationListening(nextSpeaker);
+        }, 600);
+      }
+    } catch (err: any) {
+      console.error('Conversation translation error:', err);
+      showToast(`Translation error: ${err.message || 'Failed'}`);
+    } finally {
+      setIsConversationTranslating(false);
+    }
+  };
+
   // Swap Source and Target Languages
   const handleSwapLanguages = () => {
     const prevSource = sourceLang;
@@ -565,12 +776,49 @@ export const RealtimeTranslatorTab: React.FC = () => {
         </div>
       </div>
 
+      {/* Mode Switcher Tabs */}
+      <div className="flex p-1.5 bg-slate-900/90 border border-slate-800 rounded-2xl mb-4 shadow-lg backdrop-blur-md">
+        <button
+          type="button"
+          onClick={() => {
+            stopListening();
+            setActiveMode('conversation');
+          }}
+          className={`flex-1 py-2.5 px-3 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            activeMode === 'conversation'
+              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/25 ring-1 ring-cyan-400/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-cyan-200" />
+          <span>Real-Time Live Conversation</span>
+          <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-cyan-400/20 text-cyan-200 font-extrabold uppercase tracking-wide">
+            Two-Way
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            stopListening();
+            setActiveMode('direct');
+          }}
+          className={`flex-1 py-2.5 px-3 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
+            activeMode === 'direct'
+              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/25 ring-1 ring-cyan-400/40'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Languages className="w-4 h-4 text-cyan-200" />
+          <span>Direct Text & Document</span>
+        </button>
+      </div>
+
       {/* Language Selector Bar & Swap Button */}
       <div className="mb-4 p-3 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-lg backdrop-blur-md flex items-center justify-between gap-2">
         {/* Source Language Select */}
         <div className="flex-1 min-w-0">
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-            From (Source)
+            Speaker 1 ({sourceLangObj?.name})
           </label>
           <select
             value={sourceLang}
@@ -590,7 +838,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
           <button
             onClick={handleSwapLanguages}
             className="p-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-cyan-400 hover:text-cyan-300 border border-slate-700/80 shadow-md transition-all"
-            title="Swap Source and Target Languages"
+            title="Swap Speaker Languages"
           >
             <ArrowRightLeft className="w-4 h-4 stroke-[2.5]" />
           </button>
@@ -599,7 +847,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
         {/* Target Language Select */}
         <div className="flex-1 min-w-0">
           <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-            To (Target)
+            Speaker 2 ({targetLangObj?.name})
           </label>
           <select
             value={targetLang}
@@ -618,7 +866,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
       {/* Quick Language Target Chips */}
       <div className="mb-4 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin scrollbar-thumb-slate-800">
         <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider shrink-0 mr-1">
-          Target:
+          Pair With:
         </span>
         {POPULAR_LANGUAGE_PRESETS.map((p) => (
           <button
@@ -639,261 +887,556 @@ export const RealtimeTranslatorTab: React.FC = () => {
         ))}
       </div>
 
-      {/* Translation Dual-Card Container */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {/* Source Text Card */}
-        <div className="p-4 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                <span>{sourceLangObj?.flag}</span>
-                <span>{sourceLangObj?.name}</span>
+      {activeMode === 'conversation' ? (
+        /* Real-Time Two-Way Conversation Mode View */
+        <div className="mb-6 flex flex-col">
+          {/* Conversation Controls Header */}
+          <div className="p-3 mb-3 rounded-2xl bg-slate-900/85 border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-slate-400 font-medium">Bilingual Session:</span>
+              <span className="px-2.5 py-1 rounded-xl bg-slate-800/90 border border-slate-700 text-white font-bold flex items-center gap-1.5 shadow-sm">
+                <span>{sourceLangObj?.flag} {sourceLangObj?.name}</span>
+                <ArrowRightLeft className="w-3 h-3 text-cyan-400" />
+                <span>{targetLangObj?.flag} {targetLangObj?.name}</span>
               </span>
-              <div className="flex items-center gap-1">
-                {sourceText && (
-                  <button
-                    onClick={() => handleSpeak(sourceText, sourceLang)}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-                    title="Speak Source Text"
-                  >
-                    <Volume2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {sourceText && (
-                  <button
-                    onClick={() => setSourceText('')}
-                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800"
-                    title="Clear"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
             </div>
 
-            {isListening && (
-              <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold animate-pulse">
-                <div className="flex items-center gap-2">
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
-                  </span>
-                  <span>🎙️ Listening in {sourceLangObj?.name} ({sourceLangObj?.nativeName})... Speak now</span>
+            <div className="flex items-center gap-2">
+              {/* Auto-Speak toggle */}
+              <button
+                type="button"
+                onClick={() => setIsAutoSpeak(!isAutoSpeak)}
+                className={`px-2.5 py-1 rounded-xl font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isAutoSpeak
+                    ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}
+                title={isAutoSpeak ? 'Auto-speak translations aloud' : 'Translations muted'}
+              >
+                {isAutoSpeak ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5 text-rose-400" />}
+                <span>{isAutoSpeak ? 'Auto-Speak On' : 'Muted'}</span>
+              </button>
+
+              {/* Auto-Turn toggle */}
+              <button
+                type="button"
+                onClick={() => setIsAutoTurn(!isAutoTurn)}
+                className={`px-2.5 py-1 rounded-xl font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isAutoTurn
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm shadow-emerald-500/20'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                }`}
+                title={isAutoTurn ? 'Hands-Free: Auto-arms partner mic after speaking' : 'Push-to-Talk Mode'}
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isAutoTurn ? 'animate-spin' : ''}`} style={{ animationDuration: '6s' }} />
+                <span>{isAutoTurn ? 'Hands-Free Auto-Turn' : 'Push-to-Talk'}</span>
+              </button>
+
+              {/* Clear conversation */}
+              {conversationHistory.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Clear current live conversation thread?')) {
+                      setConversationHistory([]);
+                    }
+                  }}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors cursor-pointer"
+                  title="Clear Conversation"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Conversation Chat Stream Container */}
+          <div className="min-h-[380px] max-h-[520px] overflow-y-auto p-4 rounded-3xl bg-slate-900/60 border border-slate-800/90 shadow-2xl space-y-4 mb-4 backdrop-blur-sm flex flex-col">
+            {conversationHistory.length === 0 && !conversationLiveTranscript && !isConversationTranslating && (
+              <div className="my-auto py-10 flex flex-col items-center justify-center text-center text-slate-400 px-4">
+                <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/25 flex items-center justify-center text-cyan-400 mb-3 shadow-lg shadow-cyan-500/10 animate-pulse">
+                  <Radio className="w-8 h-8" />
                 </div>
-                <span className="text-[10px] text-rose-400/80 font-mono">Live audio</span>
+                <h3 className="text-base font-bold text-white mb-1">
+                  Ready for Real-Time Bilingual Conversation
+                </h3>
+                <p className="text-xs text-slate-400 max-w-md leading-relaxed mb-4">
+                  Tap either microphone below to speak in <span className="text-cyan-300 font-semibold">{sourceLangObj?.name} ({sourceLangObj?.flag})</span> or <span className="text-emerald-300 font-semibold">{targetLangObj?.name} ({targetLangObj?.flag})</span>.
+                  Auro transcribes live, translates instantly with Gemini, and speaks translations out loud!
+                </p>
+                <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] text-slate-400">
+                  <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700/60">
+                    💡 Hands-Free Auto-Turn seamlessly passes microphone
+                  </span>
+                  <span className="px-2.5 py-1 rounded-xl bg-slate-800/80 border border-slate-700/60">
+                    🗣️ Spoken in authentic native accents
+                  </span>
+                </div>
               </div>
             )}
 
-            <textarea
-              value={sourceText}
-              onChange={handleSourceChange}
-              rows={5}
-              placeholder={
-                isListening
-                  ? `Listening... speak now in ${sourceLangObj?.name || 'English'}`
-                  : `Type or speak anything in ${sourceLangObj?.name || 'English'}...`
-              }
-              className={`w-full p-3 text-sm bg-slate-950/70 border rounded-2xl text-white placeholder-slate-500 focus:outline-none resize-none leading-relaxed transition-all ${
-                isListening
-                  ? 'border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
-                  : 'border-slate-800/80 focus:border-cyan-500'
-              }`}
-            />
-          </div>
+            {conversationHistory.map((msg) => {
+              const isSpeakerA = msg.speaker === 'A';
+              const langA = SUPPORTED_LANGUAGES.find((l) => l.code === msg.speakerLang);
+              const langB = SUPPORTED_LANGUAGES.find((l) => l.code === msg.targetLang);
 
-          <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800/60">
-            {/* Live Mic Voice-to-Text Button */}
-            <button
-              onClick={handleToggleListening}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                isListening
-                  ? 'bg-rose-500 text-white animate-pulse shadow-md shadow-rose-500/30'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
-              }`}
-            >
-              {isListening ? (
-                <>
-                  <MicOff className="w-3.5 h-3.5" />
-                  <span>Stop Recording</span>
-                </>
-              ) : (
-                <>
-                  <Mic className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Live Voice Input</span>
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={() => handleTranslate()}
-              disabled={isTranslating || !sourceText.trim()}
-              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 active:scale-95 transition-all"
-            >
-              {isTranslating ? (
-                <>
-                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span>Translating...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Translate</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Target Translated Card */}
-        <div className="p-4 rounded-3xl bg-slate-900/80 border border-cyan-500/40 shadow-xl shadow-cyan-500/5 flex flex-col justify-between relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none" />
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
-                <span>{targetLangObj?.flag}</span>
-                <span>{targetLangObj?.name}</span>
-                <span className="text-[11px] font-normal text-slate-400">({targetLangObj?.nativeName})</span>
-              </span>
-
-              {translatedText && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => handleSpeak(translatedText, targetLang)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300"
-                    title="Listen to Native Pronunciation"
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${isSpeakerA ? 'items-start' : 'items-end'} animate-in fade-in slide-in-from-bottom-2 duration-200`}
+                >
+                  <div
+                    className={`max-w-[88%] sm:max-w-[80%] rounded-3xl p-4 shadow-xl border ${
+                      isSpeakerA
+                        ? 'bg-slate-900 border-cyan-500/40 text-slate-100 rounded-tl-sm shadow-cyan-950/20'
+                        : 'bg-slate-900 border-emerald-500/40 text-slate-100 rounded-tr-sm shadow-emerald-950/20'
+                    }`}
                   >
-                    <Volume2 className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => handleCopy(translatedText)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
-                    title="Copy Translation"
-                  >
-                    {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                </div>
-              )}
-            </div>
+                    {/* Header with speaker badge & timestamp */}
+                    <div className="flex items-center justify-between gap-3 mb-2 pb-1.5 border-b border-slate-800">
+                      <div className="flex items-center gap-1.5 text-xs font-bold">
+                        <span className="text-sm">{langA?.flag}</span>
+                        <span className={isSpeakerA ? 'text-cyan-300' : 'text-emerald-300'}>
+                          {isSpeakerA ? `Speaker 1 (${langA?.name})` : `Speaker 2 (${langA?.name})`}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-mono">{msg.timestamp}</span>
+                    </div>
 
-            <div className="min-h-[120px] p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex flex-col justify-between">
-              {isTranslating ? (
-                <div className="flex flex-col items-center justify-center py-8 text-cyan-400 text-xs gap-2">
-                  <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                  <span>Generating natural translation...</span>
-                </div>
-              ) : translatedText ? (
-                <div>
-                  <p className="text-base font-semibold text-white leading-relaxed select-text">
-                    {translatedText}
-                  </p>
+                    {/* Original Spoken Text */}
+                    <p className="text-xs text-slate-400 italic mb-2 leading-relaxed">
+                      "{msg.originalText}"
+                    </p>
 
-                  {/* Phonetic Pronunciation Guide */}
-                  {phonetics && (
-                    <div className="mt-2.5 pt-2 border-t border-slate-800/80">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90 mb-0.5">
-                        Phonetics / How to Pronounce:
-                      </p>
-                      <p className="text-xs text-amber-200/90 font-medium italic">
-                        "{phonetics}"
+                    {/* Translated Text (Hero) */}
+                    <div className="mt-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">
+                        <span>{langB?.flag}</span>
+                        <span>Translation in {langB?.name}:</span>
+                      </div>
+                      <p className="text-base font-bold text-white leading-relaxed select-text">
+                        {msg.translatedText}
                       </p>
                     </div>
-                  )}
 
-                  {linguisticNotes && (
-                    <p className="mt-2 text-[11px] text-slate-400 italic">
-                      💡 {linguisticNotes}
+                    {/* Phonetic Pronunciation Guide */}
+                    {msg.phonetics && (
+                      <div className="mt-2 pt-1.5 border-t border-slate-800/80">
+                        <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
+                          Pronunciation Guide:
+                        </p>
+                        <p className="text-xs text-amber-200 font-medium italic mt-0.5">
+                          "{msg.phonetics}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Action buttons on message */}
+                    <div className="flex items-center justify-end gap-1.5 mt-2.5 pt-1.5 border-t border-slate-800/80">
+                      <button
+                        type="button"
+                        onClick={() => speakText(msg.translatedText, msg.targetLang)}
+                        className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer active:scale-95"
+                        title="Replay pronunciation"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Listen</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(msg.translatedText)}
+                        className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all cursor-pointer active:scale-95"
+                        title="Copy translation"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Live Streaming Speech Indicator Card */}
+            {(isListening || conversationLiveTranscript || isConversationTranslating) && (
+              <div
+                className={`flex flex-col ${
+                  activeSpeaker === 'A' ? 'items-start' : 'items-end'
+                } animate-in fade-in duration-200`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-3xl p-3.5 shadow-2xl border ${
+                    activeSpeaker === 'A'
+                      ? 'bg-slate-950/95 border-cyan-500 shadow-cyan-500/20'
+                      : 'bg-slate-950/95 border-emerald-500 shadow-emerald-500/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1.5 text-xs font-bold">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
+                    </span>
+                    <span className={activeSpeaker === 'A' ? 'text-cyan-300' : 'text-emerald-300'}>
+                      {activeSpeaker === 'A'
+                        ? `🎙️ Speaker 1 (${sourceLangObj?.name}) speaking...`
+                        : `🎙️ Speaker 2 (${targetLangObj?.name}) speaking...`}
+                    </span>
+                  </div>
+
+                  {conversationLiveTranscript ? (
+                    <p className="text-sm font-semibold text-white italic">
+                      "{conversationLiveTranscript}"
+                    </p>
+                  ) : isConversationTranslating ? (
+                    <div className="flex items-center gap-2 text-xs text-cyan-300">
+                      <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                      <span>Translating speech with Gemini AI...</span>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 italic">
+                      Listening for your voice... speak now!
                     </p>
                   )}
                 </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-slate-500 text-xs text-center">
-                  <Languages className="w-8 h-8 text-slate-700 mb-1" />
-                  <span>Translation will appear here in real-time</span>
+              </div>
+            )}
+
+            <div ref={conversationEndRef} />
+          </div>
+
+          {/* Dual-Microphone Interactive Control Dock */}
+          <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl flex items-center justify-between gap-3">
+            {/* Speaker A (Source) Mic Button */}
+            <button
+              type="button"
+              onClick={() => startConversationListening('A')}
+              className={`flex-1 py-4 px-3 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg active:scale-95 cursor-pointer ${
+                isListening && activeSpeaker === 'A'
+                  ? 'bg-gradient-to-tr from-cyan-600 to-blue-600 text-white shadow-cyan-500/40 ring-4 ring-cyan-500/40 animate-pulse'
+                  : 'bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700/80 hover:border-cyan-500/50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{sourceLangObj?.flag}</span>
+                {isListening && activeSpeaker === 'A' ? (
+                  <MicOff className="w-5 h-5 text-white" />
+                ) : (
+                  <Mic className="w-5 h-5 text-cyan-400" />
+                )}
+              </div>
+              <div className="text-center">
+                <span className="text-xs font-bold block">
+                  {isListening && activeSpeaker === 'A' ? 'Listening...' : `Speak ${sourceLangObj?.name}`}
+                </span>
+                <span className="text-[10px] text-slate-400 block font-medium">
+                  {sourceLangObj?.nativeName}
+                </span>
+              </div>
+            </button>
+
+            {/* Quick Swap Center Column */}
+            <div className="flex flex-col items-center justify-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={handleSwapLanguages}
+                className="p-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-cyan-400 border border-slate-700 transition-all active:scale-95 shadow-md cursor-pointer"
+                title="Swap Speakers Language"
+              >
+                <ArrowRightLeft className="w-4 h-4" />
+              </button>
+              <span className="text-[9px] font-bold uppercase tracking-wider text-slate-500">
+                Swap
+              </span>
+            </div>
+
+            {/* Speaker B (Target) Mic Button */}
+            <button
+              type="button"
+              onClick={() => startConversationListening('B')}
+              className={`flex-1 py-4 px-3 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg active:scale-95 cursor-pointer ${
+                isListening && activeSpeaker === 'B'
+                  ? 'bg-gradient-to-tr from-emerald-600 to-teal-600 text-white shadow-emerald-500/40 ring-4 ring-emerald-500/40 animate-pulse'
+                  : 'bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700/80 hover:border-emerald-500/50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{targetLangObj?.flag}</span>
+                {isListening && activeSpeaker === 'B' ? (
+                  <MicOff className="w-5 h-5 text-white" />
+                ) : (
+                  <Mic className="w-5 h-5 text-emerald-400" />
+                )}
+              </div>
+              <div className="text-center">
+                <span className="text-xs font-bold block">
+                  {isListening && activeSpeaker === 'B' ? 'Listening...' : `Speak ${targetLangObj?.name}`}
+                </span>
+                <span className="text-[10px] text-slate-400 block font-medium">
+                  {targetLangObj?.nativeName}
+                </span>
+              </div>
+            </button>
+          </div>
+        </div>
+      ) : (
+        /* Direct Text & Document Translation Layout */
+        <>
+          {/* Translation Dual-Card Container */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            {/* Source Text Card */}
+            <div className="p-4 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                    <span>{sourceLangObj?.flag}</span>
+                    <span>{sourceLangObj?.name}</span>
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {sourceText && (
+                      <button
+                        onClick={() => handleSpeak(sourceText, sourceLang)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                        title="Speak Source Text"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                    {sourceText && (
+                      <button
+                        onClick={() => setSourceText('')}
+                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800"
+                        title="Clear"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {isListening && (
+                  <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold animate-pulse">
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                      </span>
+                      <span>🎙️ Listening in {sourceLangObj?.name} ({sourceLangObj?.nativeName})... Speak now</span>
+                    </div>
+                    <span className="text-[10px] text-rose-400/80 font-mono">Live audio</span>
+                  </div>
+                )}
+
+                <textarea
+                  value={sourceText}
+                  onChange={handleSourceChange}
+                  rows={5}
+                  placeholder={
+                    isListening
+                      ? `Listening... speak now in ${sourceLangObj?.name || 'English'}`
+                      : `Type or speak anything in ${sourceLangObj?.name || 'English'}...`
+                  }
+                  className={`w-full p-3 text-sm bg-slate-950/70 border rounded-2xl text-white placeholder-slate-500 focus:outline-none resize-none leading-relaxed transition-all ${
+                    isListening
+                      ? 'border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
+                      : 'border-slate-800/80 focus:border-cyan-500'
+                  }`}
+                />
+              </div>
+
+              <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800/60">
+                {/* Live Mic Voice-to-Text Button */}
+                <button
+                  onClick={handleToggleListening}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                    isListening
+                      ? 'bg-rose-500 text-white animate-pulse shadow-md shadow-rose-500/30'
+                      : 'bg-slate-800 hover:bg-slate-750 text-slate-300'
+                  }`}
+                >
+                  {isListening ? (
+                    <>
+                      <MicOff className="w-3.5 h-3.5" />
+                      <span>Stop Recording</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Live Voice Input</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleTranslate()}
+                  disabled={isTranslating || !sourceText.trim()}
+                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
+                >
+                  {isTranslating ? (
+                    <>
+                      <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Translating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Translate</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Target Translated Card */}
+            <div className="p-4 rounded-3xl bg-slate-900/80 border border-cyan-500/40 shadow-xl shadow-cyan-500/5 flex flex-col justify-between relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-2xl pointer-events-none" />
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-cyan-300 flex items-center gap-1.5">
+                    <span>{targetLangObj?.flag}</span>
+                    <span>{targetLangObj?.name}</span>
+                    <span className="text-[11px] font-normal text-slate-400">({targetLangObj?.nativeName})</span>
+                  </span>
+
+                  {translatedText && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleSpeak(translatedText, targetLang)}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300"
+                        title="Listen to Native Pronunciation"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleCopy(translatedText)}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                        title="Copy Translation"
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="min-h-[120px] p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex flex-col justify-between">
+                  {isTranslating ? (
+                    <div className="flex flex-col items-center justify-center py-8 text-cyan-400 text-xs gap-2">
+                      <div className="w-5 h-5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                      <span>Generating natural translation with Gemini AI...</span>
+                    </div>
+                  ) : translatedText ? (
+                    <div>
+                      <p className="text-base font-semibold text-white leading-relaxed select-text">
+                        {translatedText}
+                      </p>
+
+                      {/* Phonetic Pronunciation Guide */}
+                      {phonetics && (
+                        <div className="mt-2.5 pt-2 border-t border-slate-800/80">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90 mb-0.5">
+                            Phonetics / How to Pronounce:
+                          </p>
+                          <p className="text-xs text-amber-200/90 font-medium italic">
+                            "{phonetics}"
+                          </p>
+                        </div>
+                      )}
+
+                      {linguisticNotes && (
+                        <p className="mt-2 text-[11px] text-slate-400 italic">
+                          💡 {linguisticNotes}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-8 text-slate-500 text-xs text-center">
+                      <Languages className="w-8 h-8 text-slate-700 mb-1" />
+                      <span>Translation will appear here in real-time</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Suite for Current Translation */}
+              {translatedText && (
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800/60">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleUploadCurrentToDrive}
+                      disabled={uploadingDrive}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 transition-all"
+                      title="Upload formatted translation to Google Drive"
+                    >
+                      {uploadingDrive ? (
+                        <div className="w-3.5 h-3.5 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin" />
+                      ) : (
+                        <UploadCloud className="w-3.5 h-3.5" />
+                      )}
+                      <span>Store in Drive</span>
+                    </button>
+
+                    <button
+                      onClick={handleShareCurrent}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+                      title="Share External"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
+                      onClick={() =>
+                        downloadTranslationFile({
+                          id: 'temp',
+                          userEmail: user?.email || '',
+                          sourceText,
+                          translatedText,
+                          sourceLang,
+                          targetLang,
+                          phonetics,
+                          notes: linguisticNotes,
+                          driveSyncStatus: 'local_only',
+                          isFavorite: false,
+                          createdAt: new Date().toISOString(),
+                          updatedAt: new Date().toISOString(),
+                        })
+                      }
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
+                      title="Download File (.txt)"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <span className="text-[10px] text-slate-500">
+                    Folder: Family Circle / {DRIVE_FOLDER_NAME}
+                  </span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Action Suite for Current Translation */}
-          {translatedText && (
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800/60">
-              <div className="flex items-center gap-1.5">
+          {/* Quick Family Common Phrases */}
+          <div className="mb-6">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+              Everyday Family Common Phrases
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {QUICK_FAMILY_PHRASES.map((qp) => (
                 <button
-                  onClick={handleUploadCurrentToDrive}
-                  disabled={uploadingDrive}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-cyan-300 flex items-center gap-1.5 transition-all"
-                  title="Upload formatted translation to Google Drive"
+                  key={qp.id}
+                  onClick={() => handleApplyQuickPhrase(qp)}
+                  className="text-left p-2.5 rounded-2xl bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-slate-700 transition-all flex items-start gap-2 cursor-pointer"
                 >
-                  {uploadingDrive ? (
-                    <div className="w-3.5 h-3.5 border-2 border-cyan-300 border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <UploadCloud className="w-3.5 h-3.5" />
-                  )}
-                  <span>Store in Drive</span>
+                  <Globe className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold">{qp.category}</p>
+                    <p className="text-xs text-slate-200 line-clamp-1">{qp.english}</p>
+                  </div>
                 </button>
-
-                <button
-                  onClick={handleShareCurrent}
-                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
-                  title="Share External"
-                >
-                  <Share2 className="w-3.5 h-3.5" />
-                </button>
-
-                <button
-                  onClick={() =>
-                    downloadTranslationFile({
-                      id: 'temp',
-                      userEmail: user?.email || '',
-                      sourceText,
-                      translatedText,
-                      sourceLang,
-                      targetLang,
-                      phonetics,
-                      notes: linguisticNotes,
-                      driveSyncStatus: 'local_only',
-                      isFavorite: false,
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString(),
-                    })
-                  }
-                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white"
-                  title="Download File (.txt)"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <span className="text-[10px] text-slate-500">
-                Folder: Family Circle / {DRIVE_FOLDER_NAME}
-              </span>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* Quick Family Common Phrases */}
-      <div className="mb-6">
-        <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-          Everyday Family Common Phrases
-        </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-          {QUICK_FAMILY_PHRASES.map((qp) => (
-            <button
-              key={qp.id}
-              onClick={() => handleApplyQuickPhrase(qp)}
-              className="text-left p-2.5 rounded-2xl bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-slate-700 transition-all flex items-start gap-2"
-            >
-              <Globe className="w-4 h-4 text-cyan-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-[10px] text-slate-400 uppercase font-bold">{qp.category}</p>
-                <p className="text-xs text-slate-200 line-clamp-1">{qp.english}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Translation History Section */}
       <div className="mb-4 flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-800/80">

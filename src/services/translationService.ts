@@ -395,8 +395,11 @@ export async function toggleTranslationFavorite(id: string, isFavorite: boolean)
 /**
  * Speak text in the given target language using Web Speech API synthesis
  */
-export function speakText(text: string, langCode: string) {
-  if (typeof window === 'undefined' || !window.speechSynthesis) return;
+export function speakText(text: string, langCode: string, onEnd?: () => void) {
+  if (typeof window === 'undefined' || !window.speechSynthesis) {
+    onEnd?.();
+    return;
+  }
 
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
@@ -407,6 +410,11 @@ export function speakText(text: string, langCode: string) {
   utterance.lang = targetSpeechCode;
   utterance.rate = 0.95;
   utterance.pitch = 1.0;
+
+  if (onEnd) {
+    utterance.onend = () => onEnd();
+    utterance.onerror = () => onEnd();
+  }
 
   // Attempt to find matching native voice
   const voices = window.speechSynthesis.getVoices();
