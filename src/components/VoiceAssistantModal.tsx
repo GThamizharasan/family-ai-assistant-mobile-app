@@ -1039,16 +1039,41 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
 
     if (isListening) {
-      speechEngine.stopListening(true);
+      if (liveTranscript.trim()) {
+        speechEngine.commitCurrentSpeech();
+      } else {
+        speechEngine.stopListening(true);
+      }
     } else {
       speechEngine.unlockAudio();
       setMicStatusMessage(null);
       speechEngine.stopSpeaking();
       speechEngine.setContinuousMode(isHandsFreeRef.current);
+
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
+        setMicStatusMessage('Microphone access requires a secure connection (HTTPS or http://localhost). If accessing via local network IP, please use http://localhost:3000 or enable HTTPS.');
+        return;
+      }
+
       if (isIOSChrome()) {
         setMicStatusMessage('Apple iOS WebKit restricts speech recognition in Chrome. On iPhone, please use Safari for voice dictation, or type your message below.');
         return;
       }
+
+      try {
+        const hasPerm = await speechEngine.requestMicPermission();
+        if (!hasPerm) {
+          setMicStatusMessage(
+            Capacitor.isNativePlatform()
+              ? 'Microphone access is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone and allow access.'
+              : 'Microphone access was blocked. Please click the lock 🔒 or tune 🎛️ icon next to the URL in your browser address bar and set Microphone to "Allow".'
+          );
+          return;
+        }
+      } catch (permErr) {
+        console.warn('Microphone permission notice:', permErr);
+      }
+
       const started = speechEngine.startListening();
       if (!started) {
         setMicStatusMessage('Speech recognition could not be started in this browser. Please use Chrome on Desktop/Android, or Safari on iPhone, or type below.');

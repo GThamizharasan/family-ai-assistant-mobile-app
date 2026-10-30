@@ -96,6 +96,7 @@ export class VoiceAssistantEngine {
   private vadInterval: any = null;
   private speechDetectedDuringRecord: boolean = false;
   private recordSilenceTimer: any = null;
+  private recordMaxTimer: any = null;
   private isUsingMediaRecorderFallback: boolean = false;
   private nativeRecognitionSession = 0;
   private isNativeRecognitionActive = false;
@@ -218,20 +219,14 @@ export class VoiceAssistantEngine {
       if (!this.isContinuousMode || this.isSpeakingNow || this.isThinkingNow) return;
       if (Capacitor.isNativePlatform()) {
         void this.startNativeSpeechRecognition();
-      } else if (this.recognition && !isIOSChrome()) {
-        try {
-          this.recognition.start();
-        } catch {
-          // already started or retry later
-        }
+      } else {
+        this.startListening();
       }
     }, delayMs);
   }
 
   constructor() {
     if (typeof window !== 'undefined') {
-      this.initWebSpeechRecognition();
-
       if ('speechSynthesis' in window) {
         this.synth = window.speechSynthesis;
         this.loadVoices();
@@ -291,25 +286,33 @@ export class VoiceAssistantEngine {
     } catch (e) {}
   }
 
-  private initWebSpeechRecognition() {
-    if (typeof window === 'undefined') return;
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+  /**
+   * Creates and starts a fresh browser SpeechRecognition instance per session.
+   * Modern Chromium/WebKit browsers require a fresh instance to avoid dead-session errors.
+   */
+  private startWebSpeechRecognition(): boolean {
+    if (typeof window === 'undefined') return false;
+    const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognitionClass || isIOSChrome()) return false;
+
+    // Clean up previous instance before creating a fresh one
+    this.stopWebSpeech();
 
     try {
-      this.recognition = new SpeechRecognition();
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.lang = this.currentLanguage;
+      const recognition = new SpeechRecognitionClass();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = this.currentLanguage;
 
-      this.recognition.onstart = () => {
+      recognition.onstart = () => {
         this.isListening = true;
         this.isCommitted = false;
         this.latestTranscript = '';
+        this.consecutiveErrorCount = 0;
         this.onListeningChange?.(true);
       };
 
-      this.recognition.onresult = (event: any) => {
+      recognition.onresult = (event: any) => {
         let interimTranscript = '';
         let finalTranscript = '';
 
@@ -330,38 +333,38 @@ export class VoiceAssistantEngine {
 
           // If Web Speech already produced final finalized sentence segments:
           if (finalTranscript.trim().length > 0 && interimTranscript.trim().length === 0) {
-            // User finished this sentence: commit after natural pause (500ms)
+            // User finished this sentence: commit after short pause (600ms)
             this.silenceTimer = setTimeout(() => {
               if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
                 this.commitCurrentSpeech();
               }
-            }, 500);
+            }, 600);
           } else {
-            // Interim continuous speech: auto-commit after 1000ms of quiet pause
+            // Interim continuous speech: auto-commit after quiet pause (1200ms)
             this.silenceTimer = setTimeout(() => {
               if (!this.isCommitted && this.latestTranscript.trim().length > 1) {
                 this.commitCurrentSpeech();
               }
-            }, 1000);
+            }, 1200);
           }
         }
       };
 
-      this.recognition.onerror = (event: any) => {
+      recognition.onerror = (event: any) => {
         console.warn('Speech recognition status:', event.error);
         if (event.error === 'no-speech' || event.error === 'aborted') {
-          // Normal silence, brief pause, or programmatic stop/restart (never display error to user)
+          // Normal silence, brief pause, or programmatic stop/restart
           return;
         }
 
-        // If Web Speech API fails due to iframe permissions or network, trigger MediaRecorder fallback
+        // If Web Speech API fails due to permissions, network, or service error, try MediaRecorder fallback
         if (
           event.error === 'not-allowed' ||
           event.error === 'service-not-allowed' ||
           event.error === 'network' ||
           event.error === 'audio-capture'
         ) {
-          console.info('Switching to MediaRecorder + Gemini Transcribe fallback for voice input...');
+          console.info(`Switching to MediaRecorder fallback due to error: ${event.error}...`);
           this.stopWebSpeech();
           this.startMediaRecorderListening().catch((err) => {
             console.warn('Fallback error:', err);
@@ -377,29 +380,35 @@ export class VoiceAssistantEngine {
         this.onErrorCallback?.(event.error);
       };
 
-      this.recognition.onend = () => {
+      recognition.onend = () => {
         clearTimeout(this.silenceTimer);
         // If there was uncommitted speech when recognition ended, commit it now!
         if (!this.isCommitted && this.latestTranscript.trim().length > 0) {
           this.commitCurrentSpeech();
         } else {
           if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
-            this.scheduleAutoRestart(800);
+            this.scheduleAutoRestart(600);
           } else {
             this.isListening = false;
             this.onListeningChange?.(false);
           }
         }
       };
-    } catch (e) {
-      console.warn('SpeechRecognition initialization error:', e);
-      this.recognition = null;
+
+      this.recognition = recognition;
+      this.isUsingMediaRecorderFallback = false;
+      recognition.start();
+      return true;
+    } catch (e: any) {
+      console.warn('SpeechRecognition start failed:', e);
+      this.stopWebSpeech();
+      return false;
     }
   }
 
   public isSupported(): boolean {
     return !!(
-      this.recognition ||
+      (typeof window !== 'undefined' && ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)) ||
       (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) ||
       (typeof window !== 'undefined' && 'speechSynthesis' in window)
     );
@@ -435,6 +444,7 @@ export class VoiceAssistantEngine {
   public commitCurrentSpeech() {
     clearTimeout(this.silenceTimer);
     clearTimeout(this.recordSilenceTimer);
+    clearTimeout(this.recordMaxTimer);
 
     if (this.isUsingMediaRecorderFallback) {
       this.stopMediaRecorderListening();
@@ -470,19 +480,15 @@ export class VoiceAssistantEngine {
       return true;
     }
 
-    // Prefer browser speech recognition for immediate, streaming transcripts.
-    if (this.recognition && !isIOSChrome()) {
-      try {
-        this.isUsingMediaRecorderFallback = false;
-        this.recognition.start();
+    // 1. Prefer browser speech recognition with fresh instance for immediate, streaming transcripts
+    if (!isIOSChrome()) {
+      const started = this.startWebSpeechRecognition();
+      if (started) {
         return true;
-      } catch (err: any) {
-        // If already started or failed, fallback to MediaRecorder
-        console.warn('Web Speech start error, trying MediaRecorder fallback:', err);
       }
     }
 
-    // MediaRecorder Fallback with AudioContext VAD
+    // 2. MediaRecorder Fallback with AudioContext VAD
     this.startMediaRecorderListening().catch((err) => {
       console.warn('MediaRecorder voice capture failed:', err);
       this.onErrorCallback?.(err?.message || 'Mic access failed');
@@ -651,7 +657,7 @@ export class VoiceAssistantEngine {
             this.onAudioVolume?.(avgVolume);
 
             // Voice Activity Detection (VAD)
-            if (avgVolume > 15) {
+            if (avgVolume > 6) {
               this.speechDetectedDuringRecord = true;
               clearTimeout(this.recordSilenceTimer);
               // Set timer to auto-stop when silence resumes after speaking
@@ -659,7 +665,7 @@ export class VoiceAssistantEngine {
                 if (this.speechDetectedDuringRecord && this.isListening) {
                   this.stopMediaRecorderListening();
                 }
-              }, 1100);
+              }, 1200);
             }
           }, 100);
         }
@@ -688,9 +694,18 @@ export class VoiceAssistantEngine {
         this.isListening = true;
         this.onListeningChange?.(true);
         this.onTranscriptCallback?.('Listening (speak now)...', false);
+
+        // Maximum recording duration safety fallback (12 seconds)
+        clearTimeout(this.recordMaxTimer);
+        this.recordMaxTimer = setTimeout(() => {
+          if (this.isListening && this.isUsingMediaRecorderFallback) {
+            this.stopMediaRecorderListening();
+          }
+        }, 12000);
       };
 
       recorder.onstop = async () => {
+        clearTimeout(this.recordMaxTimer);
         this.isListening = false;
         this.onListeningChange?.(false);
         this.cleanupMediaStream();
@@ -744,13 +759,19 @@ export class VoiceAssistantEngine {
     clearTimeout(this.silenceTimer);
     if (this.recognition) {
       try {
-        this.recognition.stop();
+        this.recognition.onstart = null;
+        this.recognition.onresult = null;
+        this.recognition.onerror = null;
+        this.recognition.onend = null;
+        this.recognition.abort();
       } catch (e) {}
+      this.recognition = null;
     }
   }
 
   private stopMediaRecorderListening() {
     clearTimeout(this.recordSilenceTimer);
+    clearTimeout(this.recordMaxTimer);
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
       try {
         this.mediaRecorder.stop();
