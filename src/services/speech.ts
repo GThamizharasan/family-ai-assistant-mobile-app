@@ -67,9 +67,11 @@ export class VoiceAssistantEngine {
   private currentBufferSource: AudioBufferSourceNode | null = null;
   private cachedVoices: SpeechSynthesisVoice[] = [];
 
-  // Active voice language (defaults to Tamil ta-IN for bilingual Tamil/English flow)
+  // Active voice language (defaults to saved language, or browser language, or en-US)
   private currentLanguage: string =
-    (typeof window !== 'undefined' && localStorage.getItem('aura_voice_language')) || 'ta-IN';
+    (typeof window !== 'undefined' && localStorage.getItem('aura_voice_language')) ||
+    (typeof navigator !== 'undefined' && (navigator.language?.startsWith('ta') ? 'ta-IN' : navigator.language?.startsWith('hi') ? 'hi-IN' : 'en-US')) ||
+    'en-US';
 
   // Selected specific Tamil voice URI & tuned audio parameters
   private selectedTamilVoiceURI: string =
@@ -429,6 +431,7 @@ export class VoiceAssistantEngine {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((track) => track.stop());
+        await new Promise((r) => setTimeout(r, 150));
         return true;
       } catch (err) {
         console.warn('Microphone permission request failed or rejected:', err);

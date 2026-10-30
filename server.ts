@@ -1601,47 +1601,7 @@ Generate a structured JSON FinOps optimization report:
 // ADVANCED GEMINI SUITE ENDPOINTS
 // =========================================================================
 
-// Feature 1: Transcribe Audio using model "gemini-3.5-transcribe"
-app.post('/api/ai/transcribe', async (req, res) => {
-  try {
-    const { audioBase64, mimeType, prompt } = req.body;
-    if (!audioBase64) {
-      return res.status(400).json({ error: 'Audio base64 payload is required' });
-    }
-
-    const cleanBase64 = audioBase64.replace(/^data:audio\/[a-zA-Z0-9]+;base64,/, '');
-    const client = getAiClient();
-
-    const response = await client.models.generateContent({
-      model: 'gemini-3.5-transcribe',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: mimeType || 'audio/webm',
-              data: cleanBase64,
-            },
-          },
-          {
-            text: prompt || 'Transcribe this spoken audio accurately verbatim with proper punctuation, capitalization, and formatting. Supports English, Tamil (தமிழ்), Tanglish, and multilingual speech seamlessly. If the speaker speaks Tamil, transcribe accurately in Tamil script or Tanglish.',
-          },
-        ],
-      },
-    });
-
-    const transcription = response.text || '';
-    res.json({
-      text: transcription,
-      modelUsed: 'gemini-3.5-transcribe',
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error: any) {
-    console.error('Error in /api/ai/transcribe:', error);
-    res.status(500).json({
-      error: error.message || 'Failed to transcribe audio with gemini-3.5-transcribe',
-    });
-  }
-});
+// Audio transcription is handled by the universal multi-model endpoint below (/api/ai/transcribe)
 
 // Feature: Natural Empathetic Speech Synthesis using model "gemini-3.8-flash-lite-tts"
 app.post('/api/ai/tts', async (req, res) => {
@@ -3743,10 +3703,12 @@ app.post('/api/ai/transcribe', async (req, res) => {
 
     const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
     const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-2.0-flash',
       'gemini-3.8-flash',
       'gemini-3.7-flash',
       'gemini-3.5-flash',
-      'gemini-2.5-flash',
     ];
 
     let transcribedText = '';
