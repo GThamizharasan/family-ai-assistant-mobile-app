@@ -518,7 +518,7 @@ export const VoiceMemosTab: React.FC = () => {
     showToast(`Transcribing "${rec.title}" with Gemini AI...`);
 
     try {
-      const res = await transcribeVoiceRecording(rec);
+      const res = await transcribeVoiceRecording(rec, undefined, getEffectiveAccessToken());
       setRecordings((prev) =>
         prev.map((r) =>
           r.id === rec.id
@@ -532,7 +532,7 @@ export const VoiceMemosTab: React.FC = () => {
         )
       );
       setExpandedTranscriptId(rec.id);
-      showToast('✓ Transcription complete!');
+      showToast('✓ Transcription complete & saved to SQLite!');
     } catch (err: any) {
       showToast(`⚠️ Transcription notice: ${err.message || 'Failed'}`);
     } finally {

@@ -110,7 +110,12 @@ export async function fetchVoiceRecordings(
 
         for (const df of driveFiles) {
           const match = Array.from(map.values()).find(
-            (r) => r.driveFileId === df.id || r.title.toLowerCase() === df.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase()
+            (r) =>
+              r.driveFileId === df.id ||
+              r.id === df.id ||
+              r.id === `drive_${df.id}` ||
+              (r.id.startsWith('drive_') && r.id.replace(/^drive_/, '') === df.id) ||
+              r.title.toLowerCase() === df.name.replace(/\.[a-zA-Z0-9]+$/, '').toLowerCase()
           );
 
           if (match) {
@@ -311,15 +316,62 @@ export async function saveVoiceRecording(
  */
 export async function transcribeVoiceRecording(
   recording: VoiceRecording,
-  prompt?: string
+  prompt?: string,
+  googleAccessToken?: string | null
 ): Promise<TranscriptionResult> {
-  const payload: any = { prompt };
+  const token =
+    googleAccessToken ||
+    (typeof localStorage !== 'undefined'
+      ? localStorage.getItem('aura_google_access_token') ||
+        localStorage.getItem('google_access_token')
+      : null) ||
+    '';
+
+  const driveId =
+    recording.driveFileId ||
+    (recording.id.startsWith('drive_') ? recording.id.replace(/^drive_/, '') : '');
+
+  const payload: any = {
+    prompt,
+    accessToken: token,
+    driveFileId: driveId,
+    title: recording.title,
+    category: recording.category,
+    durationSeconds: recording.durationSeconds,
+    userEmail: recording.userEmail,
+    driveWebViewLink: recording.driveWebViewLink,
+  };
+
   if (recording.audioContentBase64) {
     payload.audioBase64 = recording.audioContentBase64;
     payload.mimeType = recording.audioMimeType;
+  } else if (driveId && token) {
+    // Attempt client-side direct fetch of audio blob from Google Drive API
+    try {
+      const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${driveId}?alt=media`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (driveRes.ok) {
+        const arrayBuf = await driveRes.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let bin = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          bin += String.fromCharCode(bytes[i]);
+        }
+        const b64 = btoa(bin);
+        payload.audioBase64 = b64;
+        payload.mimeType = driveRes.headers.get('content-type') || recording.audioMimeType || 'audio/webm';
+        recording.audioContentBase64 = b64;
+      }
+    } catch (e) {
+      console.warn('Client-side Drive audio fetch for transcription fallback to backend:', e);
+    }
   }
 
-  const res = await fetch(getApiUrl(`/api/voice-recordings/${recording.id}/transcribe`), {
+  const tokenParam = token ? `?accessToken=${encodeURIComponent(token)}` : '';
+  const driveParam = driveId ? `${tokenParam ? '&' : '?'}driveFileId=${encodeURIComponent(driveId)}` : '';
+
+  const res = await fetch(getApiUrl(`/api/voice-recordings/${recording.id}/transcribe${tokenParam}${driveParam}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

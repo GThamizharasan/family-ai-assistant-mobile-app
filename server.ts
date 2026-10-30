@@ -3378,18 +3378,88 @@ app.post('/api/voice-recordings/:id/favorite', (req, res) => {
 app.post('/api/voice-recordings/:id/transcribe', async (req, res) => {
   try {
     const { id } = req.params;
-    let { audioBase64, mimeType, prompt } = req.body;
+    let {
+      audioBase64,
+      mimeType,
+      prompt,
+      accessToken,
+      driveFileId,
+      title,
+      category,
+      durationSeconds,
+      userEmail,
+      driveWebViewLink,
+    } = req.body || {};
 
+    const cleanId = id.replace(/^drive_/, '');
+    const recordings = getVoiceRecordingsFromSqlite();
+    const rec = recordings.find(
+      (r) => r.id === id || r.id === cleanId || r.driveFileId === cleanId || r.driveFileId === id
+    );
+
+    // 1. Try finding audio blob in SQLite
     if (!audioBase64) {
       const stored = getVoiceRecordingAudioContentFromSqlite(id);
-      if (stored) {
+      if (stored && stored.audioContentBase64) {
         audioBase64 = stored.audioContentBase64;
-        mimeType = stored.audioMimeType;
+        mimeType = stored.audioMimeType || mimeType;
+      }
+    }
+
+    // 2. If not in SQLite, resolve driveFileId and fetch from Google Drive
+    let targetDriveId =
+      driveFileId ||
+      (req.query.driveFileId as string) ||
+      rec?.driveFileId ||
+      (id.startsWith('drive_') ? cleanId : null);
+
+    if (!audioBase64 && targetDriveId) {
+      const token =
+        accessToken ||
+        (req.query.accessToken as string) ||
+        (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null) ||
+        process.env.GOOGLE_ACCESS_TOKEN ||
+        process.env.GOOGLE_DRIVE_ACCESS_TOKEN ||
+        null;
+
+      if (token) {
+        try {
+          const driveRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${targetDriveId}?alt=media`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (driveRes.ok) {
+            const arrayBuffer = await driveRes.arrayBuffer();
+            const buf = Buffer.from(arrayBuffer);
+            audioBase64 = buf.toString('base64');
+            mimeType = driveRes.headers.get('content-type') || mimeType || rec?.audioMimeType || 'audio/webm';
+          }
+        } catch (fetchErr) {
+          console.warn('[Transcribe] Google Drive audio fetch error:', fetchErr);
+        }
+      }
+
+      // Public direct download fallback
+      if (!audioBase64) {
+        try {
+          const publicRes = await fetch(`https://drive.google.com/uc?export=download&id=${targetDriveId}`);
+          if (publicRes.ok) {
+            const ct = publicRes.headers.get('content-type') || '';
+            if (ct.includes('audio') || ct.includes('octet-stream')) {
+              const arrayBuffer = await publicRes.arrayBuffer();
+              const buf = Buffer.from(arrayBuffer);
+              audioBase64 = buf.toString('base64');
+              mimeType = ct.includes('audio') ? ct : (mimeType || 'audio/webm');
+            }
+          }
+        } catch {}
       }
     }
 
     if (!audioBase64) {
-      return res.status(400).json({ error: 'Audio data not found for recording' });
+      return res.status(400).json({
+        error: 'Audio data not found for recording. Please verify Google Drive connection or re-sync voice memo.',
+      });
     }
 
     const cleanBase64 = audioBase64.replace(/^data:audio\/[a-zA-Z0-9.-]+;base64,/, '');
@@ -3447,7 +3517,7 @@ Return a clean JSON object with:
       // Fallback transcription attempt without structured JSON
       try {
         const fallbackRes = await client.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-2.5-flash',
           contents: {
             parts: [
               { inlineData: { mimeType: mimeType || 'audio/webm', data: cleanBase64 } },
@@ -3468,12 +3538,22 @@ Return a clean JSON object with:
       }
     }
 
-    // Persist transcription to SQLite
+    // Persist transcription to SQLite with full metadata and cached audio base64
     updateVoiceRecordingTranscriptionInSqlite(
       id,
       resultJson.transcription,
       resultJson.summary,
-      resultJson.detectedLanguage
+      resultJson.detectedLanguage,
+      {
+        title: title || rec?.title,
+        userEmail: userEmail || rec?.userEmail,
+        category: category || rec?.category,
+        durationSeconds: durationSeconds || rec?.durationSeconds,
+        audioMimeType: mimeType,
+        driveFileId: targetDriveId || rec?.driveFileId,
+        driveWebViewLink: driveWebViewLink || rec?.driveWebViewLink,
+        audioContentBase64: audioBase64,
+      }
     );
 
     res.json({

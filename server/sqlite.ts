@@ -2917,14 +2917,104 @@ export function updateVoiceRecordingTranscriptionInSqlite(
   id: string,
   transcription: string,
   summary?: string,
-  detectedLanguage?: string
+  detectedLanguage?: string,
+  extra?: Partial<VoiceRecordingRecord>
 ): boolean {
   if (!db) return false;
   try {
-    db.run(
-      'UPDATE voice_recordings SET transcription = ?, transcription_summary = ?, detected_language = COALESCE(?, detected_language), updated_at = ? WHERE id = ?',
-      [transcription, summary || null, detectedLanguage || null, new Date().toISOString(), id]
+    const cleanId = id.replace(/^drive_/, '');
+    const now = new Date().toISOString();
+
+    // Check if the record already exists by id, cleanId, or drive_file_id
+    const stmtCheck = db.prepare(
+      'SELECT id, title, user_email, category, duration_seconds, audio_mime_type, drive_file_id, audio_content_base64 FROM voice_recordings WHERE id = ? OR id = ? OR drive_file_id = ? OR drive_file_id = ?'
     );
+    stmtCheck.bind([id, cleanId, id, cleanId]);
+    let existingRow: any = null;
+    if (stmtCheck.step()) {
+      existingRow = stmtCheck.getAsObject();
+    }
+    stmtCheck.free();
+
+    if (existingRow) {
+      // Update existing record
+      if (extra?.audioContentBase64 && (!existingRow.audio_content_base64 || existingRow.audio_content_base64.length < 20)) {
+        db.run(
+          `UPDATE voice_recordings 
+           SET transcription = ?, 
+               transcription_summary = ?, 
+               detected_language = COALESCE(?, detected_language), 
+               audio_content_base64 = ?,
+               audio_mime_type = COALESCE(?, audio_mime_type),
+               updated_at = ? 
+           WHERE id = ? OR id = ? OR drive_file_id = ? OR drive_file_id = ?`,
+          [
+            transcription,
+            summary || null,
+            detectedLanguage || null,
+            extra.audioContentBase64,
+            extra.audioMimeType || null,
+            now,
+            id,
+            cleanId,
+            id,
+            cleanId,
+          ]
+        );
+      } else {
+        db.run(
+          `UPDATE voice_recordings 
+           SET transcription = ?, 
+               transcription_summary = ?, 
+               detected_language = COALESCE(?, detected_language), 
+               updated_at = ? 
+           WHERE id = ? OR id = ? OR drive_file_id = ? OR drive_file_id = ?`,
+          [transcription, summary || null, detectedLanguage || null, now, id, cleanId, id, cleanId]
+        );
+      }
+    } else {
+      // Record not yet in SQLite: Insert full record so transcription is permanently retained
+      const recId = id;
+      const title = extra?.title || `Voice Memo ${cleanId.slice(0, 8)}`;
+      const userEmail = (extra?.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+      const category = extra?.category || 'Personal Memo';
+      const durationSeconds = Number(extra?.durationSeconds || 60);
+      const audioMimeType = extra?.audioMimeType || 'audio/webm';
+      const driveFileId = extra?.driveFileId || (id.startsWith('drive_') ? cleanId : null);
+      const driveWebViewLink = extra?.driveWebViewLink || (driveFileId ? `https://drive.google.com/file/d/${driveFileId}/view` : null);
+      const audioBase64 = extra?.audioContentBase64 || null;
+
+      db.run(
+        `INSERT OR REPLACE INTO voice_recordings (
+          id, user_email, title, category, audio_url, audio_content_base64,
+          audio_mime_type, duration_seconds, file_size_bytes, drive_file_id,
+          drive_web_view_link, drive_folder_path, transcription, transcription_summary,
+          detected_language, is_favorite, play_count, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          recId,
+          userEmail,
+          title,
+          category,
+          extra?.audioUrl || '',
+          audioBase64,
+          audioMimeType,
+          durationSeconds,
+          extra?.fileSizeBytes || (audioBase64 ? Math.round(audioBase64.length * 0.75) : 0),
+          driveFileId,
+          driveWebViewLink,
+          extra?.driveFolderPath || 'Family Circle/Voice Recordings',
+          transcription,
+          summary || null,
+          detectedLanguage || 'en-US',
+          0,
+          0,
+          extra?.createdAt || now,
+          now,
+        ]
+      );
+    }
+
     scheduleSave();
     return true;
   } catch (err) {
