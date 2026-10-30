@@ -2857,8 +2857,11 @@ export function getVoiceRecordingsFromSqlite(userEmail?: string): VoiceRecording
 export function getVoiceRecordingAudioContentFromSqlite(id: string): { audioContentBase64: string; audioMimeType: string } | null {
   if (!db) return null;
   try {
-    const stmt = db.prepare('SELECT audio_content_base64, audio_mime_type FROM voice_recordings WHERE id = ?');
-    stmt.bind([id]);
+    const cleanId = id.replace(/^drive_/, '');
+    const stmt = db.prepare(
+      'SELECT audio_content_base64, audio_mime_type FROM voice_recordings WHERE id = ? OR id = ? OR drive_file_id = ? OR drive_file_id = ?'
+    );
+    stmt.bind([id, cleanId, id, cleanId]);
     if (stmt.step()) {
       const row = stmt.getAsObject();
       stmt.free();

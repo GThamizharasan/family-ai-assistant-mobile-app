@@ -68,11 +68,21 @@ export const VoiceMemosTab: React.FC = () => {
   // PLAYBACK STATE
   // -------------------------------------------------------------
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const audioBlobUrlsRef = useRef<Map<string, string>>(new Map());
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [audioLoadingId, setAudioLoadingId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+
+  // Clean up any generated blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      audioBlobUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      audioBlobUrlsRef.current.clear();
+    };
+  }, []);
 
   // -------------------------------------------------------------
   // TRANSCRIPTION & TOAST STATE
@@ -321,52 +331,148 @@ export const VoiceMemosTab: React.FC = () => {
   // -------------------------------------------------------------
   // AUDIO PLAYBACK HANDLERS
   // -------------------------------------------------------------
+  const getEffectiveAccessToken = () => {
+    return (
+      googleAccessToken ||
+      (typeof localStorage !== 'undefined'
+        ? localStorage.getItem('aura_google_access_token') ||
+          localStorage.getItem('google_access_token')
+        : null) ||
+      null
+    );
+  };
+
   const getAudioSourceUrl = (rec: VoiceRecording) => {
     if (rec.audioContentBase64) {
       return `data:${rec.audioMimeType || 'audio/webm'};base64,${rec.audioContentBase64}`;
     }
-    const token = googleAccessToken ? `?accessToken=${encodeURIComponent(googleAccessToken)}` : '';
-    return getApiUrl(`/api/voice-recordings/${rec.id}/audio${token}`);
+    const token = getEffectiveAccessToken();
+    const tokenParam = token ? `?accessToken=${encodeURIComponent(token)}` : '';
+    const driveId = rec.driveFileId || (rec.id.startsWith('drive_') ? rec.id.replace(/^drive_/, '') : '');
+    const driveParam = driveId ? `${tokenParam ? '&' : '?'}driveFileId=${encodeURIComponent(driveId)}` : '';
+    return getApiUrl(`/api/voice-recordings/${rec.id}/audio${tokenParam}${driveParam}`);
   };
 
-  const handlePlayToggle = (rec: VoiceRecording) => {
-    if (playingId === rec.id && isPlaying) {
-      audioPlayerRef.current?.pause();
-      setIsPlaying(false);
+  const handlePlayToggle = async (rec: VoiceRecording) => {
+    // 1. If currently playing this recording, toggle pause / resume
+    if (playingId === rec.id) {
+      if (isPlaying) {
+        audioPlayerRef.current?.pause();
+        setIsPlaying(false);
+      } else {
+        audioPlayerRef.current?.play().then(() => {
+          setIsPlaying(true);
+        }).catch((err) => {
+          console.warn('[VoicePlayer] Resume error:', err);
+        });
+      }
       return;
     }
 
+    // 2. Stop any existing audio
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
+      audioPlayerRef.current = null;
     }
 
-    const audioUrl = getAudioSourceUrl(rec);
-    const audio = new Audio(audioUrl);
-    audioPlayerRef.current = audio;
-    audio.playbackRate = playbackSpeed;
+    setIsPlaying(false);
+    setPlayingId(rec.id);
+    setCurrentTime(0);
+    setDuration(rec.durationSeconds || 0);
 
-    audio.ontimeupdate = () => {
-      setCurrentTime(audio.currentTime);
-      setDuration(audio.duration || rec.durationSeconds || 0);
+    const effectiveToken = getEffectiveAccessToken();
+    const driveFileId = rec.driveFileId || (rec.id.startsWith('drive_') ? rec.id.replace(/^drive_/, '') : null);
+
+    const setupAndPlayAudio = (src: string) => {
+      const audio = new Audio(src);
+      audioPlayerRef.current = audio;
+      audio.playbackRate = playbackSpeed;
+
+      audio.ontimeupdate = () => {
+        setCurrentTime(audio.currentTime);
+        setDuration(audio.duration || rec.durationSeconds || 0);
+      };
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        setCurrentTime(0);
+      };
+
+      audio.onerror = async () => {
+        console.warn('[VoicePlayer] Stream error on audio source. Trying direct Google Drive fallback in-app...');
+        setAudioLoadingId(rec.id);
+
+        // Fallback: Fetch directly from Google Drive API if driveFileId and token are available
+        if (driveFileId && effectiveToken) {
+          try {
+            showToast('Loading audio stream from Google Drive...');
+            const driveRes = await fetch(
+              `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
+              { headers: { Authorization: `Bearer ${effectiveToken}` } }
+            );
+            if (driveRes.ok) {
+              const blob = await driveRes.blob();
+              if (blob.size > 100) {
+                const objectUrl = URL.createObjectURL(blob);
+                audioBlobUrlsRef.current.set(rec.id, objectUrl);
+
+                const directAudio = new Audio(objectUrl);
+                audioPlayerRef.current = directAudio;
+                directAudio.playbackRate = playbackSpeed;
+                directAudio.ontimeupdate = () => {
+                  setCurrentTime(directAudio.currentTime);
+                  setDuration(directAudio.duration || rec.durationSeconds || 0);
+                };
+                directAudio.onended = () => {
+                  setIsPlaying(false);
+                  setCurrentTime(0);
+                };
+                directAudio.onerror = () => {
+                  showToast('⚠️ Could not play audio stream.');
+                  setIsPlaying(false);
+                  setPlayingId(null);
+                  setAudioLoadingId(null);
+                };
+
+                await directAudio.play();
+                setIsPlaying(true);
+                setAudioLoadingId(null);
+                return;
+              }
+            }
+          } catch (driveErr) {
+            console.error('[VoicePlayer] Direct Drive fetch error:', driveErr);
+          }
+        }
+
+        setAudioLoadingId(null);
+        setIsPlaying(false);
+        setPlayingId(null);
+        showToast('⚠️ Could not play audio. File may be unavailable or deleted from Drive.');
+      };
+
+      audio.play().then(() => {
+        setIsPlaying(true);
+      }).catch((playErr) => {
+        console.warn('[VoicePlayer] Audio play failed:', playErr);
+      });
     };
 
-    audio.onended = () => {
-      setIsPlaying(false);
-      setCurrentTime(0);
-    };
+    // Fast-path: Check if we have an already cached blob URL
+    if (audioBlobUrlsRef.current.has(rec.id)) {
+      setupAndPlayAudio(audioBlobUrlsRef.current.get(rec.id)!);
+      return;
+    }
 
-    audio.onerror = () => {
-      console.warn('Audio playback error, fallback to drive view link');
-      if (rec.driveWebViewLink) {
-        window.open(rec.driveWebViewLink, '_blank');
-      }
-      setIsPlaying(false);
-    };
+    // Fast-path: Check base64
+    if (rec.audioContentBase64) {
+      setupAndPlayAudio(`data:${rec.audioMimeType || 'audio/webm'};base64,${rec.audioContentBase64}`);
+      return;
+    }
 
-    audio.play().then(() => {
-      setPlayingId(rec.id);
-      setIsPlaying(true);
-    });
+    // Stream from server endpoint
+    const streamUrl = getAudioSourceUrl(rec);
+    setupAndPlayAudio(streamUrl);
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -858,7 +964,9 @@ export const VoiceMemosTab: React.FC = () => {
                       }`}
                       title={isRecPlaying ? 'Pause' : 'Play Audio'}
                     >
-                      {isRecPlaying ? (
+                      {audioLoadingId === rec.id ? (
+                        <RotateCcw className="w-5 h-5 animate-spin text-amber-400" />
+                      ) : isRecPlaying ? (
                         <Pause className="w-5 h-5" />
                       ) : (
                         <Play className="w-5 h-5 fill-current ml-0.5" />

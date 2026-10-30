@@ -3245,27 +3245,102 @@ app.get('/api/voice-recordings/:id/audio', async (req, res) => {
     }
 
     // Fallback: If not in SQLite audio blob, check if there is a driveFileId
+    const cleanId = id.replace(/^drive_/, '');
+    let driveFileId = (req.query.driveFileId as string) || null;
+    if (!driveFileId && id.startsWith('drive_')) {
+      driveFileId = cleanId;
+    }
+
     const recordings = getVoiceRecordingsFromSqlite();
-    const rec = recordings.find((r) => r.id === id);
-    if (rec?.driveFileId) {
+    const rec = recordings.find(
+      (r) => r.id === id || r.id === cleanId || r.driveFileId === cleanId || r.driveFileId === id
+    );
+    if (!driveFileId && rec?.driveFileId) {
+      driveFileId = rec.driveFileId;
+    }
+
+    if (driveFileId) {
       const accessToken =
         (req.query.accessToken as string) ||
-        (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+        (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null) ||
+        process.env.GOOGLE_ACCESS_TOKEN ||
+        process.env.GOOGLE_DRIVE_ACCESS_TOKEN ||
+        null;
 
       if (accessToken) {
-        const driveRes = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${rec.driveFileId}?alt=media`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (driveRes.ok) {
-          const arrayBuffer = await driveRes.arrayBuffer();
-          const buf = Buffer.from(arrayBuffer);
-          res.setHeader('Content-Type', rec.audioMimeType || 'audio/webm');
-          res.setHeader('Content-Length', buf.length);
-          res.setHeader('Accept-Ranges', 'bytes');
-          return res.end(buf);
+        try {
+          const driveRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (driveRes.ok) {
+            const arrayBuffer = await driveRes.arrayBuffer();
+            const buf = Buffer.from(arrayBuffer);
+            const mimeType = driveRes.headers.get('content-type') || rec?.audioMimeType || 'audio/webm';
+
+            // Auto-cache to SQLite in background for instant subsequent playback
+            try {
+              saveVoiceRecordingToSqlite({
+                id: rec?.id || id,
+                title: rec?.title || 'Voice Memo',
+                durationSeconds: rec?.durationSeconds || 60,
+                audioContentBase64: buf.toString('base64'),
+                audioMimeType: mimeType,
+                driveFileId: driveFileId,
+                userEmail: rec?.userEmail || (req.query.userEmail as string) || 'chinna.tamil2000@gmail.com',
+              });
+            } catch (cacheErr) {
+              console.warn('[VoiceAudio] Auto-cache to SQLite notice:', cacheErr);
+            }
+
+            const totalSize = buf.length;
+            const range = req.headers.range;
+            if (range) {
+              const parts = range.replace(/bytes=/, '').split('-');
+              const start = parseInt(parts[0], 10);
+              const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+
+              if (start < totalSize && end < totalSize) {
+                const chunk = buf.subarray(start, end + 1);
+                res.writeHead(206, {
+                  'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+                  'Accept-Ranges': 'bytes',
+                  'Content-Length': chunk.length,
+                  'Content-Type': mimeType,
+                  'Cache-Control': 'public, max-age=86400',
+                });
+                return res.end(chunk);
+              }
+            }
+
+            res.writeHead(200, {
+              'Content-Length': totalSize,
+              'Content-Type': mimeType,
+              'Accept-Ranges': 'bytes',
+              'Cache-Control': 'public, max-age=86400',
+            });
+            return res.end(buf);
+          }
+        } catch (fetchErr) {
+          console.warn('[VoiceAudio] Drive stream fetch error:', fetchErr);
         }
       }
+
+      // Public direct download stream fallback
+      try {
+        const publicRes = await fetch(`https://drive.google.com/uc?export=download&id=${driveFileId}`);
+        if (publicRes.ok) {
+          const ct = publicRes.headers.get('content-type') || '';
+          if (ct.includes('audio') || ct.includes('octet-stream')) {
+            const arrayBuffer = await publicRes.arrayBuffer();
+            const buf = Buffer.from(arrayBuffer);
+            res.setHeader('Content-Type', rec?.audioMimeType || 'audio/webm');
+            res.setHeader('Content-Length', buf.length);
+            res.setHeader('Accept-Ranges', 'bytes');
+            return res.end(buf);
+          }
+        }
+      } catch {}
     }
 
     return res.status(404).json({ error: 'Audio content not found' });
@@ -3332,7 +3407,7 @@ Return a clean JSON object with:
   "actionItems": ["Action item 1 if any"]
 }`;
 
-    const candidateModels = ['gemini-3.5-transcribe', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.1-flash-lite'];
+    const candidateModels = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-3.8-flash', 'gemini-3.7-flash'];
     let resultJson: any = null;
     let modelUsed = candidateModels[0];
 
