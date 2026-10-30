@@ -3728,6 +3728,63 @@ app.post('/api/tts/memos/:id/favorite', (req, res) => {
   }
 });
 
+// Universal Audio Transcription endpoint using Gemini AI Speech-To-Text
+app.post('/api/ai/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType = 'audio/webm', language = 'en' } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Missing audioBase64 in request' });
+    }
+
+    const client = refreshAiClient();
+    if (!client) {
+      return res.status(500).json({ error: 'Gemini API not configured' });
+    }
+
+    const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
+    const candidateModels = [
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.5-flash',
+      'gemini-2.5-flash',
+    ];
+
+    let transcribedText = '';
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: cleanBase64,
+                },
+              },
+              {
+                text: `Transcribe this spoken audio accurately word-for-word in its original spoken language (${language}). Return ONLY the plain transcribed text without markdown quotes, commentary, or punctuation labels.`,
+              },
+            ],
+          },
+        });
+        transcribedText = response.text?.trim() || '';
+        if (transcribedText) break;
+      } catch (err: any) {
+        console.warn(`[Transcribe] Model ${model} failed, trying next:`, err.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      text: transcribedText,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/ai/transcribe:', err);
+    res.status(500).json({ error: err.message || 'Transcription failed' });
+  }
+});
+
 // =========================================================================
 // REAL-TIME LANGUAGE TRANSLATOR ENDPOINTS
 // =========================================================================

@@ -39,6 +39,7 @@ import {
   shareTranslation,
   DRIVE_FOLDER_NAME,
 } from '../../services/translationService';
+import { transcribeAudioApi } from '../../services/api';
 
 export const RealtimeTranslatorTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
@@ -61,8 +62,12 @@ export const RealtimeTranslatorTab: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
-  // Speech Recognition Ref
+  // Speech Recognition & MediaRecorder Fallback Refs
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const latestVoiceTextRef = useRef<string>('');
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Toast
@@ -72,84 +77,252 @@ export const RealtimeTranslatorTab: React.FC = () => {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Load saved translations
+  // Helper to convert audio blob to base64 for fallback transcription
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  // Clean up any active microphone/speech recognition on unmount
   useEffect(() => {
-    let isMounted = true;
-    const load = async () => {
-      setIsLoadingHistory(true);
-      try {
-        const list = await fetchTranslations(googleAccessToken, user?.email);
-        if (isMounted) setTranslations(list);
-      } catch (err) {
-        console.warn('Error fetching translations:', err);
-      } finally {
-        if (isMounted) setIsLoadingHistory(false);
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch {}
+      }
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
-    void load();
-    return () => {
-      isMounted = false;
-    };
-  }, [googleAccessToken, user?.email]);
+  }, []);
 
-  // Setup Speech Recognition
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = false;
-        recognition.interimResults = true;
+  // Stop active speech recognition or media recording
+  const stopListening = () => {
+    setIsListening(false);
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {}
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
+    }
+  };
 
+  // MediaRecorder + Gemini Speech Transcription Fallback (when Web Speech API is blocked or unavailable)
+  const startMediaRecorderFallback = async (stream: MediaStream) => {
+    try {
+      micStreamRef.current = stream;
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstart = () => {
+        setIsListening(true);
         const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === sourceLang);
-        recognition.lang = currentLangObj?.speechCode || 'en-US';
+        showToast(`🎙️ Recording voice in ${currentLangObj?.name || 'English'}... Speak now!`);
+      };
 
-        recognition.onresult = (event: any) => {
-          let transcript = '';
-          for (let i = event.resultIndex; i < event.results.length; ++i) {
-            transcript += event.results[i][0].transcript;
+      recorder.onstop = async () => {
+        setIsListening(false);
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((t) => t.stop());
+          micStreamRef.current = null;
+        }
+
+        if (audioChunksRef.current.length === 0) return;
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        audioChunksRef.current = [];
+
+        if (blob.size < 1000) return;
+
+        showToast('✨ Transcribing voice with Gemini AI...');
+        try {
+          const base64 = await blobToBase64(blob);
+          const result = await transcribeAudioApi(base64, blob.type);
+          if (result && result.text && result.text.trim()) {
+            const cleanText = result.text.trim();
+            latestVoiceTextRef.current = cleanText;
+            setSourceText(cleanText);
+            void handleTranslate(cleanText);
+          } else {
+            showToast('No speech was detected. Please try again.');
           }
-          if (transcript) {
-            setSourceText(transcript);
-          }
+        } catch (err: any) {
+          console.warn('Fallback transcription failed:', err);
+          showToast(`Voice transcription failed: ${err.message || 'Please try again'}`);
+        }
+      };
+
+      recorder.start();
+    } catch (err: any) {
+      console.warn('MediaRecorder fallback init failed:', err);
+      setIsListening(false);
+      showToast('Could not record voice input.');
+    }
+  };
+
+  // Toggle Live Voice Input
+  const handleToggleListening = async () => {
+    if (isListening) {
+      stopListening();
+      // If we already have accumulated live text from this session, translate it now
+      if (latestVoiceTextRef.current.trim().length > 1) {
+        void handleTranslate(latestVoiceTextRef.current.trim());
+      }
+      return;
+    }
+
+    const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === sourceLang);
+    const speechCode = currentLangObj?.speechCode || 'en-US';
+
+    // 1. Request microphone permission explicitly
+    let stream: MediaStream | null = null;
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (permErr: any) {
+        console.warn('Microphone permission request failed:', permErr);
+        showToast('⚠️ Microphone permission required. Please allow microphone in browser settings.');
+        setIsListening(false);
+        return;
+      }
+    }
+
+    // 2. Check for Web Speech API (SpeechRecognition / webkitSpeechRecognition)
+    const SpeechRecognitionClass =
+      typeof window !== 'undefined'
+        ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+        : null;
+
+    if (SpeechRecognitionClass) {
+      // Release temporary permission stream so SpeechRecognition has full audio focus
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+
+      // Stop previous instance if still running
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.abort();
+        } catch {}
+      }
+
+      try {
+        const recognition = new SpeechRecognitionClass();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+        recognition.lang = speechCode;
+
+        latestVoiceTextRef.current = '';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          showToast(`🎙️ Listening in ${currentLangObj?.name || 'English'}... Speak now!`);
         };
 
-        recognition.onend = () => {
-          setIsListening(false);
+        // Real-Time Streaming Speech Output directly into the input textarea
+        recognition.onresult = (event: any) => {
+          let finalTranscript = '';
+          let interimTranscript = '';
+
+          for (let i = 0; i < event.results.length; ++i) {
+            const chunk = event.results[i][0]?.transcript || '';
+            if (event.results[i].isFinal) {
+              finalTranscript += chunk + ' ';
+            } else {
+              interimTranscript += chunk;
+            }
+          }
+
+          const combined = (finalTranscript + interimTranscript).trim();
+          if (combined) {
+            latestVoiceTextRef.current = combined;
+            setSourceText(combined); // <-- Live words immediately display in text box
+          }
         };
 
         recognition.onerror = (err: any) => {
           console.warn('Speech recognition error:', err);
+          if (err.error === 'no-speech' || err.error === 'aborted') {
+            return;
+          }
+
+          if (err.error === 'not-allowed' || err.error === 'service-not-allowed') {
+            // Attempt MediaRecorder + Gemini Transcribe fallback
+            if (navigator.mediaDevices?.getUserMedia) {
+              navigator.mediaDevices
+                .getUserMedia({ audio: true })
+                .then((newStream) => startMediaRecorderFallback(newStream))
+                .catch(() => {
+                  setIsListening(false);
+                  showToast('Microphone access denied in browser.');
+                });
+              return;
+            }
+          }
+
           setIsListening(false);
         };
 
+        recognition.onend = () => {
+          setIsListening(false);
+          // Auto-trigger translation if new text was spoken
+          if (latestVoiceTextRef.current.trim().length > 1) {
+            void handleTranslate(latestVoiceTextRef.current.trim());
+          }
+        };
+
         recognitionRef.current = recognition;
+        recognition.start();
+      } catch (startErr: any) {
+        console.warn('SpeechRecognition start failed, switching to MediaRecorder fallback:', startErr);
+        if (stream) {
+          void startMediaRecorderFallback(stream);
+        } else if (navigator.mediaDevices?.getUserMedia) {
+          navigator.mediaDevices
+            .getUserMedia({ audio: true })
+            .then((newStream) => startMediaRecorderFallback(newStream))
+            .catch(() => setIsListening(false));
+        }
       }
-    }
-  }, [sourceLang]);
-
-  // Toggle Voice Input
-  const handleToggleListening = () => {
-    if (!recognitionRef.current) {
-      showToast('Speech recognition not supported in this browser.');
-      return;
-    }
-
-    if (isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
+    } else if (stream) {
+      // Browser does not support Web Speech API (e.g. Firefox, Safari iOS) -> MediaRecorder fallback
+      void startMediaRecorderFallback(stream);
     } else {
-      try {
-        const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === sourceLang);
-        recognitionRef.current.lang = currentLangObj?.speechCode || 'en-US';
-        recognitionRef.current.start();
-        setIsListening(true);
-        showToast(`🎙️ Listening in ${currentLangObj?.name || 'English'}... Speak now!`);
-      } catch (err) {
-        console.warn('Speech recognition start failed:', err);
-        setIsListening(false);
-      }
+      showToast('Speech recognition not supported in this browser.');
+      setIsListening(false);
     }
   };
 
@@ -498,12 +671,33 @@ export const RealtimeTranslatorTab: React.FC = () => {
               </div>
             </div>
 
+            {isListening && (
+              <div className="flex items-center justify-between px-3 py-1.5 mb-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs font-semibold animate-pulse">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                  </span>
+                  <span>🎙️ Listening in {sourceLangObj?.name} ({sourceLangObj?.nativeName})... Speak now</span>
+                </div>
+                <span className="text-[10px] text-rose-400/80 font-mono">Live audio</span>
+              </div>
+            )}
+
             <textarea
               value={sourceText}
               onChange={handleSourceChange}
               rows={5}
-              placeholder={`Type or speak anything in ${sourceLangObj?.name || 'English'}...`}
-              className="w-full p-3 text-sm bg-slate-950/70 border border-slate-800/80 rounded-2xl text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 resize-none leading-relaxed"
+              placeholder={
+                isListening
+                  ? `Listening... speak now in ${sourceLangObj?.name || 'English'}`
+                  : `Type or speak anything in ${sourceLangObj?.name || 'English'}...`
+              }
+              className={`w-full p-3 text-sm bg-slate-950/70 border rounded-2xl text-white placeholder-slate-500 focus:outline-none resize-none leading-relaxed transition-all ${
+                isListening
+                  ? 'border-rose-500/80 ring-2 ring-rose-500/20 shadow-lg shadow-rose-500/10'
+                  : 'border-slate-800/80 focus:border-cyan-500'
+              }`}
             />
           </div>
 
