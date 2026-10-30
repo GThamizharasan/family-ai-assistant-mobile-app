@@ -493,6 +493,46 @@ export async function initSqliteDb(): Promise<Database> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS tts_memos (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      text_prompt TEXT NOT NULL,
+      voice_type TEXT NOT NULL,
+      voice_name TEXT NOT NULL,
+      audio_url TEXT,
+      audio_content_base64 TEXT,
+      audio_mime_type TEXT DEFAULT 'audio/wav',
+      duration_seconds REAL DEFAULT 0,
+      file_size_bytes INTEGER DEFAULT 0,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Text to Speech Memos',
+      is_favorite INTEGER DEFAULT 0,
+      play_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS language_translations (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      source_text TEXT NOT NULL,
+      translated_text TEXT NOT NULL,
+      source_lang TEXT NOT NULL,
+      target_lang TEXT NOT NULL,
+      phonetics TEXT,
+      audio_content_base64 TEXT,
+      audio_mime_type TEXT DEFAULT 'audio/wav',
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Language Translations',
+      notes TEXT,
+      is_favorite INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
@@ -2833,6 +2873,347 @@ export function updateVoiceRecordingTranscriptionInSqlite(
 }
 
 // -------------------------------------------------------------
+// TEXT-TO-SPEECH (TTS) MEMOS & PLAYLIST
+// -------------------------------------------------------------
+export interface TtsMemoRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  textPrompt: string;
+  voiceType: 'male' | 'female' | 'child';
+  voiceName: string;
+  audioUrl?: string;
+  audioContentBase64?: string;
+  audioMimeType: string;
+  durationSeconds: number;
+  fileSizeBytes: number;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  isFavorite: boolean;
+  playCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveTtsMemoToSqlite(memo: Partial<TtsMemoRecord> & {
+  title: string;
+  textPrompt: string;
+  voiceType: 'male' | 'female' | 'child';
+}): TtsMemoRecord {
+  if (!db) throw new Error('Database not initialized');
+
+  const id = memo.id || `tts_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const userEmail = (memo.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const title = memo.title.trim();
+  const textPrompt = memo.textPrompt.trim();
+  const voiceType = memo.voiceType || 'male';
+  const voiceName = memo.voiceName || (voiceType === 'male' ? 'Fenrir' : voiceType === 'female' ? 'Kore' : 'Puck');
+  const audioUrl = memo.audioUrl || `/api/tts/memos/${id}/audio`;
+  const audioContentBase64 = memo.audioContentBase64 || null;
+  const audioMimeType = memo.audioMimeType || 'audio/wav';
+  const durationSeconds = Number(memo.durationSeconds || 0);
+  const fileSizeBytes = Number(memo.fileSizeBytes || (audioContentBase64 ? Math.round((audioContentBase64.length * 3) / 4) : 0));
+  const driveFileId = memo.driveFileId || null;
+  const driveWebViewLink = memo.driveWebViewLink || null;
+  const driveFolderPath = memo.driveFolderPath || 'Family Circle/Text to Speech Memos';
+  const isFavorite = memo.isFavorite ? 1 : 0;
+  const playCount = Number(memo.playCount || 0);
+  const createdAt = memo.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+
+  db.run(`
+    INSERT OR REPLACE INTO tts_memos (
+      id, user_email, title, text_prompt, voice_type, voice_name,
+      audio_url, audio_content_base64, audio_mime_type,
+      duration_seconds, file_size_bytes, drive_file_id, drive_web_view_link,
+      drive_folder_path, is_favorite, play_count, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id, userEmail, title, textPrompt, voiceType, voiceName,
+    audioUrl, audioContentBase64, audioMimeType,
+    durationSeconds, fileSizeBytes, driveFileId, driveWebViewLink,
+    driveFolderPath, isFavorite, playCount, createdAt, updatedAt
+  ]);
+
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    title,
+    textPrompt,
+    voiceType,
+    voiceName,
+    audioUrl,
+    audioMimeType,
+    durationSeconds,
+    fileSizeBytes,
+    driveFileId: driveFileId || undefined,
+    driveWebViewLink: driveWebViewLink || undefined,
+    driveFolderPath,
+    isFavorite: isFavorite === 1,
+    playCount,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function getTtsMemosFromSqlite(userEmail?: string): TtsMemoRecord[] {
+  if (!db) return [];
+  try {
+    let query = 'SELECT id, user_email, title, text_prompt, voice_type, voice_name, audio_url, audio_mime_type, duration_seconds, file_size_bytes, drive_file_id, drive_web_view_link, drive_folder_path, is_favorite, play_count, created_at, updated_at FROM tts_memos';
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: TtsMemoRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        textPrompt: String(row.text_prompt),
+        voiceType: row.voice_type as 'male' | 'female' | 'child',
+        voiceName: String(row.voice_name),
+        audioUrl: row.audio_url ? String(row.audio_url) : `/api/tts/memos/${row.id}/audio`,
+        audioMimeType: String(row.audio_mime_type || 'audio/wav'),
+        durationSeconds: Number(row.duration_seconds || 0),
+        fileSizeBytes: Number(row.file_size_bytes || 0),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Text to Speech Memos'),
+        isFavorite: Number(row.is_favorite) === 1,
+        playCount: Number(row.play_count || 0),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Failed to query tts_memos from SQLite:', err);
+    return [];
+  }
+}
+
+export function getTtsMemoAudioContentFromSqlite(id: string): { audioContentBase64: string; audioMimeType: string } | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare('SELECT audio_content_base64, audio_mime_type FROM tts_memos WHERE id = ?');
+    stmt.bind([id]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      stmt.free();
+      if (row.audio_content_base64) {
+        return {
+          audioContentBase64: String(row.audio_content_base64),
+          audioMimeType: String(row.audio_mime_type || 'audio/wav'),
+        };
+      }
+    } else {
+      stmt.free();
+    }
+    return null;
+  } catch (err) {
+    console.warn('Failed to retrieve TTS memo audio content:', err);
+    return null;
+  }
+}
+
+export function deleteTtsMemoFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  try {
+    if (userEmail && userEmail.trim()) {
+      db.run('DELETE FROM tts_memos WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+    } else {
+      db.run('DELETE FROM tts_memos WHERE id = ?', [id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to delete TTS memo from SQLite:', err);
+    return false;
+  }
+}
+
+export function toggleTtsMemoFavoriteInSqlite(id: string, isFavorite?: boolean): boolean {
+  if (!db) return false;
+  try {
+    if (typeof isFavorite === 'boolean') {
+      db.run('UPDATE tts_memos SET is_favorite = ?, updated_at = ? WHERE id = ?', [isFavorite ? 1 : 0, new Date().toISOString(), id]);
+    } else {
+      db.run('UPDATE tts_memos SET is_favorite = (CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END), updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to toggle TTS memo favorite in SQLite:', err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
+// REAL-TIME LANGUAGE TRANSLATIONS
+// -------------------------------------------------------------
+export interface LanguageTranslationRecord {
+  id: string;
+  userEmail: string;
+  sourceText: string;
+  translatedText: string;
+  sourceLang: string;
+  targetLang: string;
+  phonetics?: string;
+  audioContentBase64?: string;
+  audioMimeType?: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  notes?: string;
+  isFavorite: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveTranslationToSqlite(t: Partial<LanguageTranslationRecord> & {
+  sourceText: string;
+  translatedText: string;
+  sourceLang: string;
+  targetLang: string;
+}): LanguageTranslationRecord {
+  if (!db) throw new Error('Database not initialized');
+
+  const id = t.id || `trans_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const userEmail = (t.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const sourceText = t.sourceText.trim();
+  const translatedText = t.translatedText.trim();
+  const sourceLang = t.sourceLang || 'en';
+  const targetLang = t.targetLang || 'ta';
+  const phonetics = t.phonetics || null;
+  const audioContentBase64 = t.audioContentBase64 || null;
+  const audioMimeType = t.audioMimeType || 'audio/wav';
+  const driveFileId = t.driveFileId || null;
+  const driveWebViewLink = t.driveWebViewLink || null;
+  const driveFolderPath = t.driveFolderPath || 'Family Circle/Language Translations';
+  const notes = t.notes || null;
+  const isFavorite = t.isFavorite ? 1 : 0;
+  const createdAt = t.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+
+  db.run(`
+    INSERT OR REPLACE INTO language_translations (
+      id, user_email, source_text, translated_text, source_lang, target_lang,
+      phonetics, audio_content_base64, audio_mime_type, drive_file_id, drive_web_view_link,
+      drive_folder_path, notes, is_favorite, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id, userEmail, sourceText, translatedText, sourceLang, targetLang,
+    phonetics, audioContentBase64, audioMimeType, driveFileId, driveWebViewLink,
+    driveFolderPath, notes, isFavorite, createdAt, updatedAt
+  ]);
+
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    sourceText,
+    translatedText,
+    sourceLang,
+    targetLang,
+    phonetics: phonetics || undefined,
+    audioMimeType,
+    driveFileId: driveFileId || undefined,
+    driveWebViewLink: driveWebViewLink || undefined,
+    driveFolderPath,
+    notes: notes || undefined,
+    isFavorite: isFavorite === 1,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function getTranslationsFromSqlite(userEmail?: string): LanguageTranslationRecord[] {
+  if (!db) return [];
+  try {
+    let query = 'SELECT id, user_email, source_text, translated_text, source_lang, target_lang, phonetics, audio_mime_type, drive_file_id, drive_web_view_link, drive_folder_path, notes, is_favorite, created_at, updated_at FROM language_translations';
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: LanguageTranslationRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        sourceText: String(row.source_text),
+        translatedText: String(row.translated_text),
+        sourceLang: String(row.source_lang),
+        targetLang: String(row.target_lang),
+        phonetics: row.phonetics ? String(row.phonetics) : undefined,
+        audioMimeType: String(row.audio_mime_type || 'audio/wav'),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Language Translations'),
+        notes: row.notes ? String(row.notes) : undefined,
+        isFavorite: Number(row.is_favorite) === 1,
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Failed to query language_translations from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteTranslationFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  try {
+    if (userEmail && userEmail.trim()) {
+      db.run('DELETE FROM language_translations WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+    } else {
+      db.run('DELETE FROM language_translations WHERE id = ?', [id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to delete translation from SQLite:', err);
+    return false;
+  }
+}
+
+export function toggleTranslationFavoriteInSqlite(id: string, isFavorite?: boolean): boolean {
+  if (!db) return false;
+  try {
+    if (typeof isFavorite === 'boolean') {
+      db.run('UPDATE language_translations SET is_favorite = ?, updated_at = ? WHERE id = ?', [isFavorite ? 1 : 0, new Date().toISOString(), id]);
+    } else {
+      db.run('UPDATE language_translations SET is_favorite = (CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END), updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to toggle translation favorite in SQLite:', err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
 export function getSqliteDbStats() {
@@ -2870,6 +3251,8 @@ export function getSqliteDbStats() {
     'ai_studio_creations',
     'musical_library_tracks',
     'voice_recordings',
+    'tts_memos',
+    'language_translations',
   ];
 
   const tableCounts: Record<string, number> = {};

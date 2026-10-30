@@ -30,6 +30,8 @@ import {
   Music,
   Clock,
   Eye,
+  Languages,
+  Volume2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -38,6 +40,8 @@ export type TabKey =
   | 'ibooks'
   | 'music'
   | 'memos'
+  | 'tts'
+  | 'translate'
   | 'clock'
   | 'ai-studio'
   | 'phone'
@@ -88,6 +92,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
     { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music },
     { key: 'memos', label: 'Voice Memos', category: 'Intelligence', icon: Mic },
+    { key: 'tts', label: 'Text to Speech', category: 'Intelligence', icon: Volume2 },
+    { key: 'translate', label: 'Translator', category: 'Intelligence', icon: Languages },
     { key: 'clock', label: 'Clock & Alarm', category: 'Core', icon: Clock },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
@@ -112,6 +118,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen },
     { key: 'music', label: 'Music', category: 'Intelligence', icon: Music },
     { key: 'memos', label: 'Memos', category: 'Intelligence', icon: Mic },
+    { key: 'tts', label: 'TTS', category: 'Intelligence', icon: Volume2 },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
     { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
     { key: 'phone', label: 'Phone', category: 'Core', icon: Phone },
@@ -120,6 +127,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ currentTab, onSelectTab, o
 
   // Important features on the RIGHT of the Active Realtime Voice Assistant
   const rightTabs: TabItem[] = [
+    { key: 'translate', label: 'Translate', category: 'Intelligence', icon: Languages },
     { key: 'clock', label: 'Clock', category: 'Core', icon: Clock },
     { key: 'finance', label: 'Wealth', category: 'Wealth', icon: Wallet },
     { key: 'billionaire', label: 'Blueprint', category: 'Wealth', icon: TrendingUp },

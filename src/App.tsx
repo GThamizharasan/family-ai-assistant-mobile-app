@@ -30,6 +30,8 @@ import { AiStudioTab } from './components/tabs/AiStudioTab';
 import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
 import { MusicLibraryTab } from './components/tabs/MusicLibraryTab';
 import { VoiceMemosTab } from './components/tabs/VoiceMemosTab';
+import { TextToSpeechTab } from './components/tabs/TextToSpeechTab';
+import { RealtimeTranslatorTab } from './components/tabs/RealtimeTranslatorTab';
 import { ClockTab } from './components/tabs/ClockTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
@@ -168,6 +170,10 @@ const AppContent: React.FC = () => {
         return <MusicLibraryTab onOpenPlayer={() => setIsMusicPlayerOpen(true)} />;
       case 'memos':
         return <VoiceMemosTab />;
+      case 'tts':
+        return <TextToSpeechTab />;
+      case 'translate':
+        return <RealtimeTranslatorTab />;
       case 'clock':
         return <ClockTab />;
       case 'ai-studio':
