@@ -196,29 +196,87 @@ export interface GoogleDriveFileRecord {
 
 let db: Database | null = null;
 let saveDebounceTimer: NodeJS.Timeout | null = null;
+let isSaving = false;
+let savePending = false;
+let retryAttempts = 0;
+const MAX_RETRY_ATTEMPTS = 5;
 
 // Ensure disk storage directory exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-// Persist SQLite database to disk
+// Persist SQLite database to disk with atomic write, mutex protection, and file lock retry
 export function saveSqliteToDisk() {
   if (!db) return;
+
+  if (isSaving) {
+    savePending = true;
+    return;
+  }
+
+  isSaving = true;
+  const tempPath = `${DB_PATH}.tmp.${process.pid}.${Date.now()}`;
+
   try {
     const data = db.export();
     const buffer = Buffer.from(data);
-    fs.writeFileSync(DB_PATH, buffer);
-  } catch (err) {
-    console.error('Failed to save SQLite database to disk:', err);
+
+    // Write to a temporary file first so we don't hold/clobber the locked primary file directly
+    fs.writeFileSync(tempPath, buffer);
+
+    // Atomically replace destination file
+    try {
+      // In Node.js on Windows, renameSync overwrites existing destination when possible
+      fs.renameSync(tempPath, DB_PATH);
+    } catch (renameErr) {
+      // Fallback: copyFileSync replaces destination, then remove temporary file
+      fs.copyFileSync(tempPath, DB_PATH);
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch {}
+    }
+
+    // Successfully saved
+    retryAttempts = 0;
+  } catch (err: any) {
+    // Clean up temporary file if lingering
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch {}
+
+    const isLockError =
+      err?.code === 'UNKNOWN' ||
+      err?.code === 'EBUSY' ||
+      err?.code === 'EPERM' ||
+      err?.code === 'EACCES' ||
+      err?.errno === -4094;
+
+    if (isLockError && retryAttempts < MAX_RETRY_ATTEMPTS) {
+      retryAttempts++;
+      const delay = Math.min(1000 * retryAttempts, 5000);
+      console.warn(`[SQLite] Disk save delayed (file locked by system/OneDrive). Retrying in ${delay}ms (attempt ${retryAttempts}/${MAX_RETRY_ATTEMPTS})...`);
+      if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = setTimeout(() => {
+        saveSqliteToDisk();
+      }, delay);
+    } else {
+      console.error('Failed to save SQLite database to disk:', err?.message || err);
+    }
+  } finally {
+    isSaving = false;
+    if (savePending) {
+      savePending = false;
+      scheduleSave(500);
+    }
   }
 }
 
-function scheduleSave() {
+function scheduleSave(delayMs = 1000) {
   if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
   saveDebounceTimer = setTimeout(() => {
     saveSqliteToDisk();
-  }, 200);
+  }, delayMs);
 }
 
 // Code normalization
