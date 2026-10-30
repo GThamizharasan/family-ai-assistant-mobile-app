@@ -4018,6 +4018,7 @@ Return a valid JSON object matching:
       'gemini-3.5-flash',
       'gemini-3.1-flash-lite',
       'gemini-4-argon',
+      'gemini-2.5-flash',
     ];
 
     let resultJson: any = null;
