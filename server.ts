@@ -3858,11 +3858,13 @@ app.post('/api/ai/transcribe', async (req, res) => {
 
     const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
     const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
+      'gemini-3.5-transcribe',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest',
       'gemini-3.8-flash',
       'gemini-3.7-flash',
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
     ];
 
@@ -3922,14 +3924,16 @@ app.post('/api/translate', async (req, res) => {
 
     const cleanInput = text.trim();
 
-    // 1. Try Gemini models cascade with gemini-2.5-flash, 1.5-flash, etc.
+    // 1. Try Gemini models cascade prioritized by available quota (Lite models have generous limits)
     const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-      'gemini-2.0-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-lite-latest',
       'gemini-3.8-flash',
       'gemini-3.7-flash',
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
+      'gemini-3.1-pro-preview',
     ];
 
     const prompt = `You are a world-class polyglot translator and cultural linguist.
@@ -3973,10 +3977,10 @@ Output JSON matching this exact structure:
             if (match) parsed = JSON.parse(match[0]);
           }
 
-          if (parsed && parsed.translatedText) {
+          if (parsed && parsed.translatedText && parsed.translatedText.trim()) {
             return res.json({
               success: true,
-              translatedText: parsed.translatedText,
+              translatedText: parsed.translatedText.trim(),
               phonetics: parsed.phonetics || '',
               detectedSourceLang: parsed.detectedSourceLang || sourceLang,
               targetLang: parsed.targetLang || targetLang,
@@ -3990,7 +3994,54 @@ Output JSON matching this exact structure:
       }
     }
 
-    // 2. Multilingual Dictionary Fallback for Everyday Family Phrases
+    // 2. High-Quality Neural Translation Gateway (Authentic word-for-word translation fallback)
+    try {
+      const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(
+        sourceLang
+      )}&tl=${encodeURIComponent(targetLang)}&dt=t&dt=rm&q=${encodeURIComponent(cleanInput)}`;
+      const gtxRes = await fetch(gtxUrl);
+      if (gtxRes.ok) {
+        const gtxData = await gtxRes.json();
+        let translatedText = '';
+        let phonetics = '';
+
+        if (Array.isArray(gtxData[0])) {
+          translatedText = gtxData[0]
+            .map((s: any) => s[0])
+            .filter(Boolean)
+            .join('')
+            .trim();
+
+          // Phonetic romanization usually returned in element with index 2 or 3
+          for (const item of gtxData[0]) {
+            if (item && Array.isArray(item)) {
+              if (item[2] && typeof item[2] === 'string' && item[2].trim()) {
+                phonetics = item[2].trim();
+                break;
+              }
+            } else if (item && typeof item === 'string' && item.trim()) {
+              phonetics = item.trim();
+            }
+          }
+        }
+
+        if (translatedText) {
+          return res.json({
+            success: true,
+            translatedText,
+            phonetics: phonetics || translatedText,
+            detectedSourceLang: sourceLang,
+            targetLang,
+            notes: 'High-speed neural translation gateway',
+            modelUsed: 'neural-gtx-engine',
+          });
+        }
+      }
+    } catch (gtxErr: any) {
+      console.warn('[Translate] Neural translation gateway fallback error:', gtxErr.message);
+    }
+
+    // 3. Multilingual Dictionary Fallback for Everyday Family Phrases
     const lower = cleanInput.toLowerCase();
     const dictionary: Record<string, Record<string, { trans: string; phonetics: string; note: string }>> = {
       ta: {
@@ -4007,41 +4058,9 @@ Output JSON matching this exact structure:
         'good morning': { trans: 'शुभ प्रभात! आपका दिन मंगलमय हो।', phonetics: 'Shubh Prabhat! Aapka din mangalmay ho.', note: 'Traditional Hindi morning greeting' },
         'how are you': { trans: 'आप कैसे हैं?', phonetics: 'Aap kaise hain?', note: 'Respectful greeting in Hindi' },
         'thank you': { trans: 'बहुत-बहुत धन्यवाद!', phonetics: 'Bahut-bahut dhanyavaad!', note: 'Expressing sincere gratitude' },
-        'dinner is ready': { trans: 'रात का खाना तैयार है, सब साथ में खाते हैं।', phonetics: 'Raat ka khana taiyaar hai, sab saath mein khaate hain.', note: 'Warm family dinner call' },
-      },
-      ml: {
-        'good morning': { trans: 'സുപ്രഭാതം! നിങ്ങളുടെ ദിവസം സന്തോഷകരമാകട്ടെ.', phonetics: 'Suprabhaatham! Ningalude divasam santhoshakaramaakatte.', note: 'Malayalam morning greeting' },
-        'how are you': { trans: 'സുഖമാണോ?', phonetics: 'Sukhamaano?', note: 'Classic Malayalam check-in' },
-        'thank you': { trans: 'വളരെ നന്ദി!', phonetics: 'Valare nandi!', note: 'Warm Malayalam gratitude' },
-      },
-      te: {
-        'good morning': { trans: 'శుభోదయం! మీ రోజు ఆనందంగా గడవాలని కోరుకుంటున్నాను.', phonetics: 'Shubhodayam! Mee roju aanandamgaa gadavaalani korukuntunnaanu.', note: 'Telugu morning greeting' },
-        'how are you': { trans: 'మీరు ఎలా ఉన్నారు?', phonetics: 'Meeru elaa unnaaru?', note: 'Polite Telugu inquiry' },
-        'thank you': { trans: 'చాలా ధన్యవాదాలు!', phonetics: 'Chaalaa dhanyavaadaalu!', note: 'Telugu gratitude' },
-      },
-      kn: {
-        'good morning': { trans: 'ಶುಭೋದಯ! ನಿಮ್ಮ ದಿನ ಶುಭಕರವಾಗಿರಲಿ.', phonetics: 'Shubhoday! Nimma dina shubhakaravaagirali.', note: 'Kannada morning greeting' },
-        'how are you': { trans: 'ನೀವು ಹೇಗಿದ್ದೀರಿ?', phonetics: 'Neevu hegiddiri?', note: 'Respectful Kannada check-in' },
-        'thank you': { trans: 'ತುಂಬಾ ಧನ್ಯವಾದಗಳು!', phonetics: 'Tumbaa dhanyavaadagalu!', note: 'Warm gratitude' },
-      },
-      zh: {
-        'good morning': { trans: '早上好！祝您今天拥有愉快美好的一天。', phonetics: 'Zǎoshang hǎo! Zhù nín jīntiān yǒngyǒu yúkuài měihǎo de yītiān.', note: 'Mandarin morning greeting' },
-        'how are you': { trans: '您好吗？', phonetics: 'Nín hǎo ma?', note: 'Polite inquiry in Mandarin' },
-        'thank you': { trans: '非常感谢！', phonetics: 'Fēicháng gǎnxiè!', note: 'Expressing sincere thanks' },
-      },
-      fr: {
-        'good morning': { trans: 'Bonjour ! Je vous souhaite une excellente et agréable journée.', phonetics: 'Bohn-zhoor! Zhuh voo sweht oon ex-seh-lahnt zhoor-nay.', note: 'French morning greeting' },
-        'how are you': { trans: 'Comment allez-vous ?', phonetics: 'Koh-mahn tah-lay voo?', note: 'Polite French inquiry' },
-        'thank you': { trans: 'Merci beaucoup !', phonetics: 'Mehr-see boh-koo!', note: 'Expressing gratitude' },
-      },
-      es: {
-        'good morning': { trans: '¡Buenos días! Que tengas un día maravilloso y bendecido.', phonetics: 'Bweh-nohs dee-ahs! Keh ten-gahs oon dee-ah mah-rah-vee-yoh-soh.', note: 'Spanish morning greeting' },
-        'how are you': { trans: '¿Cómo estás?', phonetics: 'Koh-moh ehs-tahs?', note: 'Friendly Spanish greeting' },
-        'thank you': { trans: '¡Muchas gracias!', phonetics: 'Moo-chahs grah-see-ahs!', note: 'Warm Spanish gratitude' },
       },
     };
 
-    // Check for dictionary match
     const langDict = dictionary[targetLang];
     if (langDict) {
       for (const [phraseKey, phraseData] of Object.entries(langDict)) {
@@ -4059,31 +4078,15 @@ Output JSON matching this exact structure:
       }
     }
 
-    // Default polite translation representation
-    const defaultGreetings: Record<string, { trans: string; phonetics: string }> = {
-      ta: { trans: `"${cleanInput}" என்பதற்கு தமிழ் மொழியாக்கம்: வணக்கம் மற்றும் அன்புடன் வாழ்த்துகள்.`, phonetics: 'Vanakkam mattrum anbudan vaazhthugal.' },
-      hi: { trans: `"${cleanInput}" का अनुवाद: नमस्ते और शुभकामनाएं।`, phonetics: 'Namaste aur shubhkaamnayein.' },
-      ml: { trans: `"${cleanInput}" എന്നതിൻ്റെ പരിഭാഷ: സ്നേഹത്തോടെ അഭിവാദ്യങ്ങൾ.`, phonetics: 'Snehathode abhivaadyangal.' },
-      te: { trans: `"${cleanInput}" కి అనువాదం: నమస్కారం మరియు హృదయపూర్వక శుభాకాంక్షలు.`, phonetics: 'Namaskaaram mariyu hrudayapoorvaka shubhaakaankshalu.' },
-      kn: { trans: `"${cleanInput}" ರ ಅನುವಾದ: ನಮಸ್ಕಾರ ಮತ್ತು ಪ್ರೀತಿಯ ಶುಭಾಶಯಗಳು.`, phonetics: 'Namaskaara mattu preetiya shubhaashayagalu.' },
-      zh: { trans: `"${cleanInput}" 的翻译：问候与最美好的祝愿。`, phonetics: 'Wènhòu yǔ zuì měihǎo de zhùyuàn.' },
-      fr: { trans: `Traduction : Salutations chaleureuses pour "${cleanInput}".`, phonetics: 'Sah-loo-tah-syohn shahr-ler-z.' },
-      es: { trans: `Traducción: Saludos cordiales para "${cleanInput}".`, phonetics: 'Sah-loo-dohs kohr-dyah-lehs.' },
-    };
-
-    const fallbackEntry = defaultGreetings[targetLang] || {
-      trans: `Translated (${targetLang.toUpperCase()}): ${cleanInput}`,
-      phonetics: cleanInput,
-    };
-
+    // 4. Safe fallback: never repeat canned greetings
     return res.json({
       success: true,
-      translatedText: fallbackEntry.trans,
-      phonetics: fallbackEntry.phonetics,
+      translatedText: cleanInput,
+      phonetics: cleanInput,
       detectedSourceLang: sourceLang,
       targetLang,
-      notes: 'Linguistic translation rendered successfully.',
-      modelUsed: 'auro-linguistic-lexicon',
+      notes: 'Direct text retained (translation service temporarily unavailable)',
+      modelUsed: 'offline-pass-through',
     });
   } catch (err: any) {
     console.error('Error in /api/translate:', err);

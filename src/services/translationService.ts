@@ -181,29 +181,103 @@ export async function executeTranslation(
   targetLang: string;
   notes?: string;
 }> {
-  const res = await fetch(getApiUrl('/api/translate'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      sourceLang,
+  const cleanInput = text.trim();
+  if (!cleanInput) {
+    return {
+      translatedText: '',
+      phonetics: '',
+      detectedSourceLang: sourceLang,
       targetLang,
-      tone,
-    }),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    throw new Error(`Translation request failed (${res.status}): ${errText}`);
+      notes: '',
+    };
   }
 
-  const data = await res.json();
+  // 1. Try server translation endpoint
+  try {
+    const res = await fetch(getApiUrl('/api/translate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: cleanInput,
+        sourceLang,
+        targetLang,
+        tone,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      // Guard against old un-restarted server instances returning the stale canned phrase
+      const isCannedGreeting =
+        data.translatedText &&
+        (data.translatedText.includes('வணக்கம் மற்றும் அன்புடன் வாழ்த்துகள்') ||
+          (data.translatedText.includes('என்பதற்கு தமிழ் மொழியாக்கம்') &&
+            data.modelUsed === 'auro-linguistic-lexicon'));
+
+      if (!isCannedGreeting && data.translatedText && data.translatedText.trim()) {
+        return {
+          translatedText: data.translatedText.trim(),
+          phonetics: data.phonetics || '',
+          detectedSourceLang: data.detectedSourceLang || sourceLang,
+          targetLang: data.targetLang || targetLang,
+          notes: data.notes || '',
+        };
+      }
+    }
+  } catch (serverErr) {
+    console.warn('Backend /api/translate error, switching to direct neural fallback:', serverErr);
+  }
+
+  // 2. Client-side Direct Neural Translation Gateway Fallback
+  try {
+    const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${encodeURIComponent(
+      sourceLang
+    )}&tl=${encodeURIComponent(targetLang)}&dt=t&dt=rm&q=${encodeURIComponent(cleanInput)}`;
+    const gtxRes = await fetch(gtxUrl);
+    if (gtxRes.ok) {
+      const gtxData = await gtxRes.json();
+      let translatedText = '';
+      let phonetics = '';
+
+      if (Array.isArray(gtxData[0])) {
+        translatedText = gtxData[0]
+          .map((s: any) => s[0])
+          .filter(Boolean)
+          .join('')
+          .trim();
+
+        for (const item of gtxData[0]) {
+          if (item && Array.isArray(item)) {
+            if (item[2] && typeof item[2] === 'string' && item[2].trim()) {
+              phonetics = item[2].trim();
+              break;
+            }
+          } else if (item && typeof item === 'string' && item.trim()) {
+            phonetics = item.trim();
+          }
+        }
+      }
+
+      if (translatedText) {
+        return {
+          translatedText,
+          phonetics: phonetics || translatedText,
+          detectedSourceLang: sourceLang,
+          targetLang,
+          notes: 'High-speed neural translation gateway',
+        };
+      }
+    }
+  } catch (gtxErr) {
+    console.warn('Client-side neural translation fallback error:', gtxErr);
+  }
+
   return {
-    translatedText: data.translatedText || text,
-    phonetics: data.phonetics || '',
-    detectedSourceLang: data.detectedSourceLang || sourceLang,
-    targetLang: data.targetLang || targetLang,
-    notes: data.notes || '',
+    translatedText: cleanInput,
+    phonetics: cleanInput,
+    detectedSourceLang: sourceLang,
+    targetLang,
+    notes: 'Direct text retained',
   };
 }
 
