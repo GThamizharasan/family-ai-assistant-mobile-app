@@ -19,6 +19,7 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
+  ScanLine,
 } from 'lucide-react';
 import {
   fetchSqlite3GbQuota,
@@ -64,7 +65,8 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
           (q.breakdown?.music?.count || 0) +
           (q.breakdown?.memos?.count || 0) +
           (q.breakdown?.tts?.count || 0) +
-          (q.breakdown?.translations?.count || 0);
+          (q.breakdown?.translations?.count || 0) +
+          (q.breakdown?.scans?.count || 0);
         setQuotaRefreshNotice(`✓ Refreshed: ${q.totalUsedMb.toFixed(1)} MB used (${totalItems} cached items)`);
       } else {
         setQuotaRefreshNotice('Could not load statistics from SQLite.');
@@ -389,6 +391,26 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
                 </div>
                 <div className="text-[11px] font-mono text-slate-200 mt-1">
                   {(quota?.breakdown.driveFiles.mb ?? 0).toFixed(1)} MB
+                </div>
+              </div>
+
+              {/* Adobe Document Scanner */}
+              <div
+                onClick={() => onNavigateTab?.('scanner')}
+                className="p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800/90 cursor-pointer transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5 text-rose-500">
+                    <ScanLine className="w-3.5 h-3.5" />
+                    <span className="font-bold">Adobe Scans</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-slate-500 group-hover:text-rose-500 transition-colors" />
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {quota?.breakdown.scans?.count ?? 0} Scanned PDFs
+                </div>
+                <div className="text-[11px] font-mono text-slate-200 mt-1">
+                  {(quota?.breakdown.scans?.mb ?? 0).toFixed(1)} MB
                 </div>
               </div>
             </div>

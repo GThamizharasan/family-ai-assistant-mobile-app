@@ -36,6 +36,7 @@ export interface Sqlite3GbQuotaDetails {
     memos: StorageBreakdownItem;
     tts: StorageBreakdownItem;
     translations: StorageBreakdownItem;
+    scans?: StorageBreakdownItem;
     driveFiles: StorageBreakdownItem;
     aiCreations: StorageBreakdownItem;
     keepNotes: StorageBreakdownItem;
@@ -123,6 +124,15 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
       transCount = parsed.length;
     }
 
+    let scansCount = 0;
+    const localScans = typeof window !== 'undefined' ? localStorage.getItem('aura_adobe_scanned_docs_v1') : null;
+    if (localScans) {
+      try {
+        const parsed = JSON.parse(localScans);
+        scansCount = Array.isArray(parsed) ? parsed.length : 0;
+      } catch {}
+    }
+
     let driveCount = 0;
     const localDrive = typeof window !== 'undefined' ? localStorage.getItem('aura_google_drive_files_cache') : null;
     if (localDrive) {
@@ -137,9 +147,10 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
     const memosBytes = memosCount * 1.5 * 1024 * 1024;
     const ttsBytes = ttsCount * 0.8 * 1024 * 1024;
     const transBytes = transCount * 0.4 * 1024 * 1024;
+    const scansBytes = scansCount * 1.8 * 1024 * 1024;
     const driveBytes = driveCount * 2.0 * 1024 * 1024;
 
-    const totalBytes = musicBytes + booksBytes + memosBytes + ttsBytes + transBytes + driveBytes + 1024 * 1024;
+    const totalBytes = musicBytes + booksBytes + memosBytes + ttsBytes + transBytes + scansBytes + driveBytes + 1024 * 1024;
     const totalMb = Math.round((totalBytes / (1024 * 1024)) * 10) / 10;
     const quotaBytes = 3 * 1024 * 1024 * 1024;
     const freeBytes = Math.max(0, quotaBytes - totalBytes);
@@ -163,6 +174,7 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
         memos: { count: memosCount, bytes: memosBytes, mb: Math.round(memosBytes / (1024 * 1024)) },
         tts: { count: ttsCount, bytes: ttsBytes, mb: Math.round(ttsBytes / (1024 * 1024)) },
         translations: { count: transCount, bytes: transBytes, mb: Math.round(transBytes / (1024 * 1024)) },
+        scans: { count: scansCount, bytes: scansBytes, mb: Math.round(scansBytes / (1024 * 1024)) },
         driveFiles: { count: driveCount, bytes: driveBytes, mb: Math.round(driveBytes / (1024 * 1024)) },
         aiCreations: { count: 0, bytes: 0, mb: 0 },
         keepNotes: { count: 0, bytes: 0, mb: 0 },

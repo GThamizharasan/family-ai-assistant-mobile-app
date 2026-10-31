@@ -33,6 +33,7 @@ import {
   Languages,
   Volume2,
   Database,
+  ScanLine,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -42,6 +43,7 @@ export type TabKey =
   | 'music'
   | 'memos'
   | 'tts'
+  | 'scanner'
   | 'translate'
   | 'clock'
   | 'ai-studio'
@@ -98,6 +100,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // All Features categorized
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
+    { key: 'scanner', label: 'Adobe Scanner', category: 'Intelligence', icon: ScanLine, offlineReady: true },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen, offlineReady: true },
     { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music, offlineReady: true },
     { key: 'memos', label: 'Voice Memos', category: 'Intelligence', icon: Mic, offlineReady: true },
@@ -124,6 +127,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // Important features on the LEFT of the Active Realtime Voice Assistant
   const leftTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
+    { key: 'scanner', label: 'Adobe Scan', category: 'Intelligence', icon: ScanLine, offlineReady: true },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen, offlineReady: true },
     { key: 'music', label: 'Music', category: 'Intelligence', icon: Music, offlineReady: true },
     { key: 'memos', label: 'Memos', category: 'Intelligence', icon: Mic, offlineReady: true },
