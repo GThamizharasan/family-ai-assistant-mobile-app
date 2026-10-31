@@ -91,6 +91,7 @@ import {
   redeemFamilyCodeApi,
   type AssistantMemoryItem,
 } from '../services/api';
+import { isAppOffline } from '../services/offlineSyncService';
 import { INITIAL_GCP_BILLING_CONFIG } from '../services/gcpBillingService';
 import { syncRealtimeGcpDetails } from '../services/gcpLiveFetcher';
 import {
@@ -1178,7 +1179,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [user?.email]);
 
-  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [isOnline, setIsOnline] = useState<boolean>(() => !isAppOffline(typeof navigator !== 'undefined' ? navigator.onLine : true));
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline'>('synced');
   const [isMobileDeviceFrame, setIsMobileDeviceFrame] = useState<boolean>(false);
   const [isDemoTourActive, setIsDemoTourActive] = useState<boolean>(false);
@@ -1243,21 +1244,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => clearInterval(interval);
   }, [activeCall?.status]);
 
-  // Online / Offline listener
+  // Online / Offline listener (reacts to real network events & simulated offline toggle)
   useEffect(() => {
-    const handleOnline = () => {
-      setIsOnline(true);
-      setSyncStatus('synced');
+    const handleStatusChange = () => {
+      const online = !isAppOffline(typeof navigator !== 'undefined' ? navigator.onLine : true);
+      setIsOnline(online);
+      setSyncStatus(online ? 'synced' : 'offline');
     };
-    const handleOffline = () => {
-      setIsOnline(false);
-      setSyncStatus('offline');
-    };
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleStatusChange);
+    window.addEventListener('offline', handleStatusChange);
+    window.addEventListener('aura_offline_mode_changed', handleStatusChange);
+
+    handleStatusChange();
+
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleStatusChange);
+      window.removeEventListener('offline', handleStatusChange);
+      window.removeEventListener('aura_offline_mode_changed', handleStatusChange);
     };
   }, []);
 

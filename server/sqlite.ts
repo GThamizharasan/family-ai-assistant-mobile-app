@@ -1136,6 +1136,31 @@ export async function initSqliteDb(): Promise<Database> {
     console.warn('Seed musical tracks notice:', mErr);
   }
 
+  // Ensure all musical library tracks have offline audio available in SQLite
+  try {
+    const unpopulatedTracks = db.exec('SELECT id, genre FROM musical_library_tracks WHERE audio_content_base64 IS NULL OR length(audio_content_base64) < 50');
+    if (unpopulatedTracks.length && unpopulatedTracks[0].values.length) {
+      for (const row of unpopulatedTracks[0].values) {
+        const tId = row[0] as string;
+        const tGenre = (row[1] as string) || 'Ambient';
+        const wavBuf = generateHarmonicWavBuffer(tGenre, 30);
+        db.run(
+          `UPDATE musical_library_tracks
+           SET audio_content_base64 = ?,
+               audio_mime_type = 'audio/wav',
+               audio_url = '/api/music/library/' || id || '/audio',
+               updated_at = ?
+           WHERE id = ?`,
+          [wavBuf.toString('base64'), new Date().toISOString(), tId]
+        );
+      }
+      scheduleSave();
+      console.log(`[SQLite] Seeded harmonic offline audio into ${unpopulatedTracks[0].values.length} tracks.`);
+    }
+  } catch (popErr) {
+    console.warn('Populate track audio warning:', popErr);
+  }
+
   // Seed initial AI Studio Creations if empty
   try {
     const aicCheck = db.exec('SELECT COUNT(*) FROM ai_studio_creations');
@@ -2662,6 +2687,77 @@ export function saveMusicTrackToSqlite(track: Partial<MusicalTrackRecord> & {
     createdAt: track.createdAt || now,
     updatedAt: now,
   };
+}
+
+/**
+ * Synthesizes a valid, soothing harmonic PCM WAV audio buffer tailored to a music genre.
+ * Guaranteed 100% playable by any HTML5 audio player or native sound system offline.
+ */
+export function generateHarmonicWavBuffer(genre: string, durationSeconds = 30): Buffer {
+  const sampleRate = 22050;
+  const numChannels = 1;
+  const bytesPerSample = 2;
+  const numSamples = Math.floor(sampleRate * durationSeconds);
+  const dataSize = numSamples * numChannels * bytesPerSample;
+  const headerSize = 44;
+  const buffer = Buffer.alloc(headerSize + dataSize);
+
+  // RIFF header
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20); // PCM
+  buffer.writeUInt16LE(numChannels, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * numChannels * bytesPerSample, 28);
+  buffer.writeUInt16LE(numChannels * bytesPerSample, 32);
+  buffer.writeUInt16LE(16, 34); // 16-bit
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(dataSize, 40);
+
+  // Rich chord progressions by genre
+  const chordSets: Record<string, number[][]> = {
+    lullaby: [[261.63, 329.63, 392.0], [220.0, 261.63, 329.63], [174.61, 220.0, 261.63], [196.0, 246.94, 293.66]],
+    tamil: [[220.0, 277.18, 329.63], [246.94, 293.66, 369.99], [196.0, 246.94, 293.66], [220.0, 277.18, 329.63]],
+    cinematic: [[130.81, 164.81, 196.0], [110.0, 130.81, 164.81], [87.31, 110.0, 130.81], [98.0, 123.47, 146.83]],
+    ambient: [[261.63, 329.63, 392.0, 493.88], [220.0, 261.63, 329.63, 392.0], [174.61, 220.0, 261.63, 329.63], [196.0, 246.94, 293.66, 349.23]],
+    classical: [[261.63, 329.63, 392.0, 523.25], [174.61, 220.0, 261.63, 349.23], [196.0, 246.94, 293.66, 392.0], [261.63, 329.63, 392.0, 523.25]],
+  };
+
+  const g = (genre || '').toLowerCase();
+  const key = g.includes('lullaby') ? 'lullaby'
+    : g.includes('tamil') ? 'tamil'
+    : g.includes('cinematic') ? 'cinematic'
+    : g.includes('classical') ? 'classical'
+    : 'ambient';
+
+  const chords = chordSets[key] || chordSets.ambient;
+  const chordDuration = 3.75; // seconds per chord
+
+  for (let i = 0; i < numSamples; i++) {
+    const t = i / sampleRate;
+    const currentChordIndex = Math.floor(t / chordDuration) % chords.length;
+    const currentChord = chords[currentChordIndex];
+    const chordTime = t % chordDuration;
+    // Gentle envelope: smooth attack, sustained decay
+    const envelope = Math.min(1.0, chordTime / 0.25) * Math.max(0.08, 1.0 - (chordTime / chordDuration) * 0.7);
+
+    let sampleVal = 0;
+    for (let f = 0; f < currentChord.length; f++) {
+      const freq = currentChord[f];
+      const sine = Math.sin(2 * Math.PI * freq * t);
+      const overtone = Math.sin(2 * Math.PI * freq * 2 * t) * 0.25;
+      sampleVal += sine * 0.75 + overtone;
+    }
+    sampleVal = (sampleVal / currentChord.length) * envelope * 0.55;
+
+    const int16Val = Math.floor(Math.max(-1, Math.min(1, sampleVal)) * 32767);
+    buffer.writeInt16LE(int16Val, headerSize + i * bytesPerSample);
+  }
+
+  return buffer;
 }
 
 export function saveTrackAudioContentToSqlite(id: string, audioBase64: string, mimeType = 'audio/mpeg'): boolean {

@@ -3,6 +3,7 @@
 
 import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../types/music';
 import { getApiUrl } from './api';
+import { isAppOffline } from './offlineSyncService';
 
 export type AudioEngineListener = (state: AudioPlaybackState) => void;
 
@@ -16,6 +17,8 @@ class MusicAudioEngine {
   private eqTrebleNode: BiquadFilterNode | null = null;
   private synthGainNode: GainNode | null = null;
   private synthInterval: number | null = null;
+  private synthProgressInterval: number | null = null;
+  private synthActive: boolean = false;
   private sleepTimerId: number | null = null;
   private retryStage: number = 0;
   private queue: MusicTrack[] = [];
@@ -45,6 +48,11 @@ class MusicAudioEngine {
   }
 
   private resolvePlayableUrl(track: MusicTrack): string {
+    // 0. If direct audio binary content exists in track object, return instant data URI
+    if (track.audioContentBase64 && track.audioContentBase64.length > 20) {
+      return `data:${track.audioMimeType || 'audio/mpeg'};base64,${track.audioContentBase64}`;
+    }
+
     const token =
       (typeof localStorage !== 'undefined' &&
         (localStorage.getItem('aura_google_access_token') ||
@@ -61,6 +69,11 @@ class MusicAudioEngine {
         resolved += (resolved.includes('?') ? '&' : '?') + tokenParam;
       }
       return resolved;
+    }
+
+    // If offline (real or simulated), never return external CDN URLs that will fail
+    if (isAppOffline()) {
+      return getApiUrl(`/api/music/library/${track.id}/audio${tokenParam ? `?${tokenParam}` : ''}`);
     }
 
     // If it's a blob URL (which is invalid after refresh) or Google Drive link or empty
@@ -130,47 +143,16 @@ class MusicAudioEngine {
       const current = this.state.currentTrack;
       if (!current) return;
 
-      // Retry step 1: If current src wasn't the SQLite stream endpoint, switch to it
-      if (this.retryStage === 0 && this.audioEl) {
-        this.retryStage = 1;
-        const token =
-          (typeof localStorage !== 'undefined' &&
-            (localStorage.getItem('aura_google_access_token') ||
-              localStorage.getItem('google_access_token'))) ||
-          '';
-        const sqliteUrl = getApiUrl(
-          `/api/music/library/${current.id}/audio${token ? `?accessToken=${encodeURIComponent(token)}` : ''}`
-        );
-        if (this.audioEl.src !== sqliteUrl) {
-          try {
-            console.log('[MusicAudioEngine] Retrying playback with SQLite audio endpoint:', sqliteUrl);
-            this.audioEl.src = sqliteUrl;
-            await this.audioEl.play();
-            return;
-          } catch (rErr) {
-            console.warn('[MusicAudioEngine] SQLite audio stream retry failed:', rErr);
-          }
-        }
-      }
-
-      // Retry step 2: If external URL exists and failed CORS, try audio proxy
-      if (this.retryStage === 1 && current.audioUrl && current.audioUrl.startsWith('http') && this.audioEl) {
-        this.retryStage = 2;
+      // Clean up audio element so it stops spinning on dead URL
+      if (this.audioEl) {
         try {
-          const proxyUrl = getApiUrl(`/api/audio/proxy?url=${encodeURIComponent(current.audioUrl)}`);
-          console.log('[MusicAudioEngine] Retrying playback via audio proxy:', proxyUrl);
-          this.audioEl.src = proxyUrl;
-          await this.audioEl.play();
-          return;
-        } catch (pErr) {
-          console.warn('[MusicAudioEngine] Audio proxy retry failed:', pErr);
-        }
+          this.audioEl.removeAttribute('src');
+          this.audioEl.load();
+        } catch {}
       }
 
-      // Fallback: If remote URL fails or is blocked by CORS/offline, start synthesized harmonic music
-      if (this.state.isPlaying) {
-        this.startHarmonicSynthesizer(this.state.currentTrack?.genre || 'Ambient');
-      }
+      // Fallback: start synthesized harmonic music so audio experience is continuous
+      this.startHarmonicSynthesizer(current.genre || 'Ambient');
     });
   }
 
@@ -564,8 +546,8 @@ class MusicAudioEngine {
    * Returns current audio frequency data for dynamic waveform visualizations
    */
   public getVisualizerData(): Uint8Array {
-    if (!this.analyser) {
-      // Return simulated animated gentle wave if analyser not yet active
+    if (!this.analyser || this.synthActive) {
+      // Return simulated animated gentle wave if analyser not yet active or synthesizing
       const arr = new Uint8Array(64);
       if (this.state.isPlaying) {
         const t = Date.now() / 300;
@@ -591,6 +573,7 @@ class MusicAudioEngine {
     this.initAudioContext();
     if (!this.audioCtx) return;
 
+    this.synthActive = true;
     this.state.isPlaying = true;
     this.synthGainNode = this.audioCtx.createGain();
     this.synthGainNode.gain.setValueAtTime(this.state.isMuted ? 0 : this.state.volume * 0.2, this.audioCtx.currentTime);
@@ -611,11 +594,12 @@ class MusicAudioEngine {
 
     let chordIdx = 0;
     const playChord = () => {
-      if (!this.audioCtx || !this.synthGainNode) return;
+      if (!this.audioCtx || !this.synthGainNode || !this.synthActive) return;
       const notes = chordProgressions[chordIdx % chordProgressions.length];
       chordIdx++;
 
       notes.forEach((freq, idx) => {
+        if (!this.audioCtx || !this.synthGainNode) return;
         const osc = this.audioCtx!.createOscillator();
         const noteGain = this.audioCtx!.createGain();
 
@@ -638,21 +622,26 @@ class MusicAudioEngine {
     playChord();
     this.synthInterval = window.setInterval(playChord, 3500);
 
-    // Update simulated progress timer
-    const progressTimer = window.setInterval(() => {
-      if (this.state.isPlaying && !this.audioEl?.src) {
+    // Update simulated progress timer reliably every second
+    this.synthProgressInterval = window.setInterval(() => {
+      if (this.synthActive && this.state.isPlaying) {
         this.state.currentTime = (this.state.currentTime + 1) % (this.state.duration || 180);
         this.notify();
-      } else {
-        window.clearInterval(progressTimer);
       }
     }, 1000);
+
+    this.notify();
   }
 
   private stopSynthesizer() {
+    this.synthActive = false;
     if (this.synthInterval) {
       window.clearInterval(this.synthInterval);
       this.synthInterval = null;
+    }
+    if (this.synthProgressInterval) {
+      window.clearInterval(this.synthProgressInterval);
+      this.synthProgressInterval = null;
     }
     if (this.synthGainNode) {
       try {
