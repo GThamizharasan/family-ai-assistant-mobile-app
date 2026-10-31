@@ -21,6 +21,8 @@ import {
   ChevronDown,
   FileText,
   Copy,
+  Database,
+  DownloadCloud,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { TtsMemo, TtsVoiceType } from '../../types/tts';
@@ -37,11 +39,15 @@ import {
   uploadTtsMemoToDrive,
   DRIVE_FOLDER_NAME,
 } from '../../services/ttsService';
+import { getAudioFromStorage, saveAudioToStorage, getAllCachedTrackIds } from '../../utils/audioStorage';
+import { saveTtsMemoToSqliteStore, cacheAllTtsMemosToSqlite } from '../../services/offlineSyncService';
 
 export const TextToSpeechTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
 
   const [memos, setMemos] = useState<TtsMemo[]>([]);
+  const [cachedTtsIds, setCachedTtsIds] = useState<string[]>([]);
+  const [isCachingAll, setIsCachingAll] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -88,6 +94,51 @@ export const TextToSpeechTab: React.FC = () => {
       isMounted = false;
     };
   }, [googleAccessToken, user?.email]);
+
+  // Refresh cached track IDs from client SQLite / IndexedDB vault
+  useEffect(() => {
+    const refreshCached = async () => {
+      try {
+        const ids = await getAllCachedTrackIds();
+        setCachedTtsIds(ids);
+      } catch (err) {
+        console.warn('Error reading cached audio vault IDs:', err);
+      }
+    };
+    void refreshCached();
+  }, [memos]);
+
+  // Cache individual memo to offline SQLite store
+  const handleCacheTtsMemo = async (memo: TtsMemo) => {
+    try {
+      showToast(`Caching "${memo.title}" to offline SQLite store...`);
+      await saveTtsMemoToSqliteStore(memo);
+      const updatedIds = await getAllCachedTrackIds();
+      setCachedTtsIds(updatedIds);
+      showToast(`✓ "${memo.title}" ready for offline playback!`);
+    } catch (err) {
+      console.warn('Error caching TTS memo:', err);
+      showToast('Could not cache memo offline');
+    }
+  };
+
+  // Batch cache all speech memos to offline SQLite store
+  const handleCacheAllTtsMemos = async () => {
+    if (isCachingAll || memos.length === 0) return;
+    setIsCachingAll(true);
+    showToast('Caching all TTS memos to offline store...');
+    try {
+      const res = await cacheAllTtsMemosToSqlite(memos);
+      const updatedIds = await getAllCachedTrackIds();
+      setCachedTtsIds(updatedIds);
+      showToast(`✓ ${res.cachedCount} TTS memo(s) ready offline in client SQLite!`);
+    } catch (err) {
+      console.warn('Failed caching all TTS memos:', err);
+      showToast('Offline sync encountered an issue');
+    } finally {
+      setIsCachingAll(false);
+    }
+  };
 
   // Audio Player Event Listeners
   useEffect(() => {
@@ -141,8 +192,8 @@ export const TextToSpeechTab: React.FC = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Handle Play/Pause
-  const handleTogglePlay = (memo: TtsMemo) => {
+  // Handle Play/Pause with Client SQLite / IndexedDB offline playback priority
+  const handleTogglePlay = async (memo: TtsMemo) => {
     const audio = audioPlayerRef.current;
     if (!audio) return;
 
@@ -164,12 +215,28 @@ export const TextToSpeechTab: React.FC = () => {
 
     // Switch to new memo
     let sourceUrl = '';
-    if (memo.audioContentBase64) {
+
+    // Priority 1: Check client SQLite / IndexedDB audio vault for 100% offline playback
+    try {
+      const cachedUrl = await getAudioFromStorage(memo.id);
+      if (cachedUrl) {
+        sourceUrl = cachedUrl;
+      }
+    } catch (idbErr) {
+      console.warn('Error retrieving cached audio for TTS memo:', idbErr);
+    }
+
+    // Priority 2: Use in-memory base64 audio and background-persist to IndexedDB
+    if (!sourceUrl && memo.audioContentBase64) {
       const mime = memo.audioMimeType || 'audio/mpeg';
       sourceUrl = `data:${mime};base64,${memo.audioContentBase64}`;
-    } else if (memo.audioUrl) {
+      void saveAudioToStorage(memo.id, memo.audioContentBase64, mime).then(async () => {
+        const ids = await getAllCachedTrackIds();
+        setCachedTtsIds(ids);
+      }).catch(() => {});
+    } else if (!sourceUrl && memo.audioUrl) {
       sourceUrl = memo.audioUrl;
-    } else if (memo.driveFileId) {
+    } else if (!sourceUrl && memo.driveFileId) {
       sourceUrl = `https://drive.google.com/uc?export=download&id=${memo.driveFileId}`;
     }
 
@@ -681,6 +748,20 @@ export const TextToSpeechTab: React.FC = () => {
           >
             <Heart className={`w-4 h-4 ${favoritesOnly ? 'fill-current' : ''}`} />
           </button>
+
+          <button
+            onClick={handleCacheAllTtsMemos}
+            disabled={isCachingAll || memos.length === 0}
+            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-400 border border-cyan-500/30 transition-all flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+            title="Cache all TTS memos to offline SQLite store"
+          >
+            {isCachingAll ? (
+              <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <DownloadCloud className="w-3.5 h-3.5" />
+            )}
+            <span>Cache Offline</span>
+          </button>
         </div>
       </div>
 
@@ -700,6 +781,7 @@ export const TextToSpeechTab: React.FC = () => {
           filteredMemos.map((memo) => {
             const isThisPlaying = playingMemoId === memo.id && isPlaying;
             const isUploading = uploadingId === memo.id;
+            const isCachedOffline = cachedTtsIds.includes(memo.id);
 
             return (
               <div
@@ -742,6 +824,13 @@ export const TextToSpeechTab: React.FC = () => {
                           {memo.voiceType} • {memo.voiceName}
                         </span>
 
+                        {isCachedOffline ? (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 flex items-center gap-1 font-medium">
+                            <Database className="w-3 h-3 text-cyan-400" />
+                            <span>Offline Ready</span>
+                          </span>
+                        ) : null}
+
                         {memo.driveFileId ? (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center gap-1 font-medium">
                             <UploadCloud className="w-3 h-3" />
@@ -774,6 +863,18 @@ export const TextToSpeechTab: React.FC = () => {
 
                   {/* Actions Bar */}
                   <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => handleCacheTtsMemo(memo)}
+                      className={`p-2 rounded-xl transition-colors ${
+                        isCachedOffline
+                          ? 'text-cyan-400 hover:text-cyan-300 hover:bg-cyan-500/10'
+                          : 'text-slate-500 hover:text-cyan-400 hover:bg-slate-800'
+                      }`}
+                      title={isCachedOffline ? 'Cached in Client SQLite' : 'Cache Offline to SQLite'}
+                    >
+                      <Database className="w-4 h-4" />
+                    </button>
+
                     <button
                       onClick={() => handleToggleFavorite(memo)}
                       className={`p-2 rounded-xl hover:bg-slate-800 transition-colors ${

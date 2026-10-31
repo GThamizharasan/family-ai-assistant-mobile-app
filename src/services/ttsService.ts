@@ -5,6 +5,7 @@
 import { TtsMemo, TtsVoiceOption, TtsVoiceType, TtsTemplate } from '../types/tts';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { getApiUrl } from './api';
+import { saveAudioToStorage } from '../utils/audioStorage';
 
 const LOCAL_STORAGE_KEY = 'aura_tts_memos_cache_v1';
 export const DRIVE_FOLDER_NAME = 'Text to Speech Memos';
@@ -197,6 +198,29 @@ export async function fetchTtsMemos(
               updatedAt: df.createdTime || new Date().toISOString(),
             };
             map.set(newMemo.id, newMemo);
+
+            // Background pre-cache audio binary directly from Google Drive into Client SQLite (IndexedDB)
+            if (googleAccessToken && df.id) {
+              fetch(`https://www.googleapis.com/drive/v3/files/${df.id}?alt=media`, {
+                headers: { Authorization: `Bearer ${googleAccessToken}` },
+              })
+                .then((r) => (r.ok ? r.arrayBuffer() : null))
+                .then(async (ab) => {
+                  if (ab && ab.byteLength > 100) {
+                    let binary = '';
+                    const bytes = new Uint8Array(ab);
+                    const len = bytes.byteLength;
+                    const chunkSize = 8192;
+                    for (let i = 0; i < len; i += chunkSize) {
+                      const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+                      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+                    }
+                    const b64 = btoa(binary);
+                    await saveAudioToStorage(newMemo.id, b64, df.mimeType || 'audio/wav');
+                  }
+                })
+                .catch(() => {});
+            }
           }
         }
       }
@@ -346,6 +370,19 @@ export async function saveTtsMemo(
     }
     updatedMemo.audioContentBase64 = btoa(binary);
     updatedMemo.fileSizeBytes = arrayBuffer.byteLength;
+  }
+
+  // 1.5 Save audio binary directly into Client SQLite & IndexedDB store
+  if (updatedMemo.audioContentBase64 || audioBlob) {
+    try {
+      await saveAudioToStorage(
+        updatedMemo.id,
+        updatedMemo.audioContentBase64 || audioBlob!,
+        updatedMemo.audioMimeType || 'audio/mpeg'
+      );
+    } catch (idbErr) {
+      console.warn('[TtsMemo] IndexedDB client save notice:', idbErr);
+    }
   }
 
   // Upload to Drive if access token is available

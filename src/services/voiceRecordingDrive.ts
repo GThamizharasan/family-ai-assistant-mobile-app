@@ -6,6 +6,7 @@
 import { VoiceRecording, TranscriptionResult, RecordingCategory } from '../types/voiceRecording';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { getApiUrl } from './api';
+import { saveAudioToStorage, getAudioFromStorage, hasLocalAudioContent } from '../utils/audioStorage';
 
 const LOCAL_STORAGE_KEY = 'aura_voice_recordings_cache_v1';
 const DRIVE_FOLDER_NAME = 'Voice Recordings';
@@ -143,6 +144,29 @@ export async function fetchVoiceRecordings(
               updatedAt: df.createdTime || new Date().toISOString(),
             };
             map.set(newRec.id, newRec);
+
+            // Background pre-cache audio binary directly from Google Drive into Client SQLite (IndexedDB)
+            if (googleAccessToken && df.id) {
+              fetch(`https://www.googleapis.com/drive/v3/files/${df.id}?alt=media`, {
+                headers: { Authorization: `Bearer ${googleAccessToken}` },
+              })
+                .then((r) => (r.ok ? r.arrayBuffer() : null))
+                .then(async (ab) => {
+                  if (ab && ab.byteLength > 100) {
+                    let binary = '';
+                    const bytes = new Uint8Array(ab);
+                    const len = bytes.byteLength;
+                    const chunkSize = 8192;
+                    for (let i = 0; i < len; i += chunkSize) {
+                      const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+                      binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+                    }
+                    const b64 = btoa(binary);
+                    await saveAudioToStorage(newRec.id, b64, df.mimeType || 'audio/webm');
+                  }
+                })
+                .catch(() => {});
+            }
           }
         }
       }
@@ -271,6 +295,19 @@ export async function saveVoiceRecording(
     }
     updatedRec.audioContentBase64 = btoa(binary);
     updatedRec.fileSizeBytes = arrayBuffer.byteLength;
+  }
+
+  // 1.5 Save audio binary directly into Client SQLite & IndexedDB store
+  if (updatedRec.audioContentBase64 || audioBlob) {
+    try {
+      await saveAudioToStorage(
+        updatedRec.id,
+        updatedRec.audioContentBase64 || audioBlob!,
+        updatedRec.audioMimeType || 'audio/webm'
+      );
+    } catch (idbErr) {
+      console.warn('[VoiceRecording] IndexedDB client save notice:', idbErr);
+    }
   }
 
   // 2. Upload to Google Drive if access token is available

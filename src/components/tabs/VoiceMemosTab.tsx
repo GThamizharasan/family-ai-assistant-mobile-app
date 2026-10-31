@@ -23,6 +23,8 @@ import {
   ChevronDown,
   X,
   Radio,
+  Database,
+  DownloadCloud,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { VoiceRecording, RecordingCategory } from '../../types/voiceRecording';
@@ -37,6 +39,8 @@ import {
   VOICE_RECORDING_CATEGORIES,
 } from '../../services/voiceRecordingDrive';
 import { getApiUrl } from '../../services/api';
+import { getAudioFromStorage, saveAudioToStorage, getAllCachedTrackIds } from '../../utils/audioStorage';
+import { saveVoiceRecordingToSqliteStore, cacheAllVoiceRecordingsToSqlite, isAppOffline } from '../../services/offlineSyncService';
 
 export const VoiceMemosTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
@@ -91,6 +95,61 @@ export const VoiceMemosTab: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [expandedTranscriptId, setExpandedTranscriptId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // -------------------------------------------------------------
+  // 3GB SQLITE OFFLINE VAULT STATE
+  // -------------------------------------------------------------
+  const [cachedVoiceIds, setCachedVoiceIds] = useState<Set<string>>(new Set());
+  const [isCachingAll, setIsCachingAll] = useState(false);
+  const [cachingProgress, setCachingProgress] = useState<{ current: number; total: number; title: string } | null>(null);
+
+  const refreshCachedIds = async () => {
+    try {
+      const ids = await getAllCachedTrackIds();
+      setCachedVoiceIds(new Set(ids));
+    } catch {}
+  };
+
+  useEffect(() => {
+    refreshCachedIds();
+    window.addEventListener('aura_sqlite_synced', refreshCachedIds);
+    return () => window.removeEventListener('aura_sqlite_synced', refreshCachedIds);
+  }, []);
+
+  const handleCacheVoiceRecording = async (rec: VoiceRecording, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    showToast(`Caching "${rec.title}" into 3GB SQLite store...`);
+    try {
+      const ok = await saveVoiceRecordingToSqliteStore(rec);
+      if (ok) {
+        setCachedVoiceIds((prev) => new Set([...prev, rec.id]));
+        showToast(`✓ "${rec.title}" cached offline!`);
+      } else {
+        showToast(`⚠️ Could not cache "${rec.title}"`);
+      }
+    } catch (err: any) {
+      showToast(`Cache error: ${err.message}`);
+    }
+  };
+
+  const handleCacheAllVoiceRecordings = async () => {
+    if (isCachingAll || recordings.length === 0) return;
+    setIsCachingAll(true);
+    setCachingProgress({ current: 0, total: recordings.length, title: 'Starting...' });
+    showToast('Caching all voice memos into 3GB SQLite store...');
+    try {
+      const res = await cacheAllVoiceRecordingsToSqlite(recordings, (current, total, title) => {
+        setCachingProgress({ current, total, title });
+      });
+      await refreshCachedIds();
+      showToast(`✓ All ${res.cachedCount} voice memos cached for 100% offline playback!`);
+    } catch (err: any) {
+      showToast(`Batch caching notice: ${err.message}`);
+    } finally {
+      setIsCachingAll(false);
+      setCachingProgress(null);
+    }
+  };
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -413,6 +472,10 @@ export const VoiceMemosTab: React.FC = () => {
             if (driveRes.ok) {
               const blob = await driveRes.blob();
               if (blob.size > 100) {
+                // Cache into IndexedDB for offline access
+                await saveAudioToStorage(rec.id, blob, rec.audioMimeType || 'audio/webm').catch(() => {});
+                setCachedVoiceIds((prev) => new Set([...prev, rec.id]));
+
                 const objectUrl = URL.createObjectURL(blob);
                 audioBlobUrlsRef.current.set(rec.id, objectUrl);
 
@@ -457,6 +520,17 @@ export const VoiceMemosTab: React.FC = () => {
         console.warn('[VoicePlayer] Audio play failed:', playErr);
       });
     };
+
+    // Priority #1: Client SQLite / IndexedDB Local Storage Vault
+    try {
+      const storedAudio = await getAudioFromStorage(rec.id);
+      if (storedAudio) {
+        setupAndPlayAudio(storedAudio);
+        return;
+      }
+    } catch (e) {
+      console.warn('[VoicePlayer] Client SQLite lookup notice:', e);
+    }
 
     // Fast-path: Check if we have an already cached blob URL
     if (audioBlobUrlsRef.current.has(rec.id)) {
@@ -631,7 +705,22 @@ export const VoiceMemosTab: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          {/* Cache All Offline Button */}
+          <button
+            onClick={handleCacheAllVoiceRecordings}
+            disabled={isCachingAll || recordings.length === 0}
+            className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+              isCachingAll
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30'
+            }`}
+            title="Cache all voice memos into 3GB SQLite store for 100% offline playback"
+          >
+            <Database className={`w-3.5 h-3.5 text-emerald-400 ${isCachingAll ? 'animate-spin' : ''}`} />
+            <span>{isCachingAll ? 'Caching All...' : 'Cache All Offline'}</span>
+          </button>
+
           {/* Import External Audio Button */}
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -993,6 +1082,26 @@ export const VoiceMemosTab: React.FC = () => {
 
                   {/* Badges & Favorite */}
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {/* 3GB SQLite Offline Badge / Cache Button */}
+                    {cachedVoiceIds.has(rec.id) ? (
+                      <span
+                        className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-bold text-[10px] flex items-center gap-1 border border-emerald-500/30"
+                        title="Cached in 3GB SQLite store for 100% offline playback"
+                      >
+                        <Database className="w-3 h-3 text-emerald-400" />
+                        <span>Offline</span>
+                      </span>
+                    ) : (
+                      <button
+                        onClick={(e) => handleCacheVoiceRecording(rec, e)}
+                        className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold flex items-center gap-1 border border-slate-700 transition-colors"
+                        title="Cache into 3GB SQLite store for offline playback"
+                      >
+                        <DownloadCloud className="w-3 h-3 text-indigo-400" />
+                        <span>Cache</span>
+                      </button>
+                    )}
+
                     {/* Drive sync badge */}
                     {rec.driveFileId ? (
                       <span

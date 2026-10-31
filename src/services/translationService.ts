@@ -5,6 +5,7 @@
 import { LanguageTranslation, SUPPORTED_LANGUAGES, QuickPhrase } from '../types/translation';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { getApiUrl } from './api';
+import { saveAudioToStorage, getAudioFromStorage } from '../utils/audioStorage';
 
 const LOCAL_STORAGE_KEY = 'aura_translations_cache_v1';
 export const DRIVE_FOLDER_NAME = 'Language Translations';
@@ -397,6 +398,15 @@ export async function saveTranslation(
     } catch (driveErr) {
       console.warn('Drive upload error (saved locally):', driveErr);
       updated.driveSyncStatus = 'local_only';
+    }
+  }
+
+  // 1.5 Save audio binary directly into Client SQLite & IndexedDB store
+  if (updated.audioContentBase64) {
+    try {
+      await saveAudioToStorage(updated.id, updated.audioContentBase64, 'audio/mpeg');
+    } catch (idbErr) {
+      console.warn('[Translation] IndexedDB client save notice:', idbErr);
     }
   }
 
