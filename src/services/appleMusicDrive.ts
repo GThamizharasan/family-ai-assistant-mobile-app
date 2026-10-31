@@ -6,6 +6,7 @@
 import { MusicTrack, MusicGenre } from '../types/music';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { getApiUrl } from './api';
+import { saveAudioToStorage } from '../utils/audioStorage';
 
 export const APPLE_MUSIC_CATEGORIES = [
   'Classical & Wellness',
@@ -380,18 +381,22 @@ export async function uploadTrackToAppleMusicDrive(
       });
       const audioContentBase64 = await base64Promise;
       if (audioContentBase64) {
-        await fetch(getApiUrl(`/api/music/library/${track.id}/cache-audio`), {
+        // 1. Client SQLite Storage (IndexedDB)
+        await saveAudioToStorage(track.id, audioContentBase64, fileBlob.type || fileMime).catch(() => {});
+
+        // 2. Server SQLite mirror (non-blocking)
+        fetch(getApiUrl(`/api/music/library/${track.id}/cache-audio`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             audioContentBase64,
             mimeType: fileBlob.type || fileMime,
           }),
-        });
+        }).catch(() => {});
       }
     }
   } catch (cacheErr) {
-    console.warn('[Apple Music Drive] SQLite audio caching notice:', cacheErr);
+    console.warn('[Apple Music Drive] Client SQLite audio caching notice:', cacheErr);
   }
 
   return {
@@ -483,12 +488,35 @@ export async function refreshAppleMusicFromDrive(
           localCached: true,
         };
 
-        // Mirror discovered track into backend SQLite
+        // Mirror discovered track into backend SQLite (optional / non-blocking)
         fetch(getApiUrl('/api/music/library'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(discoveredTrack),
         }).catch(() => {});
+
+        // Background cache audio binary directly from Google Drive into Client SQLite (IndexedDB)
+        if (token && f.id) {
+          fetch(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+            .then((r) => (r.ok ? r.arrayBuffer() : null))
+            .then(async (ab) => {
+              if (ab && ab.byteLength > 100) {
+                let binary = '';
+                const bytes = new Uint8Array(ab);
+                const len = bytes.byteLength;
+                const chunkSize = 8192;
+                for (let i = 0; i < len; i += chunkSize) {
+                  const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+                  binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+                }
+                const b64 = btoa(binary);
+                await saveAudioToStorage(trackId, b64, f.mimeType || 'audio/mpeg');
+              }
+            })
+            .catch(() => {});
+        }
 
         newlyDiscovered.push(discoveredTrack);
         existingIds.add(f.id);

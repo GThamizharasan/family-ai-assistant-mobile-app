@@ -144,6 +144,8 @@ class MusicAudioEngine {
       const current = this.state.currentTrack;
       if (!current) return;
 
+      this.stopSynthesizer();
+
       // Mobile offline fallback: check client-side IndexedDB audio vault
       try {
         const stored = await getAudioFromStorage(current.id);
@@ -164,8 +166,8 @@ class MusicAudioEngine {
         } catch {}
       }
 
-      // Fallback: start synthesized harmonic music so audio experience is continuous
-      this.startHarmonicSynthesizer(current.genre || 'Ambient');
+      this.state.isPlaying = false;
+      this.notify();
     });
   }
 
@@ -298,17 +300,26 @@ class MusicAudioEngine {
 
     if (this.audioEl) {
       try {
-        let playableUrl = this.resolvePlayableUrl(track);
+        let playableUrl = '';
 
-        // Mobile & Offline IndexedDB check:
-        // If track doesn't have direct data URI, check if IndexedDB has the cached audio
-        if (!playableUrl.startsWith('data:audio/')) {
-          try {
-            const storedAudio = await getAudioFromStorage(track.id);
-            if (storedAudio) {
-              playableUrl = storedAudio;
-            }
-          } catch {}
+        // 1. Priority #1: Client SQLite / IndexedDB Local Storage Vault
+        try {
+          const storedAudio = await getAudioFromStorage(track.id);
+          if (storedAudio) {
+            playableUrl = storedAudio;
+          }
+        } catch (idbErr) {
+          console.warn('[MusicAudioEngine] Client SQLite lookup notice:', idbErr);
+        }
+
+        // 2. Priority #2: Direct audioContentBase64 attached to track object
+        if (!playableUrl && track.audioContentBase64 && track.audioContentBase64.length > 20) {
+          playableUrl = `data:${track.audioMimeType || 'audio/mpeg'};base64,${track.audioContentBase64}`;
+        }
+
+        // 3. Priority #3: Network URL or Google Drive direct link
+        if (!playableUrl) {
+          playableUrl = this.resolvePlayableUrl(track);
         }
 
         this.audioEl.src = playableUrl;
@@ -318,7 +329,7 @@ class MusicAudioEngine {
         this.state.isPlaying = true;
       } catch (err) {
         console.warn('[MusicAudioEngine] Playback start notice:', err);
-        // Fallback: check IndexedDB again in case URL failed (e.g. offline on mobile)
+        // Fallback: check IndexedDB again in case network URL was attempted and failed
         try {
           const storedAudio = await getAudioFromStorage(track.id);
           if (storedAudio && this.audioEl) {
@@ -329,10 +340,13 @@ class MusicAudioEngine {
             return;
           }
         } catch {}
-        this.startHarmonicSynthesizer(track.genre);
+        // Silence all audio and stop any synthetic tones
+        this.stopSynthesizer();
+        this.state.isPlaying = false;
       }
     } else {
-      this.startHarmonicSynthesizer(track.genre);
+      this.stopSynthesizer();
+      this.state.isPlaying = false;
     }
     this.notify();
   }
@@ -409,6 +423,7 @@ class MusicAudioEngine {
   }
 
   public async play() {
+    this.stopSynthesizer();
     this.initAudioContext();
     if (this.audioCtx?.state === 'suspended') {
       await this.audioCtx.resume().catch(() => {});
@@ -420,13 +435,23 @@ class MusicAudioEngine {
         this.state.isPlaying = true;
         this.notify();
         return;
-      } catch {
-        this.startHarmonicSynthesizer(this.state.currentTrack.genre);
+      } catch (playErr) {
+        console.warn('[MusicAudioEngine] play() notice:', playErr);
+        // Fallback to Client SQLite / IndexedDB
+        try {
+          const storedAudio = await getAudioFromStorage(this.state.currentTrack.id);
+          if (storedAudio && this.audioEl) {
+            this.audioEl.src = storedAudio;
+            await this.audioEl.play();
+            this.state.isPlaying = true;
+            this.notify();
+            return;
+          }
+        } catch {}
       }
     }
-    if (this.state.currentTrack) {
-      this.startHarmonicSynthesizer(this.state.currentTrack.genre);
-    }
+    this.state.isPlaying = false;
+    this.notify();
   }
 
   public pause() {
@@ -602,71 +627,10 @@ class MusicAudioEngine {
 
   // -------------------------------------------------------------
   // Harmonic Musical Synthesizer Fallback (Web Audio API)
-  // Generates soothing musical chords (C major / D minor / G maj)
+  // Kept completely silent to prevent echoing oscillator tones
   // -------------------------------------------------------------
-  private startHarmonicSynthesizer(genre = 'Ambient') {
+  private startHarmonicSynthesizer(_genre = 'Ambient') {
     this.stopSynthesizer();
-    this.initAudioContext();
-    if (!this.audioCtx) return;
-
-    this.synthActive = true;
-    this.state.isPlaying = true;
-    this.synthGainNode = this.audioCtx.createGain();
-    this.synthGainNode.gain.setValueAtTime(this.state.isMuted ? 0 : this.state.volume * 0.2, this.audioCtx.currentTime);
-    if (this.analyser) {
-      this.synthGainNode.connect(this.analyser);
-      this.analyser.connect(this.audioCtx.destination);
-    } else {
-      this.synthGainNode.connect(this.audioCtx.destination);
-    }
-
-    // Chords: C-E-G-B, A-C-E-G, F-A-C-E, G-B-D-F
-    const chordProgressions = [
-      [261.63, 329.63, 392.0, 493.88], // C maj 7
-      [220.0, 261.63, 329.63, 392.0],  // A min 7
-      [174.61, 220.0, 261.63, 329.63], // F maj 7
-      [196.0, 246.94, 293.66, 349.23], // G 7
-    ];
-
-    let chordIdx = 0;
-    const playChord = () => {
-      if (!this.audioCtx || !this.synthGainNode || !this.synthActive) return;
-      const notes = chordProgressions[chordIdx % chordProgressions.length];
-      chordIdx++;
-
-      notes.forEach((freq, idx) => {
-        if (!this.audioCtx || !this.synthGainNode) return;
-        const osc = this.audioCtx!.createOscillator();
-        const noteGain = this.audioCtx!.createGain();
-
-        osc.type = genre.includes('Classical') ? 'sine' : 'triangle';
-        osc.frequency.setValueAtTime(freq, this.audioCtx!.currentTime);
-
-        const now = this.audioCtx!.currentTime + idx * 0.15;
-        noteGain.gain.setValueAtTime(0.001, now);
-        noteGain.gain.exponentialRampToValueAtTime(0.08, now + 0.3);
-        noteGain.gain.exponentialRampToValueAtTime(0.001, now + 3.2);
-
-        osc.connect(noteGain);
-        noteGain.connect(this.synthGainNode!);
-
-        osc.start(now);
-        osc.stop(now + 3.5);
-      });
-    };
-
-    playChord();
-    this.synthInterval = window.setInterval(playChord, 3500);
-
-    // Update simulated progress timer reliably every second
-    this.synthProgressInterval = window.setInterval(() => {
-      if (this.synthActive && this.state.isPlaying) {
-        this.state.currentTime = (this.state.currentTime + 1) % (this.state.duration || 180);
-        this.notify();
-      }
-    }, 1000);
-
-    this.notify();
   }
 
   private stopSynthesizer() {
