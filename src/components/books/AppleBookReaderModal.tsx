@@ -286,6 +286,14 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
               const blob = await sqliteCheck.blob();
               if (blob && blob.size > 200) {
                 effectivePdf = URL.createObjectURL(blob);
+                // Also cache in mobile IndexedDB for permanent offline reading
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  if (typeof reader.result === 'string') {
+                    savePdfToStorage(safeBook.id, reader.result).catch(() => {});
+                  }
+                };
+                reader.readAsDataURL(blob);
               }
             }
           } catch {}

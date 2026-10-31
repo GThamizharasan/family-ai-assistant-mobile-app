@@ -5,6 +5,8 @@ import { safeFetchJson, getApiUrl } from './api';
 import { Book } from '../types/book';
 import { MusicTrack } from '../types/music';
 import { fetchGoogleDriveFiles, syncGoogleDriveToSqliteStore, GoogleDriveFile } from './googleWorkspace';
+import { saveAudioToStorage } from '../utils/audioStorage';
+import { savePdfToStorage } from '../utils/pdfStorage';
 
 export interface StorageBreakdownItem {
   count: number;
@@ -81,10 +83,14 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
 }
 
 /**
- * Save book directly into local SQLite store
+ * Save book directly into local SQLite store and mobile IndexedDB
  */
 export async function saveBookToSqliteStore(book: Book, pdfContentBase64?: string): Promise<boolean> {
   try {
+    if (pdfContentBase64) {
+      await savePdfToStorage(book.id, pdfContentBase64).catch(() => {});
+    }
+
     const res = await safeFetchJson<any>('/api/books/library', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -208,6 +214,11 @@ export async function saveTrackToSqliteStore(
     });
 
     if (base64) {
+      // Save directly to mobile IndexedDB vault for 100% offline mobile playback
+      await saveAudioToStorage(track.id, base64, mime).catch((err) => {
+        console.warn('[Offline Sync] IndexedDB audio save notice:', err);
+      });
+
       await safeFetchJson<any>(`/api/music/library/${track.id}/cache-audio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -218,13 +229,19 @@ export async function saveTrackToSqliteStore(
       }).catch(() => {});
     }
 
-    // Keep localStorage synchronized
+    // Keep localStorage synchronized with lightweight metadata (avoid 5MB mobile quota crash)
     try {
       const saved = localStorage.getItem('aura_music_library_tracks');
       if (saved) {
         const list: MusicTrack[] = JSON.parse(saved);
         const idx = list.findIndex((t) => t.id === track.id);
-        const updated = { ...track, localCached: true, audioContentBase64: base64, audioMimeType: mime };
+        const updated = {
+          ...track,
+          localCached: true,
+          audioMimeType: mime,
+          // Strip heavy base64 from localStorage so mobile 5MB limit is never exceeded
+          audioContentBase64: undefined,
+        };
         if (idx >= 0) list[idx] = updated;
         else list.unshift(updated);
         localStorage.setItem('aura_music_library_tracks', JSON.stringify(list));

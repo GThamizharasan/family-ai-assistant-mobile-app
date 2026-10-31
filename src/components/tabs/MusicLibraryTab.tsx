@@ -63,6 +63,7 @@ import {
   Sqlite3GbQuotaDetails,
   MAX_SQLITE_STORAGE_MB,
 } from '../../services/offlineSyncService';
+import { getAllCachedTrackIds } from '../../utils/audioStorage';
 
 interface MusicLibraryTabProps {
   onOpenPlayer?: () => void;
@@ -157,8 +158,19 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
     setIsSyncingDrive(true);
     try {
       const data = await fetchMusicTracks(user?.email);
-      setTracks(data);
-      musicAudioEngine.setQueue(data);
+      // Synchronize with mobile IndexedDB offline vault for 100% offline mobile playback
+      try {
+        const cachedIds = new Set(await getAllCachedTrackIds());
+        const merged = data.map((t) => ({
+          ...t,
+          localCached: t.localCached || cachedIds.has(t.id),
+        }));
+        setTracks(merged);
+        musicAudioEngine.setQueue(merged);
+      } catch {
+        setTracks(data);
+        musicAudioEngine.setQueue(data);
+      }
     } catch (e) {
       console.warn('loadTracks error:', e);
     } finally {

@@ -21,6 +21,7 @@ import {
   AlignLeft,
   X,
   Radio,
+  Database,
 } from 'lucide-react';
 import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../../types/music';
 import { musicAudioEngine } from '../../services/musicAudioEngine';
@@ -305,11 +306,20 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
                   {activeTrack.genre}
                 </span>
 
-                {/* Drive Path Badge */}
+                {/* Drive Path & Offline Status Badge */}
                 <div className="absolute bottom-3 left-3 right-3 px-3 py-1.5 rounded-xl bg-slate-900/85 backdrop-blur-md border border-slate-700/60 flex items-center justify-between text-[10px]">
                   <span className="flex items-center gap-1.5 text-emerald-300 font-medium">
-                    <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Family Circle Drive</span>
+                    {activeTrack.localCached ? (
+                      <>
+                        <Database className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>3GB Offline Ready</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Family Circle Drive</span>
+                      </>
+                    )}
                   </span>
                   <span className="text-slate-400 font-mono text-[9px] truncate max-w-[130px]">
                     {activeTrack.driveFolderPath || 'Family Circle / Apple Music'}

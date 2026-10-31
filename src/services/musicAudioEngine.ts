@@ -4,6 +4,7 @@
 import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../types/music';
 import { getApiUrl } from './api';
 import { isAppOffline } from './offlineSyncService';
+import { getAudioFromStorage, saveAudioToStorage } from '../utils/audioStorage';
 
 export type AudioEngineListener = (state: AudioPlaybackState) => void;
 
@@ -142,6 +143,18 @@ class MusicAudioEngine {
       console.warn('[MusicAudioEngine] HTML5 Audio load notice:', e);
       const current = this.state.currentTrack;
       if (!current) return;
+
+      // Mobile offline fallback: check client-side IndexedDB audio vault
+      try {
+        const stored = await getAudioFromStorage(current.id);
+        if (stored && this.audioEl && this.audioEl.src !== stored) {
+          this.audioEl.src = stored;
+          await this.audioEl.play().catch(() => {});
+          this.state.isPlaying = true;
+          this.notify();
+          return;
+        }
+      } catch {}
 
       // Clean up audio element so it stops spinning on dead URL
       if (this.audioEl) {
@@ -285,7 +298,19 @@ class MusicAudioEngine {
 
     if (this.audioEl) {
       try {
-        const playableUrl = this.resolvePlayableUrl(track);
+        let playableUrl = this.resolvePlayableUrl(track);
+
+        // Mobile & Offline IndexedDB check:
+        // If track doesn't have direct data URI, check if IndexedDB has the cached audio
+        if (!playableUrl.startsWith('data:audio/')) {
+          try {
+            const storedAudio = await getAudioFromStorage(track.id);
+            if (storedAudio) {
+              playableUrl = storedAudio;
+            }
+          } catch {}
+        }
+
         this.audioEl.src = playableUrl;
         this.audioEl.playbackRate = this.state.playbackRate;
         this.audioEl.volume = this.state.isMuted ? 0 : this.state.volume;
@@ -293,6 +318,17 @@ class MusicAudioEngine {
         this.state.isPlaying = true;
       } catch (err) {
         console.warn('[MusicAudioEngine] Playback start notice:', err);
+        // Fallback: check IndexedDB again in case URL failed (e.g. offline on mobile)
+        try {
+          const storedAudio = await getAudioFromStorage(track.id);
+          if (storedAudio && this.audioEl) {
+            this.audioEl.src = storedAudio;
+            await this.audioEl.play();
+            this.state.isPlaying = true;
+            this.notify();
+            return;
+          }
+        } catch {}
         this.startHarmonicSynthesizer(track.genre);
       }
     } else {
