@@ -8,5 +8,4 @@ coverage/
 !.env.example
 android/
 data/
-*.sqlite
-*.sqlite*
+
