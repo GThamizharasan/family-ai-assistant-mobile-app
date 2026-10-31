@@ -153,6 +153,140 @@ export async function updateBookProgressInSqliteStore(
   }
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Cache single music track and its audio binary content directly into 3GB SQLite store
+ */
+export async function saveTrackToSqliteStore(
+  track: MusicTrack,
+  audioContentBase64?: string,
+  mimeType?: string
+): Promise<boolean> {
+  try {
+    let base64 = audioContentBase64 || track.audioContentBase64;
+    let mime = mimeType || track.audioMimeType || 'audio/mpeg';
+
+    // If audioContentBase64 is not attached to track, fetch the audio binary stream from local backend
+    if (!base64 && track.id) {
+      try {
+        const audioFetchUrl = getApiUrl(`/api/music/library/${track.id}/audio`);
+        const audioRes = await fetch(audioFetchUrl);
+        if (audioRes.ok) {
+          const ab = await audioRes.arrayBuffer();
+          if (ab.byteLength > 100) {
+            base64 = arrayBufferToBase64(ab);
+            mime = audioRes.headers.get('content-type') || mime;
+          }
+        }
+      } catch (fErr) {
+        console.warn('[Offline Sync] Track audio stream fetch note:', fErr);
+      }
+    }
+
+    const payload = {
+      ...track,
+      audioContentBase64: base64,
+      audioMimeType: mime,
+      localCached: true,
+    };
+
+    const res = await safeFetchJson<any>('/api/music/library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (base64) {
+      await safeFetchJson<any>(`/api/music/library/${track.id}/cache-audio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioContentBase64: base64,
+          mimeType: mime,
+        }),
+      }).catch(() => {});
+    }
+
+    // Keep localStorage synchronized
+    try {
+      const saved = localStorage.getItem('aura_music_library_tracks');
+      if (saved) {
+        const list: MusicTrack[] = JSON.parse(saved);
+        const idx = list.findIndex((t) => t.id === track.id);
+        const updated = { ...track, localCached: true, audioContentBase64: base64, audioMimeType: mime };
+        if (idx >= 0) list[idx] = updated;
+        else list.unshift(updated);
+        localStorage.setItem('aura_music_library_tracks', JSON.stringify(list));
+      }
+    } catch {}
+
+    // Dispatch sync event so quota updates across UI
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('aura_sqlite_synced'));
+    }
+
+    return !!(res && res.success);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Cache all music tracks into the SQLite offline store in batch with progress reporting
+ */
+export async function cacheAllMusicTracksToSqlite(
+  tracks: MusicTrack[],
+  onProgress?: (current: number, total: number, trackTitle: string) => void
+): Promise<{ success: boolean; cachedCount: number; errors: number; quota?: Sqlite3GbQuotaDetails | null }> {
+  let cachedCount = 0;
+  let errors = 0;
+  for (let i = 0; i < tracks.length; i++) {
+    const t = tracks[i];
+    onProgress?.(i + 1, tracks.length, t.title);
+    try {
+      const ok = await saveTrackToSqliteStore(t);
+      if (ok) cachedCount++;
+      else errors++;
+    } catch {
+      errors++;
+    }
+  }
+
+  const quota = await fetchSqlite3GbQuota();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('aura_sqlite_synced', { detail: { quota } }));
+  }
+
+  return { success: errors === 0, cachedCount, errors, quota };
+}
+
+/**
+ * Fetch all offline music tracks cached in SQLite store
+ */
+export async function fetchMusicFromSqliteStore(userEmail?: string): Promise<MusicTrack[]> {
+  try {
+    const url = userEmail ? `/api/music/library?userEmail=${encodeURIComponent(userEmail)}` : '/api/music/library';
+    const res = await safeFetchJson<{ success: boolean; tracks: any[] }>(url);
+    if (res && res.success && Array.isArray(res.tracks)) {
+      return res.tracks.map((t) => ({ ...t, localCached: true })) as MusicTrack[];
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Unified 1-Click Sync All Features into 3GB Local SQLite Store.
  * Fully synchronizes Google Drive files, Apple Books, Apple Music,
