@@ -2,12 +2,17 @@
 // Generates standard, vector-faithful, multi-page PDF documents from scanned images
 // 100% Client-Side with zero external dependencies. Fully compliant with Adobe Acrobat, Apple Books, and Google Drive.
 
-import { ScannedPage, ScanImageFilter } from '../types/documentScanner';
+import {
+  ScannedPage,
+  ScanImageFilter,
+  PdfGenerationOptions,
+  PDF_PAGE_SIZE_OPTIONS,
+} from '../types/documentScanner';
 
 /**
  * Converts a base64 Data URL to a Uint8Array
  */
-function dataUrlToUint8Array(dataUrl: string): Uint8Array {
+export function dataUrlToUint8Array(dataUrl: string): Uint8Array {
   const base64Index = dataUrl.indexOf(';base64,');
   if (base64Index === -1) {
     throw new Error('Invalid data URL: missing base64 marker');
@@ -23,9 +28,29 @@ function dataUrlToUint8Array(dataUrl: string): Uint8Array {
 }
 
 /**
+ * Converts a data URL to an authentic binary Blob (application/pdf or image/jpeg)
+ */
+export function dataUrlToBlob(dataUrl: string, mimeType = 'application/pdf'): Blob {
+  const bytes = dataUrlToUint8Array(dataUrl);
+  return new Blob([bytes.buffer as ArrayBuffer], { type: mimeType });
+}
+
+/**
+ * Converts a Blob to a Base64 Data URL
+ */
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
  * Ensures an image data URL is JPEG format (converting PNG/WebP if needed via canvas)
  */
-async function ensureJpegDataUrl(dataUrl: string): Promise<string> {
+async function ensureJpegDataUrl(dataUrl: string, quality = 0.92): Promise<string> {
   if (dataUrl.startsWith('data:image/jpeg') || dataUrl.startsWith('data:image/jpg')) {
     return dataUrl;
   }
@@ -42,7 +67,7 @@ async function ensureJpegDataUrl(dataUrl: string): Promise<string> {
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL('image/jpeg', 0.92));
+        resolve(canvas.toDataURL('image/jpeg', quality));
       } else {
         resolve(dataUrl);
       }
@@ -143,12 +168,13 @@ export async function applyScanFilter(
 
 /**
  * Generates an authentic PDF 1.4 document from an array of scanned pages.
- * Supports multi-page documents, scaling to standard A4 dimensions (595.28 x 841.89 pt),
- * preserving aspect ratio with clean white margins.
+ * Supports customizable page sizes (Default A4, US Letter, US Legal, Fit to Image, ID Card),
+ * custom margins, orientation, and quality settings.
  */
 export async function generatePdfFromScannedPages(
   pages: ScannedPage[],
-  title = 'Adobe Document Scan'
+  title = 'Adobe Document Scan',
+  options?: Partial<PdfGenerationOptions>
 ): Promise<{
   blob: Blob;
   dataUrl: string;
@@ -158,6 +184,24 @@ export async function generatePdfFromScannedPages(
   if (pages.length === 0) {
     throw new Error('At least one page is required to generate a PDF');
   }
+
+  const selectedSize = options?.pageSize || 'A4';
+  const orientationOpt = options?.orientation || 'auto';
+  const marginOpt = options?.margin || 'narrow';
+  const qualityOpt = options?.quality || 'high';
+
+  // Margin in PDF points (72 pt / inch)
+  let marginPt = 14; // 'narrow' ~ 5mm
+  if (marginOpt === 'none') marginPt = 0;
+  else if (marginOpt === 'standard') marginPt = 28; // ~ 10mm
+
+  // Image quality
+  let jpegQuality = 0.92;
+  if (qualityOpt === 'high') jpegQuality = 0.95;
+  else if (qualityOpt === 'compact') jpegQuality = 0.72;
+
+  // Standard Page Dimension Lookup
+  const sizeDef = PDF_PAGE_SIZE_OPTIONS.find((s) => s.id === selectedSize) || PDF_PAGE_SIZE_OPTIONS[0];
 
   // Text encoder for ascii pdf header/dictionaries
   const enc = new TextEncoder();
@@ -218,45 +262,63 @@ export async function generatePdfFromScannedPages(
     `3 0 obj\n<<\n  /Title (${safeTitle})\n  /Producer (Adobe Document Scanner • Family Circle)\n  /Creator (Auro Sovereign Multi-Modal Assistant)\n  /CreationDate (${dateStr})\n>>\nendobj\n`
   );
 
-  // Standard A4 dimensions in PDF points (72 pt / inch)
-  const A4_WIDTH = 595.28;
-  const A4_HEIGHT = 841.89;
-
-  // Pre-process all pages to ensure JPEGs
+  // Pre-process all pages to ensure JPEGs & build objects
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
     const pageObjNum = 4 + i * 3;
     const contentsObjNum = 5 + i * 3;
     const imageObjNum = 6 + i * 3;
 
-    const jpegDataUrl = await ensureJpegDataUrl(page.dataUrl);
+    const jpegDataUrl = await ensureJpegDataUrl(page.dataUrl, jpegQuality);
     const jpegBytes = dataUrlToUint8Array(jpegDataUrl);
 
-    // Determine orientation & page box
     const imgWidth = page.width || 1240;
     const imgHeight = page.height || 1754;
-    const isLandscape = imgWidth > imgHeight;
 
-    const pageWidth = isLandscape ? A4_HEIGHT : A4_WIDTH;
-    const pageHeight = isLandscape ? A4_WIDTH : A4_HEIGHT;
+    // Calculate Page Dimensions in PDF points
+    let baseWidth = sizeDef.widthPt;
+    let baseHeight = sizeDef.heightPt;
+
+    if (selectedSize === 'Fit') {
+      // Fit to Image aspect ratio directly (at 72 DPI)
+      baseWidth = (imgWidth / 2);
+      baseHeight = (imgHeight / 2);
+    }
+
+    let isLandscape = false;
+    if (orientationOpt === 'landscape') {
+      isLandscape = true;
+    } else if (orientationOpt === 'portrait') {
+      isLandscape = false;
+    } else {
+      // Auto: detect based on image dimensions
+      isLandscape = imgWidth > imgHeight;
+    }
+
+    const pageWidth = isLandscape && baseWidth < baseHeight ? baseHeight : baseWidth;
+    const pageHeight = isLandscape && baseWidth < baseHeight ? baseWidth : baseHeight;
+
+    // Available drawing area after applying margins
+    const availWidth = Math.max(10, pageWidth - marginPt * 2);
+    const availHeight = Math.max(10, pageHeight - marginPt * 2);
 
     // Calculate fitted bounding box preserving aspect ratio
     const imgAspect = imgWidth / imgHeight;
-    const pageAspect = pageWidth / pageHeight;
+    const availAspect = availWidth / availHeight;
 
-    let drawWidth = pageWidth;
-    let drawHeight = pageHeight;
-    let drawX = 0;
-    let drawY = 0;
+    let drawWidth = availWidth;
+    let drawHeight = availHeight;
+    let drawX = marginPt;
+    let drawY = marginPt;
 
-    if (imgAspect > pageAspect) {
-      drawWidth = pageWidth;
-      drawHeight = pageWidth / imgAspect;
-      drawY = (pageHeight - drawHeight) / 2;
+    if (imgAspect > availAspect) {
+      drawWidth = availWidth;
+      drawHeight = availWidth / imgAspect;
+      drawY = marginPt + (availHeight - drawHeight) / 2;
     } else {
-      drawHeight = pageHeight;
-      drawWidth = pageHeight * imgAspect;
-      drawX = (pageWidth - drawWidth) / 2;
+      drawHeight = availHeight;
+      drawWidth = availHeight * imgAspect;
+      drawX = marginPt + (availWidth - drawWidth) / 2;
     }
 
     // 1. Page Object
@@ -270,6 +332,7 @@ export async function generatePdfFromScannedPages(
     );
 
     // 2. Contents Stream: transform matrix & paint image
+    // Note: PDF origin is bottom-left
     const contentStream = `q\n${drawWidth.toFixed(2)} 0 0 ${drawHeight.toFixed(2)} ${drawX.toFixed(
       2
     )} ${drawY.toFixed(2)} cm\n/Im${i + 1} Do\nQ\n`;
@@ -318,7 +381,7 @@ export async function generatePdfFromScannedPages(
     pos += c.length;
   }
 
-  const blob = new Blob([fullBytes], { type: 'application/pdf' });
+  const blob = new Blob([fullBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
 
   // Convert binary to base64 for IndexedDB / Drive Multipart Upload
   let binaryStr = '';

@@ -18,6 +18,7 @@ import {
   X,
   Layers,
   ChevronRight,
+  ChevronLeft,
   Database,
   DownloadCloud,
   RefreshCw,
@@ -25,6 +26,11 @@ import {
   ShieldCheck,
   Sliders,
   Maximize2,
+  Minimize2,
+  ZoomIn,
+  ZoomOut,
+  Settings2,
+  FileCheck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -32,7 +38,13 @@ import {
   ScannedPage,
   ScanCategory,
   ScanImageFilter,
+  PdfPageSize,
+  PdfOrientation,
+  PdfMargin,
+  PdfQuality,
+  PdfGenerationOptions,
   SCAN_CATEGORIES,
+  PDF_PAGE_SIZE_OPTIONS,
 } from '../../types/documentScanner';
 import {
   fetchScannedDocuments,
@@ -42,15 +54,15 @@ import {
   downloadScannedPdf,
   shareScannedPdf,
   uploadScannedPdfToDrive,
+  getDocumentPdfBlobUrl,
   DRIVE_FOLDER_NAME,
 } from '../../services/documentScannerService';
 import {
   getScanPdfFromStorage,
   saveScanPdfToStorage,
   getAllCachedScanIds,
-  getScansStorageStats,
 } from '../../utils/scanStorage';
-import { applyScanFilter, generatePdfFromScannedPages } from '../../utils/pdfGenerator';
+import { applyScanFilter, generatePdfFromScannedPages, dataUrlToBlob } from '../../utils/pdfGenerator';
 
 export const AdobeScannerTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
@@ -76,14 +88,24 @@ export const AdobeScannerTab: React.FC = () => {
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
+  // PDF Page Size & Customization Options (Default A4)
+  const [showPdfOptions, setShowPdfOptions] = useState(false);
+  const [pdfPageSize, setPdfPageSize] = useState<PdfPageSize>('A4');
+  const [pdfOrientation, setPdfOrientation] = useState<PdfOrientation>('auto');
+  const [pdfMargin, setPdfMargin] = useState<PdfMargin>('narrow');
+  const [pdfQuality, setPdfQuality] = useState<PdfQuality>('high');
+
   // Video and Canvas refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // PDF Preview Modal
+  // PDF Preview & Inspection Modal
   const [previewDoc, setPreviewDoc] = useState<ScannedDocument | null>(null);
-  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
+  const [previewPdfBlobUrl, setPreviewPdfBlobUrl] = useState<string | null>(null);
+  const [previewActivePage, setPreviewActivePage] = useState<number>(0);
+  const [previewZoom, setPreviewZoom] = useState<number>(1);
+  const [previewViewMode, setPreviewViewMode] = useState<'pages' | 'pdf'>('pages');
 
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -148,7 +170,7 @@ export const AdobeScannerTab: React.FC = () => {
       setCameraFacing(facing);
     } catch (err: any) {
       console.warn('Camera stream error:', err);
-      setCameraError('Unable to access camera. Please allow camera permissions or upload images.');
+      setCameraError('Camera access not available. Please allow permissions or upload photos from gallery.');
       setIsCameraActive(false);
     }
   };
@@ -171,9 +193,9 @@ export const AdobeScannerTab: React.FC = () => {
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const rawDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const rawDataUrl = canvas.toDataURL('image/jpeg', 0.95);
 
-    // Apply Magic Color filter by default for crisp document contrast
+    // Apply Magic Color filter by default for crisp document contrast & white paper
     const filteredDataUrl = await applyScanFilter(rawDataUrl, 'magic', 0);
 
     const newPage: ScannedPage = {
@@ -222,7 +244,7 @@ export const AdobeScannerTab: React.FC = () => {
 
     setScanPages((prev) => [...prev, ...newPages]);
     if (!isScannerModalOpen) {
-      setScanTitle(`Scan - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+      setScanTitle(`Scan - ${new Date().toLocaleDateString()}`);
       setIsScannerModalOpen(true);
     }
     showToast(`✓ Added ${newPages.length} image(s) to scan`);
@@ -280,7 +302,7 @@ export const AdobeScannerTab: React.FC = () => {
     setSelectedPageIdx((prev) => Math.max(0, prev - 1));
   };
 
-  // Finish Scanning & Generate PDF
+  // Finish Scanning & Generate PDF (with customizable page size & layout)
   const handleSaveDocument = async () => {
     if (scanPages.length === 0) {
       showToast('Please capture or upload at least 1 page.');
@@ -293,8 +315,15 @@ export const AdobeScannerTab: React.FC = () => {
       const defaultTitle = `${scanCategory} Scan - ${now.toLocaleDateString()}`;
       const finalTitle = scanTitle.trim() || defaultTitle;
 
-      showToast('Generating authentic vector PDF...');
-      const gen = await generatePdfFromScannedPages(scanPages, finalTitle);
+      const pdfOpts: PdfGenerationOptions = {
+        pageSize: pdfPageSize,
+        orientation: pdfOrientation,
+        margin: pdfMargin,
+        quality: pdfQuality,
+      };
+
+      showToast(`Generating authentic ${pdfPageSize} Vector PDF...`);
+      const gen = await generatePdfFromScannedPages(scanPages, finalTitle, pdfOpts);
 
       const newDoc: ScannedDocument = {
         id: `scan_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
@@ -304,6 +333,8 @@ export const AdobeScannerTab: React.FC = () => {
         pages: scanPages,
         pageCount: scanPages.length,
         fileSizeBytes: gen.fileSizeBytes,
+        pageSize: pdfPageSize,
+        pdfOptions: pdfOpts,
         thumbnailDataUrl: scanPages[0]?.dataUrl,
         pdfContentBase64: gen.dataUrl,
         pdfBlobUrl: URL.createObjectURL(gen.blob),
@@ -315,7 +346,7 @@ export const AdobeScannerTab: React.FC = () => {
       };
 
       showToast('Saving to SQLite & Google Drive...');
-      const saved = await saveScannedDocument(newDoc, googleAccessToken);
+      const saved = await saveScannedDocument(newDoc, googleAccessToken, pdfOpts);
 
       setDocuments((prev) => [saved, ...prev.filter((d) => d.id !== saved.id)]);
       const cached = await getAllCachedScanIds();
@@ -326,7 +357,7 @@ export const AdobeScannerTab: React.FC = () => {
       setScanTitle('');
       stopCameraStream();
 
-      showToast(`✓ "${saved.title}" saved & synced to Family Circle!`);
+      showToast(`✓ "${saved.title}" saved (${pdfPageSize} PDF) & synced to Drive!`);
     } catch (err: any) {
       console.error('Failed saving scanned document:', err);
       showToast(err.message || 'Error creating PDF document');
@@ -335,19 +366,20 @@ export const AdobeScannerTab: React.FC = () => {
     }
   };
 
-  // Open Preview Modal
+  // Open Preview Modal (Intelligent Dual-Mode: Interactive Document Viewer + Native PDF Blob)
   const handleOpenPreview = async (doc: ScannedDocument) => {
     setPreviewDoc(doc);
-    let url = doc.pdfBlobUrl;
-    if (!url) {
-      const cachedDataUrl = await getScanPdfFromStorage(doc.id);
-      if (cachedDataUrl) {
-        url = cachedDataUrl;
-      } else if (doc.driveFileId) {
-        url = `https://drive.google.com/file/d/${doc.driveFileId}/preview`;
-      }
+    setPreviewActivePage(0);
+    setPreviewZoom(1);
+    setPreviewViewMode(doc.pages && doc.pages.length > 0 ? 'pages' : 'pdf');
+
+    try {
+      const blobUrl = await getDocumentPdfBlobUrl(doc);
+      setPreviewPdfBlobUrl(blobUrl);
+    } catch (err) {
+      console.warn('Could not generate PDF blob URL:', err);
+      setPreviewPdfBlobUrl(null);
     }
-    setPreviewPdfUrl(url || null);
   };
 
   // Favorite toggle
@@ -391,23 +423,27 @@ export const AdobeScannerTab: React.FC = () => {
     }
   };
 
-  // Download PDF
+  // Download PDF (Reliable Blob URL download)
   const handleDownload = async (doc: ScannedDocument) => {
     try {
-      showToast('Preparing PDF download...');
+      showToast(`Preparing "${doc.title}.pdf" download...`);
       await downloadScannedPdf(doc);
       showToast(`✓ Downloaded ${doc.title}.pdf`);
     } catch (err: any) {
+      console.warn('Download error:', err);
       showToast(err.message || 'Download failed');
     }
   };
 
-  // Share PDF
+  // Share PDF (Native File Share with Drive/Download Fallback)
   const handleShare = async (doc: ScannedDocument) => {
     try {
-      const ok = await shareScannedPdf(doc);
-      if (ok) showToast('✓ Shared document!');
-    } catch {
+      const res = await shareScannedPdf(doc);
+      if (res.shared) {
+        showToast(res.message);
+      }
+    } catch (err: any) {
+      console.warn('Share error:', err);
       showToast('Could not share document');
     }
   };
@@ -459,7 +495,7 @@ export const AdobeScannerTab: React.FC = () => {
       }
       const updated = await getAllCachedScanIds();
       setCachedScanIds(updated);
-      showToast(`✓ ${count > 0 ? count : 'All'} document(s) cached offline!`);
+      showToast(`✓ ${count > 0 ? count : 'All'} document(s) cached offline in SQLite!`);
     } catch (err) {
       console.warn('Batch cache error:', err);
       showToast('Offline cache completed with partial items');
@@ -508,11 +544,11 @@ export const AdobeScannerTab: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <h1 className="text-xl font-black tracking-tight text-white">Adobe Document Scanner</h1>
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-red-500/20 text-red-300 border border-red-500/30">
-                    PDF Pro
+                    A4 PDF PRO
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Multi-Page Camera Scanner • Vector PDF 1.4 • Family Circle Drive Sync
+                  Intelligent Multi-Page Camera Scanner • Customizable A4 Vector PDF • Family Circle Drive
                 </p>
               </div>
             </div>
@@ -551,13 +587,13 @@ export const AdobeScannerTab: React.FC = () => {
           <div className="flex items-center gap-3 text-xs text-slate-400 flex-wrap pt-2 border-t border-slate-800/80">
             <div className="flex items-center gap-1.5">
               <Folder className="w-3.5 h-3.5 text-amber-400" />
-              <span>Drive Path:</span>
+              <span>Drive Folder:</span>
               <span className="font-mono text-slate-200">Family Circle / {DRIVE_FOLDER_NAME}</span>
             </div>
             <span>•</span>
             <div className="flex items-center gap-1.5">
               <Database className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Client SQLite Vault:</span>
+              <span>Client SQLite Store:</span>
               <span className="font-mono text-slate-200">{cachedScanIds.length} offline ready</span>
             </div>
           </div>
@@ -673,16 +709,16 @@ export const AdobeScannerTab: React.FC = () => {
                 className="p-4 rounded-3xl bg-slate-900/70 hover:bg-slate-900/90 border border-slate-800/90 transition-all duration-200 flex flex-col justify-between group shadow-xl"
               >
                 <div>
-                  {/* Thumbnail / PDF Card Top */}
+                  {/* Thumbnail / Document Card Top */}
                   <div
                     onClick={() => handleOpenPreview(doc)}
-                    className="relative w-full h-44 rounded-2xl bg-slate-950/80 border border-slate-800/80 overflow-hidden mb-3 cursor-pointer group-hover:border-red-500/40 transition-colors flex items-center justify-center"
+                    className="relative w-full h-48 rounded-2xl bg-slate-950/80 border border-slate-800/80 overflow-hidden mb-3 cursor-pointer group-hover:border-red-500/40 transition-colors flex items-center justify-center"
                   >
                     {doc.thumbnailDataUrl ? (
                       <img
                         src={doc.thumbnailDataUrl}
                         alt={doc.title}
-                        className="w-full h-full object-contain p-1"
+                        className="w-full h-full object-contain p-1.5"
                       />
                     ) : (
                       <div className="flex flex-col items-center gap-2 text-slate-600">
@@ -691,7 +727,7 @@ export const AdobeScannerTab: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Overlay badge */}
+                    {/* Top Badges */}
                     <div className="absolute top-2 left-2 flex items-center gap-1.5 flex-wrap">
                       <span
                         className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
@@ -700,28 +736,33 @@ export const AdobeScannerTab: React.FC = () => {
                       >
                         {doc.category}
                       </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold bg-slate-900/90 border border-slate-700 text-slate-300">
+                        {doc.pageSize || 'A4'}
+                      </span>
                     </div>
 
                     <div className="absolute top-2 right-2 flex items-center gap-1">
                       {isCached && (
                         <span
-                          className="p-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-300"
+                          className="p-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 flex items-center gap-1 px-1.5 text-[10px] font-semibold"
                           title="Cached in Client SQLite for 100% Offline Playback"
                         >
                           <Database className="w-3 h-3" />
+                          <span>Offline</span>
                         </span>
                       )}
                       {doc.driveFileId ? (
                         <span
-                          className="p-1 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-400"
+                          className="p-1 rounded-lg bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 flex items-center gap-1 px-1.5 text-[10px] font-semibold"
                           title="Synced to Google Drive"
                         >
                           <UploadCloud className="w-3 h-3" />
+                          <span>Drive</span>
                         </span>
                       ) : (
                         <span
                           className="text-[10px] px-1.5 py-0.5 rounded-lg bg-slate-900/80 border border-slate-700 text-slate-400 font-medium"
-                          title="Stored Locally"
+                          title="Stored Locally in SQLite"
                         >
                           Local
                         </span>
@@ -729,9 +770,9 @@ export const AdobeScannerTab: React.FC = () => {
                     </div>
 
                     {/* View PDF Hover Prompt */}
-                    <div className="absolute inset-0 bg-red-950/20 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-bold text-xs">
+                    <div className="absolute inset-0 bg-red-950/30 backdrop-blur-[2px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-bold text-xs">
                       <Eye className="w-4 h-4 text-red-400" />
-                      <span>Inspect PDF</span>
+                      <span>View & Inspect</span>
                     </div>
                   </div>
 
@@ -760,7 +801,7 @@ export const AdobeScannerTab: React.FC = () => {
                   {/* Left: View PDF Button */}
                   <button
                     onClick={() => handleOpenPreview(doc)}
-                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1 transition-colors"
+                    className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-colors"
                   >
                     <Eye className="w-3.5 h-3.5 text-red-400" />
                     <span>View</span>
@@ -854,7 +895,7 @@ export const AdobeScannerTab: React.FC = () => {
                 <div>
                   <h3 className="text-sm font-bold text-white">Adobe Document Viewfinder</h3>
                   <p className="text-[11px] text-slate-400">
-                    {scanPages.length} {scanPages.length === 1 ? 'Page' : 'Pages'} Captured
+                    {scanPages.length} {scanPages.length === 1 ? 'Page' : 'Pages'} Captured • PDF: {pdfPageSize}
                   </p>
                 </div>
               </div>
@@ -878,10 +919,10 @@ export const AdobeScannerTab: React.FC = () => {
                   className="w-full h-full object-cover"
                 />
 
-                {/* Document Edge Alignment Guides */}
-                <div className="absolute inset-6 border-2 border-dashed border-red-400/60 rounded-xl pointer-events-none flex items-center justify-center">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-red-300 bg-black/60 px-2 py-0.5 rounded">
-                    Align Document Within Frame
+                {/* Document Edge Alignment Guides (A4 Aspect Ratio Overlay) */}
+                <div className="absolute inset-5 border-2 border-dashed border-red-400/60 rounded-xl pointer-events-none flex items-center justify-center">
+                  <span className="text-[10px] font-mono uppercase tracking-widest text-red-300 bg-black/70 px-2.5 py-0.5 rounded-full border border-red-500/30">
+                    Align {pdfPageSize} Document Within Frame
                   </span>
                 </div>
 
@@ -1013,7 +1054,7 @@ export const AdobeScannerTab: React.FC = () => {
                     type="text"
                     value={scanTitle}
                     onChange={(e) => setScanTitle(e.target.value)}
-                    placeholder="e.g. Electric Bill, Rental Lease, Passport Copy"
+                    placeholder="e.g. Electric Bill, Lease, Passport"
                     className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-red-500/50"
                   />
                 </div>
@@ -1035,6 +1076,90 @@ export const AdobeScannerTab: React.FC = () => {
                   </select>
                 </div>
               </div>
+
+              {/* Customizable PDF Options Accordion (Default A4) */}
+              <div className="rounded-2xl bg-slate-950/60 border border-slate-800/90 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowPdfOptions(!showPdfOptions)}
+                  className="w-full p-3 flex items-center justify-between text-xs font-bold text-slate-300 hover:text-white"
+                >
+                  <div className="flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-red-400" />
+                    <span>PDF Page Size & Layout Customization</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-red-950/80 border border-red-500/30 text-red-300">
+                      Default: {pdfPageSize}
+                    </span>
+                  </div>
+                  <ChevronRight className={`w-4 h-4 transition-transform ${showPdfOptions ? 'rotate-90' : ''}`} />
+                </button>
+
+                {showPdfOptions && (
+                  <div className="p-3 pt-0 border-t border-slate-800/60 space-y-3">
+                    {/* Page Size Select */}
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                        Page Format / Size
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        {PDF_PAGE_SIZE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => setPdfPageSize(opt.id)}
+                            className={`p-2 rounded-xl text-left border transition-all ${
+                              pdfPageSize === opt.id
+                                ? 'bg-red-950/60 border-red-500/60 text-white shadow-md shadow-red-500/10'
+                                : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:text-white'
+                            }`}
+                          >
+                            <div className="text-xs font-bold flex items-center justify-between">
+                              <span>{opt.label}</span>
+                              {pdfPageSize === opt.id && <Check className="w-3 h-3 text-red-400" />}
+                            </div>
+                            <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                              {opt.description}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Orientation & Margin Grid */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                          Orientation
+                        </label>
+                        <select
+                          value={pdfOrientation}
+                          onChange={(e) => setPdfOrientation(e.target.value as PdfOrientation)}
+                          className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none"
+                        >
+                          <option value="auto">Auto (Match Image)</option>
+                          <option value="portrait">Portrait</option>
+                          <option value="landscape">Landscape</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                          Page Margin
+                        </label>
+                        <select
+                          value={pdfMargin}
+                          onChange={(e) => setPdfMargin(e.target.value as PdfMargin)}
+                          className="w-full px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white focus:outline-none"
+                        >
+                          <option value="narrow">Narrow (5 mm) - Recommended</option>
+                          <option value="standard">Standard (10 mm)</option>
+                          <option value="none">None (Full Bleed)</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Modal Footer */}
@@ -1054,12 +1179,12 @@ export const AdobeScannerTab: React.FC = () => {
                 {isGeneratingPdf ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Building Vector PDF & Syncing...</span>
+                    <span>Building {pdfPageSize} PDF & Syncing...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Save {scanPages.length} Page PDF & Sync</span>
+                    <span>Save {scanPages.length} Page ({pdfPageSize}) PDF</span>
                   </>
                 )}
               </button>
@@ -1068,23 +1193,62 @@ export const AdobeScannerTab: React.FC = () => {
         </div>
       )}
 
-      {/* PDF PREVIEW MODAL */}
+      {/* INTELLIGENT DUAL-MODE DOCUMENT & PDF VIEWER MODAL */}
       {previewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
-          <div className="w-full max-w-3xl h-[88vh] flex flex-col rounded-3xl bg-slate-900 border border-red-500/40 shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-4xl h-[92vh] flex flex-col rounded-3xl bg-slate-900 border border-red-500/40 shadow-2xl overflow-hidden">
             {/* Preview Header */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-3">
+            <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center justify-between gap-2 flex-wrap bg-slate-950/70">
               <div className="flex items-center gap-2 min-w-0">
                 <FileText className="w-5 h-5 text-red-500 shrink-0" />
                 <div className="min-w-0">
-                  <h3 className="text-sm font-bold text-white truncate">{previewDoc.title}</h3>
+                  <h3 className="text-sm font-bold text-white truncate max-w-[200px] sm:max-w-md">
+                    {previewDoc.title}
+                  </h3>
                   <p className="text-[11px] text-slate-400">
-                    {previewDoc.pageCount} Pages • {previewDoc.category} • {Math.round(previewDoc.fileSizeBytes / 1024)} KB
+                    {previewDoc.pageCount} Pages • {previewDoc.category} • Format: {previewDoc.pageSize || 'A4'} • {Math.round(previewDoc.fileSizeBytes / 1024)} KB
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              {/* Viewer Controls & Action Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* View Mode Toggle: Scanned Pages vs Native PDF Blob */}
+                <div className="flex items-center bg-slate-800/90 rounded-xl p-0.5 border border-slate-700/80 mr-1">
+                  <button
+                    onClick={() => setPreviewViewMode('pages')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors ${
+                      previewViewMode === 'pages'
+                        ? 'bg-red-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Pages
+                  </button>
+                  <button
+                    onClick={() => setPreviewViewMode('pdf')}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors ${
+                      previewViewMode === 'pdf'
+                        ? 'bg-red-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    PDF Canvas
+                  </button>
+                </div>
+
+                {/* Open in New Browser Tab */}
+                {previewPdfBlobUrl && (
+                  <button
+                    onClick={() => window.open(previewPdfBlobUrl, '_blank')}
+                    className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white"
+                    title="Open PDF in Fullscreen Browser Tab"
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                  </button>
+                )}
+
+                {/* Download PDF */}
                 <button
                   onClick={() => handleDownload(previewDoc)}
                   className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white"
@@ -1093,6 +1257,7 @@ export const AdobeScannerTab: React.FC = () => {
                   <Download className="w-4 h-4" />
                 </button>
 
+                {/* Share PDF */}
                 <button
                   onClick={() => handleShare(previewDoc)}
                   className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white"
@@ -1101,6 +1266,7 @@ export const AdobeScannerTab: React.FC = () => {
                   <Share2 className="w-4 h-4" />
                 </button>
 
+                {/* Google Drive Link */}
                 {previewDoc.driveWebViewLink && (
                   <a
                     href={previewDoc.driveWebViewLink}
@@ -1113,10 +1279,11 @@ export const AdobeScannerTab: React.FC = () => {
                   </a>
                 )}
 
+                {/* Close */}
                 <button
                   onClick={() => {
                     setPreviewDoc(null);
-                    setPreviewPdfUrl(null);
+                    setPreviewPdfBlobUrl(null);
                   }}
                   className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
                 >
@@ -1125,24 +1292,147 @@ export const AdobeScannerTab: React.FC = () => {
               </div>
             </div>
 
-            {/* Preview Frame */}
-            <div className="flex-1 bg-slate-950 p-2 overflow-hidden flex items-center justify-center">
-              {previewPdfUrl ? (
-                <iframe
-                  src={previewPdfUrl}
-                  title={previewDoc.title}
-                  className="w-full h-full rounded-2xl border border-slate-800"
-                />
+            {/* Viewer Body */}
+            <div className="flex-1 bg-slate-950 p-3 overflow-hidden flex flex-col items-center justify-center relative">
+              {previewViewMode === 'pages' && previewDoc.pages && previewDoc.pages.length > 0 ? (
+                // 1. Interactive High-Res Page Reader
+                <div className="w-full h-full flex flex-col items-center justify-between">
+                  {/* Zoom Controls */}
+                  <div className="w-full flex items-center justify-between text-xs text-slate-400 px-2 py-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-200">
+                        Page {previewActivePage + 1} of {previewDoc.pages.length}
+                      </span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
+                        {previewDoc.pageSize || 'A4'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setPreviewZoom((z) => Math.max(0.6, z - 0.2))}
+                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300"
+                        title="Zoom Out"
+                      >
+                        <ZoomOut className="w-3.5 h-3.5" />
+                      </button>
+                      <span className="font-mono text-[11px] w-12 text-center">
+                        {Math.round(previewZoom * 100)}%
+                      </span>
+                      <button
+                        onClick={() => setPreviewZoom((z) => Math.min(2.5, z + 0.2))}
+                        className="p-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300"
+                        title="Zoom In"
+                      >
+                        <ZoomIn className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setPreviewZoom(1)}
+                        className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[10px] text-slate-400"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Active Page Image Container */}
+                  <div className="flex-1 w-full overflow-auto flex items-center justify-center p-2">
+                    <img
+                      src={previewDoc.pages[previewActivePage]?.dataUrl || previewDoc.thumbnailDataUrl}
+                      alt={`Page ${previewActivePage + 1}`}
+                      style={{
+                        transform: `scale(${previewZoom})`,
+                        transformOrigin: 'center center',
+                        transition: 'transform 0.15s ease-out',
+                      }}
+                      className="max-h-[64vh] max-w-full object-contain rounded-xl shadow-2xl border border-slate-800 bg-white"
+                    />
+                  </div>
+
+                  {/* Bottom Page Navigation Scrubber */}
+                  <div className="w-full pt-2 flex items-center justify-center gap-3">
+                    <button
+                      onClick={() => setPreviewActivePage((p) => Math.max(0, p - 1))}
+                      disabled={previewActivePage === 0}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-xs font-semibold flex items-center gap-1"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      <span>Prev Page</span>
+                    </button>
+
+                    <div className="flex gap-1.5 overflow-x-auto max-w-[280px] sm:max-w-md py-1">
+                      {previewDoc.pages.map((p, i) => (
+                        <button
+                          key={p.id || i}
+                          onClick={() => setPreviewActivePage(i)}
+                          className={`w-7 h-7 rounded-lg text-xs font-bold transition-all shrink-0 ${
+                            previewActivePage === i
+                              ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
+                              : 'bg-slate-900 text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {i + 1}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={() => setPreviewActivePage((p) => Math.min(previewDoc.pages.length - 1, p + 1))}
+                      disabled={previewActivePage === previewDoc.pages.length - 1}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-30 text-xs font-semibold flex items-center gap-1"
+                    >
+                      <span>Next Page</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : previewPdfBlobUrl ? (
+                // 2. Native PDF Blob Viewer
+                <div className="w-full h-full flex flex-col items-center justify-center">
+                  <object
+                    data={previewPdfBlobUrl}
+                    type="application/pdf"
+                    className="w-full h-full rounded-2xl border border-slate-800"
+                  >
+                    {/* Fallback if object element cannot render inline PDF */}
+                    <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-slate-950">
+                      <FileText className="w-16 h-16 text-red-500 mb-3" />
+                      <h4 className="text-base font-bold text-white mb-1">{previewDoc.title}</h4>
+                      <p className="text-xs text-slate-400 mb-4 max-w-sm">
+                        Standard vector PDF ({previewDoc.pageSize || 'A4'}) ready. Open in browser or download directly.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => window.open(previewPdfBlobUrl, '_blank')}
+                          className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold text-xs shadow-lg shadow-red-600/30 flex items-center gap-2"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                          <span>Open in Fullscreen Reader</span>
+                        </button>
+                        <button
+                          onClick={() => handleDownload(previewDoc)}
+                          className="px-4 py-2 rounded-xl bg-slate-800 text-slate-200 text-xs font-semibold flex items-center gap-2"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span>Download PDF</span>
+                        </button>
+                      </div>
+                    </div>
+                  </object>
+                </div>
               ) : previewDoc.thumbnailDataUrl ? (
-                <img
-                  src={previewDoc.thumbnailDataUrl}
-                  alt={previewDoc.title}
-                  className="max-h-full max-w-full object-contain rounded-xl shadow-2xl"
-                />
+                // 3. Fallback to Thumbnail
+                <div className="flex flex-col items-center justify-center p-4">
+                  <img
+                    src={previewDoc.thumbnailDataUrl}
+                    alt={previewDoc.title}
+                    className="max-h-[70vh] max-w-full object-contain rounded-xl shadow-2xl border border-slate-800"
+                  />
+                </div>
               ) : (
                 <div className="text-center text-slate-500 text-xs">
                   <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>Loading PDF Canvas...</p>
+                  <p>Loading document pages...</p>
                 </div>
               )}
             </div>

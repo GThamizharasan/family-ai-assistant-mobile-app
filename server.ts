@@ -81,6 +81,10 @@ import {
   getBookPdfContentFromSqlite,
   saveBookPdfContentToSqlite,
   updateBookProgressInSqlite,
+  saveScannedDocumentToSqlite,
+  getScannedDocumentsFromSqlite,
+  deleteScannedDocumentFromSqlite,
+  toggleScannedDocumentFavoriteInSqlite,
   getSqlite3GbStorageQuotaStats,
   MAX_SQLITE_STORAGE_BYTES,
   getSqliteDbStats,
@@ -3019,6 +3023,53 @@ app.delete('/api/books/library/:id', (req, res) => {
     const userEmail = req.query.userEmail as string | undefined;
     const ok = deleteAppleBookFromSqlite(id, userEmail);
     res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// ADOBE SCANNED DOCUMENTS (Family Circle / Adobe Scans)
+// -------------------------------------------------------------
+app.get('/api/scanned-documents', (req, res) => {
+  try {
+    const userEmail = req.query.userEmail as string | undefined;
+    const documents = getScannedDocumentsFromSqlite(userEmail);
+    res.json({ success: true, documents });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/scanned-documents', (req, res) => {
+  try {
+    const doc = req.body;
+    if (!doc || !doc.title) {
+      return res.status(400).json({ success: false, error: 'Document data is required' });
+    }
+    const saved = saveScannedDocumentToSqlite(doc);
+    res.json({ success: true, document: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/scanned-documents/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = deleteScannedDocumentFromSqlite(id);
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/scanned-documents/:id/favorite', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isFavorite } = req.body;
+    const ok = toggleScannedDocumentFavoriteInSqlite(id, Boolean(isFavorite));
+    res.json({ success: ok, id, isFavorite: Boolean(isFavorite) });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

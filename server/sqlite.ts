@@ -623,6 +623,28 @@ export async function initSqliteDb(): Promise<Database> {
       added_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS adobe_scanned_documents (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      page_size TEXT DEFAULT 'A4',
+      page_count INTEGER DEFAULT 1,
+      file_size_bytes INTEGER DEFAULT 0,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Adobe Scans',
+      drive_sync_status TEXT DEFAULT 'local_only',
+      is_favorite INTEGER DEFAULT 0,
+      notes TEXT,
+      tags_json TEXT,
+      pages_json TEXT,
+      thumbnail_data_url TEXT,
+      pdf_content_base64 TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
@@ -4041,6 +4063,7 @@ export function getSqliteDbStats() {
     'tts_memos',
     'language_translations',
     'apple_books_library',
+    'adobe_scanned_documents',
   ];
 
   const tableCounts: Record<string, number> = {};
@@ -4069,3 +4092,142 @@ export function getSqliteDbStats() {
     lastSaved: new Date().toISOString(),
   };
 }
+
+// -------------------------------------------------------------
+// ADOBE SCANNED DOCUMENTS (Family Circle / Adobe Scans)
+// -------------------------------------------------------------
+export function saveScannedDocumentToSqlite(doc: any): any {
+  if (!db) throw new Error('Database not initialized');
+
+  const id = doc.id || `scan_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const userEmail = (doc.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const title = (doc.title || 'Scanned Document').trim();
+  const category = doc.category || 'Receipt';
+  const pageSize = doc.pageSize || 'A4';
+  const pageCount = Number(doc.pageCount || (doc.pages ? doc.pages.length : 1));
+  const fileSizeBytes = Number(doc.fileSizeBytes || 0);
+  const driveFileId = doc.driveFileId || null;
+  const driveWebViewLink = doc.driveWebViewLink || null;
+  const driveFolderPath = doc.driveFolderPath || 'Family Circle/Adobe Scans';
+  const driveSyncStatus = doc.driveSyncStatus || (driveFileId ? 'synced' : 'local_only');
+  const isFavorite = doc.isFavorite ? 1 : 0;
+  const notes = doc.notes || null;
+  const tagsJson = doc.tags ? JSON.stringify(doc.tags) : null;
+  const pagesJson = doc.pages ? JSON.stringify(doc.pages) : null;
+  const thumbnailDataUrl = doc.thumbnailDataUrl || null;
+  const pdfContentBase64 = doc.pdfContentBase64 || null;
+  const createdAt = doc.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+
+  db.run(`
+    INSERT OR REPLACE INTO adobe_scanned_documents (
+      id, user_email, title, category, page_size, page_count, file_size_bytes,
+      drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status,
+      is_favorite, notes, tags_json, pages_json, thumbnail_data_url, pdf_content_base64,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id, userEmail, title, category, pageSize, pageCount, fileSizeBytes,
+    driveFileId, driveWebViewLink, driveFolderPath, driveSyncStatus,
+    isFavorite, notes, tagsJson, pagesJson, thumbnailDataUrl, pdfContentBase64,
+    createdAt, updatedAt
+  ]);
+
+  scheduleSave();
+
+  return {
+    ...doc,
+    id,
+    userEmail,
+    title,
+    category,
+    pageSize,
+    pageCount,
+    fileSizeBytes,
+    driveFileId: driveFileId || undefined,
+    driveWebViewLink: driveWebViewLink || undefined,
+    driveFolderPath,
+    driveSyncStatus,
+    isFavorite: isFavorite === 1,
+    notes: notes || undefined,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function getScannedDocumentsFromSqlite(userEmail?: string): any[] {
+  if (!db) return [];
+  try {
+    let query = 'SELECT id, user_email, title, category, page_size, page_count, file_size_bytes, drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status, is_favorite, notes, tags_json, pages_json, thumbnail_data_url, created_at, updated_at FROM adobe_scanned_documents';
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: any[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      let pages = [];
+      let tags = [];
+      try { if (row.pages_json) pages = JSON.parse(String(row.pages_json)); } catch {}
+      try { if (row.tags_json) tags = JSON.parse(String(row.tags_json)); } catch {}
+
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        category: String(row.category),
+        pageSize: String(row.page_size || 'A4'),
+        pageCount: Number(row.page_count || 1),
+        fileSizeBytes: Number(row.file_size_bytes || 0),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Adobe Scans'),
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        isFavorite: Number(row.is_favorite) === 1,
+        notes: row.notes ? String(row.notes) : undefined,
+        tags,
+        pages,
+        thumbnailDataUrl: row.thumbnail_data_url ? String(row.thumbnail_data_url) : undefined,
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Error reading scanned documents from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteScannedDocumentFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run('DELETE FROM adobe_scanned_documents WHERE id = ?', [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function toggleScannedDocumentFavoriteInSqlite(id: string, isFavorite: boolean): boolean {
+  if (!db) return false;
+  try {
+    db.run('UPDATE adobe_scanned_documents SET is_favorite = ?, updated_at = ? WHERE id = ?', [
+      isFavorite ? 1 : 0,
+      new Date().toISOString(),
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+

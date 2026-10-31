@@ -13,6 +13,18 @@ export type ScanCategory =
 
 export type ScanImageFilter = 'magic' | 'grayscale' | 'bw' | 'original';
 
+export type PdfPageSize = 'A4' | 'Letter' | 'Legal' | 'Fit' | 'Card';
+export type PdfOrientation = 'auto' | 'portrait' | 'landscape';
+export type PdfMargin = 'none' | 'narrow' | 'standard';
+export type PdfQuality = 'high' | 'balanced' | 'compact';
+
+export interface PdfGenerationOptions {
+  pageSize: PdfPageSize; // Default 'A4'
+  orientation: PdfOrientation; // Default 'auto'
+  margin: PdfMargin; // Default 'narrow'
+  quality: PdfQuality; // Default 'high'
+}
+
 export interface ScannedPage {
   id: string;
   pageNumber: number;
@@ -31,6 +43,8 @@ export interface ScannedDocument {
   pages: ScannedPage[];
   pageCount: number;
   fileSizeBytes: number;
+  pageSize?: PdfPageSize;
+  pdfOptions?: PdfGenerationOptions;
   thumbnailDataUrl?: string; // Small thumbnail of page 1
   pdfBlobUrl?: string; // In-memory blob URL for viewing
   pdfContentBase64?: string; // Cached or transient base64 of generated PDF
@@ -54,4 +68,12 @@ export const SCAN_CATEGORIES: { id: ScanCategory; label: string; iconName: strin
   { id: 'Personal', label: 'Personal Notes', iconName: 'FileText', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' },
   { id: 'Academic', label: 'Academic & Study', iconName: 'GraduationCap', color: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/30' },
   { id: 'Certificate', label: 'Certificates & Deeds', iconName: 'Award', color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' },
+];
+
+export const PDF_PAGE_SIZE_OPTIONS: { id: PdfPageSize; label: string; description: string; widthPt: number; heightPt: number }[] = [
+  { id: 'A4', label: 'A4 (Standard)', description: '210 × 297 mm (Default ISO)', widthPt: 595.28, heightPt: 841.89 },
+  { id: 'Letter', label: 'US Letter', description: '8.5 × 11 in (US Standard)', widthPt: 612.0, heightPt: 792.0 },
+  { id: 'Legal', label: 'US Legal', description: '8.5 × 14 in (Agreements & Legal)', widthPt: 612.0, heightPt: 1008.0 },
+  { id: 'Fit', label: 'Auto (Fit to Scan)', description: 'Exact receipt / scan proportion', widthPt: 0, heightPt: 0 },
+  { id: 'Card', label: 'ID / Business Card', description: '85.6 × 53.98 mm (Pocket Card)', widthPt: 242.6, heightPt: 153.0 },
 ];

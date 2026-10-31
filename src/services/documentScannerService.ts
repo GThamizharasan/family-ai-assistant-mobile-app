@@ -3,10 +3,11 @@
 // Supports multi-page PDF generation, local IndexedDB persistence, device downloading,
 // external sharing, Drive synchronization, and favorites management.
 
-import { ScannedDocument, ScanCategory, ScannedPage } from '../types/documentScanner';
+import { ScannedDocument, ScanCategory, ScannedPage, PdfGenerationOptions } from '../types/documentScanner';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
 import { saveScanPdfToStorage, getScanPdfFromStorage, deleteScanPdfFromStorage } from '../utils/scanStorage';
-import { generatePdfFromScannedPages } from '../utils/pdfGenerator';
+import { generatePdfFromScannedPages, dataUrlToBlob, dataUrlToUint8Array } from '../utils/pdfGenerator';
+import { getApiUrl } from './api';
 
 const LOCAL_STORAGE_KEY = 'aura_adobe_scanned_docs_v1';
 export const DRIVE_FOLDER_NAME = 'Adobe Scans';
@@ -34,7 +35,7 @@ export function saveLocalScannedDocuments(docs: ScannedDocument[]) {
   try {
     const sanitized = docs.map((d) => ({
       ...d,
-      pdfContentBase64: undefined, // Binary stored in IndexedDB aura_scanner_vault_db
+      pdfContentBase64: undefined, // Binary stored safely in IndexedDB aura_scanner_vault_db
       pdfBlobUrl: undefined,
       pages: (d.pages || []).map((p) => ({
         ...p,
@@ -71,24 +72,14 @@ export async function uploadScannedPdfToDrive(
   if (pdfBase64OrBytes instanceof Uint8Array) {
     binaryBytes = pdfBase64OrBytes;
   } else if (typeof pdfBase64OrBytes === 'string') {
-    const cleanB64 = pdfBase64OrBytes.replace(/^data:application\/pdf;base64,/, '');
-    const binStr = atob(cleanB64);
-    binaryBytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) {
-      binaryBytes[i] = binStr.charCodeAt(i);
-    }
+    binaryBytes = dataUrlToUint8Array(pdfBase64OrBytes);
   } else {
     // Try to read from IndexedDB
     const cachedUrl = await getScanPdfFromStorage(doc.id);
     if (!cachedUrl) {
       throw new Error('No PDF content available to upload to Google Drive');
     }
-    const cleanB64 = cachedUrl.replace(/^data:application\/pdf;base64,/, '');
-    const binStr = atob(cleanB64);
-    binaryBytes = new Uint8Array(binStr.length);
-    for (let i = 0; i < binStr.length; i++) {
-      binaryBytes[i] = binStr.charCodeAt(i);
-    }
+    binaryBytes = dataUrlToUint8Array(cachedUrl);
   }
 
   const safeTitle = (doc.title || 'Scanned_Document').trim().replace(/[/\\?%*:|"<>]/g, '_');
@@ -98,9 +89,9 @@ export async function uploadScannedPdfToDrive(
     name: fileName,
     mimeType: 'application/pdf',
     parents: [scansFolder.id],
-    description: `Auro Adobe Document Scan\nCategory: ${doc.category}\nPages: ${doc.pageCount}\nDate: ${new Date(
-      doc.createdAt
-    ).toLocaleString()}`,
+    description: `Auro Adobe Document Scan\nCategory: ${doc.category}\nPages: ${doc.pageCount}\nPage Size: ${
+      doc.pageSize || 'A4'
+    }\nDate: ${new Date(doc.createdAt).toLocaleString()}`,
   };
 
   const boundary = `-------AuroAdobeScanBoundary${Date.now()}`;
@@ -158,7 +149,7 @@ export async function uploadScannedPdfToDrive(
 }
 
 /**
- * Fetch all scanned documents (merging local cache and Google Drive files)
+ * Fetch all scanned documents (merging local cache, server SQLite, and Google Drive files)
  */
 export async function fetchScannedDocuments(
   googleAccessToken?: string | null,
@@ -170,7 +161,28 @@ export async function fetchScannedDocuments(
   const localList = getLocalScannedDocuments();
   localList.forEach((d) => map.set(d.id, d));
 
-  // 2. Fetch remote files from Google Drive "Family Circle / Adobe Scans"
+  // 2. Fetch from server SQLite (if available)
+  try {
+    const emailParam = userEmail ? `?userEmail=${encodeURIComponent(userEmail)}` : '';
+    const res = await fetch(getApiUrl(`/api/scanned-documents${emailParam}`)).catch(() => null);
+    if (res && res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.documents)) {
+        for (const item of data.documents) {
+          const existing = map.get(item.id);
+          map.set(item.id, {
+            ...existing,
+            ...item,
+            driveSyncStatus: item.driveFileId ? 'synced' : existing?.driveSyncStatus || 'local_only',
+          });
+        }
+      }
+    }
+  } catch (sqlErr) {
+    console.warn('Server SQLite scan documents fetch note:', sqlErr);
+  }
+
+  // 3. Fetch remote files from Google Drive "Family Circle / Adobe Scans"
   if (googleAccessToken) {
     try {
       const familyCircleFolder = await getOrCreateGoogleDriveFolder(googleAccessToken, 'Family Circle');
@@ -259,13 +271,23 @@ export async function fetchScannedDocuments(
 }
 
 /**
- * Save new or modified scanned document, generate its PDF, persist to IndexedDB and sync to Drive
+ * Save new or modified scanned document, generate its PDF, persist to IndexedDB and sync to Drive & server
  */
 export async function saveScannedDocument(
   doc: ScannedDocument,
-  googleAccessToken?: string | null
+  googleAccessToken?: string | null,
+  options?: Partial<PdfGenerationOptions>
 ): Promise<ScannedDocument> {
   let updated = { ...doc };
+  if (options) {
+    updated.pdfOptions = {
+      pageSize: options.pageSize || 'A4',
+      orientation: options.orientation || 'auto',
+      margin: options.margin || 'narrow',
+      quality: options.quality || 'high',
+    };
+    updated.pageSize = options.pageSize || 'A4';
+  }
 
   // 1. Generate authentic PDF 1.4 binary if not already provided
   let pdfDataUrl = updated.pdfContentBase64;
@@ -273,7 +295,7 @@ export async function saveScannedDocument(
 
   if (!pdfDataUrl && updated.pages && updated.pages.length > 0) {
     try {
-      const gen = await generatePdfFromScannedPages(updated.pages, updated.title);
+      const gen = await generatePdfFromScannedPages(updated.pages, updated.title, updated.pdfOptions);
       pdfDataUrl = gen.dataUrl;
       pdfBlob = gen.blob;
       updated.fileSizeBytes = gen.fileSizeBytes;
@@ -312,12 +334,19 @@ export async function saveScannedDocument(
     updated.driveSyncStatus = updated.driveFileId ? 'synced' : 'local_only';
   }
 
-  // 4. Update local cache
+  // 4. Mirror to server SQLite (Non-blocking)
+  fetch(getApiUrl('/api/scanned-documents'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updated),
+  }).catch(() => {});
+
+  // 5. Update local cache
   const list = getLocalScannedDocuments().filter((d) => d.id !== updated.id);
   list.unshift(updated);
   saveLocalScannedDocuments(list);
 
-  // 5. Dispatch sync event
+  // 6. Dispatch sync event
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('aura_sqlite_synced'));
   }
@@ -326,7 +355,7 @@ export async function saveScannedDocument(
 }
 
 /**
- * Delete a scanned document from local IndexedDB, localStorage, and Google Drive
+ * Delete a scanned document from local IndexedDB, localStorage, server SQLite, and Google Drive
  */
 export async function deleteScannedDocument(
   doc: ScannedDocument,
@@ -339,7 +368,12 @@ export async function deleteScannedDocument(
   const list = getLocalScannedDocuments().filter((d) => d.id !== doc.id);
   saveLocalScannedDocuments(list);
 
-  // 3. If on Google Drive, delete file
+  // 3. Delete from server SQLite
+  fetch(getApiUrl(`/api/scanned-documents/${doc.id}`), {
+    method: 'DELETE',
+  }).catch(() => {});
+
+  // 4. If on Google Drive, delete file
   if (googleAccessToken && doc.driveFileId) {
     try {
       await fetch(`https://www.googleapis.com/drive/v3/files/${doc.driveFileId}`, {
@@ -369,90 +403,145 @@ export function toggleDocumentFavorite(id: string, isFavorite: boolean): Scanned
   doc.isFavorite = isFavorite;
   doc.updatedAt = new Date().toISOString();
   saveLocalScannedDocuments(list);
+
+  fetch(getApiUrl(`/api/scanned-documents/${id}/favorite`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isFavorite }),
+  }).catch(() => {});
+
   return doc;
 }
 
 /**
- * Download scanned PDF directly to device
+ * Retrieves a reliable Blob URL for viewing the PDF natively in the app
  */
-export async function downloadScannedPdf(doc: ScannedDocument): Promise<void> {
-  let downloadUrl = doc.pdfBlobUrl;
+export async function getDocumentPdfBlobUrl(doc: ScannedDocument): Promise<string | null> {
+  if (doc.pdfBlobUrl) return doc.pdfBlobUrl;
 
-  if (!downloadUrl) {
+  try {
     const cachedDataUrl = await getScanPdfFromStorage(doc.id);
     if (cachedDataUrl) {
-      downloadUrl = cachedDataUrl;
-    } else if (doc.driveFileId) {
-      downloadUrl = `https://drive.google.com/uc?export=download&id=${doc.driveFileId}`;
+      const blob = dataUrlToBlob(cachedDataUrl);
+      return URL.createObjectURL(blob);
+    }
+  } catch (err) {
+    console.warn('Error reading PDF from storage for blob URL:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Download scanned PDF directly to device (using authentic binary Blob to prevent data-URI truncations)
+ */
+export async function downloadScannedPdf(doc: ScannedDocument): Promise<void> {
+  let blob: Blob | null = null;
+
+  // 1. Try to read from IndexedDB
+  const cachedDataUrl = await getScanPdfFromStorage(doc.id);
+  if (cachedDataUrl) {
+    blob = dataUrlToBlob(cachedDataUrl);
+  }
+
+  // 2. Fallback: If not in local storage but has Drive ID, fetch directly
+  if (!blob && doc.driveFileId) {
+    const token = typeof window !== 'undefined'
+      ? (localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token'))
+      : null;
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${doc.driveFileId}?alt=media`, { headers });
+    if (res.ok) {
+      blob = await res.blob();
     }
   }
 
-  if (!downloadUrl) {
-    throw new Error('No PDF content available to download.');
+  if (!blob) {
+    throw new Error('PDF content is not available yet. Please open and inspect the document first.');
   }
 
   const safeTitle = (doc.title || 'Scanned_Document').trim().replace(/[/\\?%*:|"<>]/g, '_');
   const filename = safeTitle.toLowerCase().endsWith('.pdf') ? safeTitle : `${safeTitle}.pdf`;
 
+  // Create native object URL
+  const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = downloadUrl;
+  a.href = objectUrl;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+
+  // Clean up object URL after 30 seconds
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+}
+
+export interface ShareResult {
+  shared: boolean;
+  mode: 'file' | 'link' | 'download_fallback';
+  message: string;
 }
 
 /**
- * Share scanned document via Web Share API or external link
+ * Share scanned document via Web Share API (native file attachment) or external link / download fallback
  */
-export async function shareScannedPdf(doc: ScannedDocument): Promise<boolean> {
+export async function shareScannedPdf(doc: ScannedDocument): Promise<ShareResult> {
   const shareTitle = `${doc.title} (Adobe Document Scan)`;
   const shareText = `Check out this document "${doc.title}" (${doc.pageCount} pages, ${doc.category}) scanned via Auro Adobe Scanner.`;
+  const safeTitle = (doc.title || 'Scanned_Doc').trim().replace(/[/\\?%*:|"<>]/g, '_');
+  const filename = safeTitle.toLowerCase().endsWith('.pdf') ? safeTitle : `${safeTitle}.pdf`;
 
-  // 1. Try Native Web Share with PDF File
-  if (typeof navigator !== 'undefined' && navigator.share) {
+  let pdfBlob: Blob | null = null;
+  const cachedDataUrl = await getScanPdfFromStorage(doc.id);
+  if (cachedDataUrl) {
+    pdfBlob = dataUrlToBlob(cachedDataUrl);
+  }
+
+  // 1. Try Native Web Share with authentic PDF File attachment
+  if (typeof navigator !== 'undefined' && navigator.share && pdfBlob) {
     try {
-      const cachedDataUrl = await getScanPdfFromStorage(doc.id);
-      if (cachedDataUrl && navigator.canShare) {
-        const cleanB64 = cachedDataUrl.replace(/^data:application\/pdf;base64,/, '');
-        const binStr = atob(cleanB64);
-        const bytes = new Uint8Array(binStr.length);
-        for (let i = 0; i < binStr.length; i++) {
-          bytes[i] = binStr.charCodeAt(i);
-        }
-        const file = new File([bytes], `${doc.title || 'Scanned_Doc'}.pdf`, {
-          type: 'application/pdf',
+      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          files: [file],
         });
-
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title: shareTitle,
-            text: shareText,
-            files: [file],
-          });
-          return true;
-        }
+        return { shared: true, mode: 'file', message: 'Document PDF shared successfully!' };
       }
-
-      // Fallback share URL
-      const shareUrl = doc.driveWebViewLink || window.location.href;
-      await navigator.share({
-        title: shareTitle,
-        text: shareText,
-        url: shareUrl,
-      });
-      return true;
-    } catch (err: any) {
-      if (err.name === 'AbortError') return false;
+    } catch (shareErr: any) {
+      if (shareErr.name === 'AbortError') {
+        return { shared: false, mode: 'file', message: 'Share cancelled.' };
+      }
+      console.warn('Native file share failed, falling back:', shareErr);
     }
   }
 
-  // 2. Fallback: Copy link or download
-  if (doc.driveWebViewLink && typeof navigator !== 'undefined' && navigator.clipboard) {
-    await navigator.clipboard.writeText(doc.driveWebViewLink);
-    return true;
+  // 2. Try Native Web Share with URL (if Drive link is present)
+  if (typeof navigator !== 'undefined' && navigator.share && doc.driveWebViewLink) {
+    try {
+      await navigator.share({
+        title: shareTitle,
+        text: shareText,
+        url: doc.driveWebViewLink,
+      });
+      return { shared: true, mode: 'link', message: 'Document Drive link shared!' };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return { shared: false, mode: 'link', message: 'Share cancelled.' };
+      }
+    }
   }
 
+  // 3. Fallback: Copy Google Drive link to clipboard if available
+  if (doc.driveWebViewLink && typeof navigator !== 'undefined' && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(doc.driveWebViewLink);
+      return { shared: true, mode: 'link', message: 'Drive link copied to clipboard!' };
+    } catch {}
+  }
+
+  // 4. Final Fallback: Direct Download
   await downloadScannedPdf(doc);
-  return true;
+  return { shared: true, mode: 'download_fallback', message: 'Document downloaded to your device!' };
 }
