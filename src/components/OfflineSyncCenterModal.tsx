@@ -50,12 +50,29 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
   const [syncStatusMsg, setSyncStatusMsg] = useState('');
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isSimulatedOffline, setIsSimulatedOffline] = useState(() => isOfflineModeSimulated());
+  const [quotaRefreshNotice, setQuotaRefreshNotice] = useState<string | null>(null);
 
   const loadQuota = async () => {
     setIsLoadingQuota(true);
     try {
       const q = await fetchSqlite3GbQuota();
-      if (q) setQuota(q);
+      if (q) {
+        setQuota(q);
+        const totalItems =
+          (q.breakdown?.driveFiles?.count || 0) +
+          (q.breakdown?.books?.count || 0) +
+          (q.breakdown?.music?.count || 0) +
+          (q.breakdown?.memos?.count || 0) +
+          (q.breakdown?.tts?.count || 0) +
+          (q.breakdown?.translations?.count || 0);
+        setQuotaRefreshNotice(`✓ Refreshed: ${q.totalUsedMb.toFixed(1)} MB used (${totalItems} cached items)`);
+      } else {
+        setQuotaRefreshNotice('Could not load statistics from SQLite.');
+      }
+      setTimeout(() => setQuotaRefreshNotice(null), 4000);
+    } catch {
+      setQuotaRefreshNotice('Could not load statistics from SQLite.');
+      setTimeout(() => setQuotaRefreshNotice(null), 4000);
     } finally {
       setIsLoadingQuota(false);
     }
@@ -246,6 +263,13 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
                 <span>Refresh</span>
               </button>
             </div>
+
+            {quotaRefreshNotice && (
+              <div className="mb-2.5 p-2 rounded-xl bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 text-[11px] font-mono flex items-center gap-1.5 animate-fadeIn">
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>{quotaRefreshNotice}</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-2 text-xs">
               {/* Apple Books */}

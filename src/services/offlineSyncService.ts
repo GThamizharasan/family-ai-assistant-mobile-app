@@ -69,7 +69,7 @@ export function isAppOffline(browserOnline = true): boolean {
  */
 export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | null> {
   try {
-    const res = await safeFetchJson<any>(getApiUrl('/api/sqlite/storage-quota'));
+    const res = await safeFetchJson<any>('/api/sqlite/storage-quota');
     if (res && res.success) {
       return res as Sqlite3GbQuotaDetails;
     }
@@ -85,7 +85,7 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
  */
 export async function saveBookToSqliteStore(book: Book, pdfContentBase64?: string): Promise<boolean> {
   try {
-    const res = await safeFetchJson<any>(getApiUrl('/api/books/library'), {
+    const res = await safeFetchJson<any>('/api/books/library', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -106,7 +106,7 @@ export async function saveBookToSqliteStore(book: Book, pdfContentBase64?: strin
 export async function fetchBooksFromSqliteStore(userEmail?: string): Promise<Book[]> {
   try {
     const url = userEmail ? `/api/books/library?userEmail=${encodeURIComponent(userEmail)}` : '/api/books/library';
-    const res = await safeFetchJson<{ success: boolean; books: any[] }>(getApiUrl(url));
+    const res = await safeFetchJson<{ success: boolean; books: any[] }>(url);
     if (res && res.success && Array.isArray(res.books)) {
       return res.books as Book[];
     }
@@ -121,7 +121,7 @@ export async function fetchBooksFromSqliteStore(userEmail?: string): Promise<Boo
  */
 export async function cacheBookPdfToSqlite(bookId: string, pdfContentBase64: string, pdfFileName?: string): Promise<boolean> {
   try {
-    const res = await safeFetchJson<any>(getApiUrl(`/api/books/library/${bookId}/cache-pdf`), {
+    const res = await safeFetchJson<any>(`/api/books/library/${bookId}/cache-pdf`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pdfContentBase64, pdfFileName }),
@@ -142,7 +142,7 @@ export async function updateBookProgressInSqliteStore(
   percent?: number
 ): Promise<boolean> {
   try {
-    const res = await safeFetchJson<any>(getApiUrl(`/api/books/library/${bookId}/progress`), {
+    const res = await safeFetchJson<any>(`/api/books/library/${bookId}/progress`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ page, chapterId, percent }),
@@ -249,7 +249,7 @@ export async function syncAllFeaturesToSqliteStore(options: {
       driveFiles: driveFilesToSync,
     };
 
-    const res = await safeFetchJson<any>(getApiUrl('/api/sqlite/sync-all'), {
+    const res = await safeFetchJson<any>('/api/sqlite/sync-all', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(syncPayload),

@@ -48,6 +48,10 @@ export function setApiBaseUrl(url: string) {
 }
 
 export function getApiUrl(path: string): string {
+  if (!path) return '';
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   const baseUrl = getApiBaseUrl();
 
