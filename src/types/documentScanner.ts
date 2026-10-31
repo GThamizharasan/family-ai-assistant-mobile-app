@@ -25,14 +25,31 @@ export interface PdfGenerationOptions {
   quality: PdfQuality; // Default 'high'
 }
 
+export type CameraScanOrientation = 'portrait' | 'landscape';
+
+export interface Point2D {
+  x: number;
+  y: number;
+}
+
+export interface QuadCorners {
+  topLeft: Point2D;
+  topRight: Point2D;
+  bottomRight: Point2D;
+  bottomLeft: Point2D;
+}
+
 export interface ScannedPage {
   id: string;
   pageNumber: number;
-  dataUrl: string; // Base64 image/jpeg data URL
+  dataUrl: string; // Base64 image/jpeg data URL (A4 cropped/rectified)
+  rawOriginalDataUrl?: string; // Optional raw uncropped capture for re-adjusting edges
   width: number;
   height: number;
   rotation: number; // 0, 90, 180, 270
   filter: ScanImageFilter;
+  detectedCorners?: QuadCorners;
+  orientation?: CameraScanOrientation;
 }
 
 export interface ScannedDocument {

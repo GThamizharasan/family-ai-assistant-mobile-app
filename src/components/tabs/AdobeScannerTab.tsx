@@ -31,6 +31,10 @@ import {
   ZoomOut,
   Settings2,
   FileCheck,
+  Crop,
+  Scan,
+  RectangleHorizontal,
+  RectangleVertical,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -43,6 +47,9 @@ import {
   PdfMargin,
   PdfQuality,
   PdfGenerationOptions,
+  CameraScanOrientation,
+  Point2D,
+  QuadCorners,
   SCAN_CATEGORIES,
   PDF_PAGE_SIZE_OPTIONS,
 } from '../../types/documentScanner';
@@ -63,6 +70,16 @@ import {
   getAllCachedScanIds,
 } from '../../utils/scanStorage';
 import { applyScanFilter, generatePdfFromScannedPages, dataUrlToBlob } from '../../utils/pdfGenerator';
+import {
+  detectDocumentQuad,
+  warpQuadToA4,
+  cropAndFormatToA4,
+  getDefaultA4Quad,
+  A4_PORTRAIT_WIDTH,
+  A4_PORTRAIT_HEIGHT,
+  A4_LANDSCAPE_WIDTH,
+  A4_LANDSCAPE_HEIGHT,
+} from '../../utils/edgeDetector';
 
 export const AdobeScannerTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
@@ -85,8 +102,21 @@ export const AdobeScannerTab: React.FC = () => {
   const [selectedPageIdx, setSelectedPageIdx] = useState<number>(0);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  const [cameraOrientation, setCameraOrientation] = useState<CameraScanOrientation>('portrait');
+  const [autoCropEdges, setAutoCropEdges] = useState<boolean>(true);
+  const [liveDetectedQuad, setLiveDetectedQuad] = useState<QuadCorners | null>(null);
+  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // Interactive Edge Adjustment Modal State
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [cropModalPageIdx, setCropModalPageIdx] = useState<number>(0);
+  const [cropCorners, setCropCorners] = useState<QuadCorners | null>(null);
+  const [cropOrientation, setCropOrientation] = useState<CameraScanOrientation>('portrait');
+  const [cropNaturalDim, setCropNaturalDim] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+  const [activeCornerDrag, setActiveCornerDrag] = useState<keyof QuadCorners | null>(null);
+  const cropSvgRef = useRef<SVGSVGElement | null>(null);
 
   // PDF Page Size & Customization Options (Default A4)
   const [showPdfOptions, setShowPdfOptions] = useState(false);
@@ -145,19 +175,24 @@ export const AdobeScannerTab: React.FC = () => {
   useEffect(() => {
     if (!isScannerModalOpen) {
       stopCameraStream();
+      setLiveDetectedQuad(null);
     }
   }, [isScannerModalOpen]);
 
-  // Start Camera
-  const startCamera = async (facing: 'environment' | 'user' = cameraFacing) => {
+  // Start Camera with Portrait / Landscape View Configuration
+  const startCamera = async (
+    facing: 'environment' | 'user' = cameraFacing,
+    orientation: CameraScanOrientation = cameraOrientation
+  ) => {
     stopCameraStream();
     setCameraError(null);
     try {
+      const isPortrait = orientation === 'portrait';
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facing,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          width: isPortrait ? { ideal: 1080 } : { ideal: 1920 },
+          height: isPortrait ? { ideal: 1920 } : { ideal: 1080 },
         },
         audio: false,
       });
@@ -168,6 +203,7 @@ export const AdobeScannerTab: React.FC = () => {
       }
       setIsCameraActive(true);
       setCameraFacing(facing);
+      setCameraOrientation(orientation);
     } catch (err: any) {
       console.warn('Camera stream error:', err);
       setCameraError('Camera access not available. Please allow permissions or upload photos from gallery.');
@@ -178,10 +214,48 @@ export const AdobeScannerTab: React.FC = () => {
   // Switch Camera Facing (Back / Front)
   const handleToggleCameraFacing = () => {
     const nextFacing = cameraFacing === 'environment' ? 'user' : 'environment';
-    void startCamera(nextFacing);
+    void startCamera(nextFacing, cameraOrientation);
   };
 
-  // Capture current video frame as a scanned page
+  // Switch Camera Orientation (Portrait / Landscape)
+  const handleToggleOrientation = (next: CameraScanOrientation) => {
+    setCameraOrientation(next);
+    if (isCameraActive) {
+      void startCamera(cameraFacing, next);
+    }
+  };
+
+  // Live Edge Detection Analysis Loop
+  useEffect(() => {
+    if (!isCameraActive || !isScannerModalOpen) {
+      setLiveDetectedQuad(null);
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.readyState < 2 || video.videoWidth === 0) return;
+
+      if (videoDimensions.width !== video.videoWidth || videoDimensions.height !== video.videoHeight) {
+        setVideoDimensions({ width: video.videoWidth, height: video.videoHeight });
+      }
+
+      if (autoCropEdges) {
+        try {
+          const quad = detectDocumentQuad(video, cameraOrientation);
+          setLiveDetectedQuad(quad);
+        } catch {
+          // Ignore transient detection errors
+        }
+      } else {
+        setLiveDetectedQuad(null);
+      }
+    }, 150);
+
+    return () => clearInterval(intervalId);
+  }, [isCameraActive, isScannerModalOpen, autoCropEdges, cameraOrientation, videoDimensions.width, videoDimensions.height]);
+
+  // Capture current video frame as a scanned page with automatic A4 edge detection & warping
   const handleCapturePage = async () => {
     const video = videoRef.current;
     if (!video || video.videoWidth === 0) return;
@@ -195,25 +269,47 @@ export const AdobeScannerTab: React.FC = () => {
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const rawDataUrl = canvas.toDataURL('image/jpeg', 0.95);
 
-    // Apply Magic Color filter by default for crisp document contrast & white paper
-    const filteredDataUrl = await applyScanFilter(rawDataUrl, 'magic', 0);
+    let processedUrl = rawDataUrl;
+    let detectedCorners: QuadCorners | undefined = undefined;
 
+    if (autoCropEdges) {
+      // Intelligently detect document edges, crop out background clutter, and warp into standard A4!
+      detectedCorners = liveDetectedQuad || detectDocumentQuad(canvas, cameraOrientation);
+      try {
+        processedUrl = await warpQuadToA4(canvas, detectedCorners, cameraOrientation);
+      } catch (err) {
+        console.warn('Auto A4 warp failed, using raw frame:', err);
+        processedUrl = rawDataUrl;
+      }
+    }
+
+    // Apply Magic Color filter for signature crisp white paper & dark text
+    const filteredDataUrl = await applyScanFilter(processedUrl, 'magic', 0);
+
+    const isPortrait = cameraOrientation === 'portrait';
     const newPage: ScannedPage = {
       id: `page_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       pageNumber: scanPages.length + 1,
       dataUrl: filteredDataUrl,
-      width: canvas.width,
-      height: canvas.height,
+      rawOriginalDataUrl: rawDataUrl,
+      width: isPortrait ? A4_PORTRAIT_WIDTH : A4_LANDSCAPE_WIDTH,
+      height: isPortrait ? A4_PORTRAIT_HEIGHT : A4_LANDSCAPE_HEIGHT,
       rotation: 0,
       filter: 'magic',
+      detectedCorners,
+      orientation: cameraOrientation,
     };
 
     setScanPages((prev) => [...prev, newPage]);
     setSelectedPageIdx(scanPages.length);
-    showToast(`✓ Page ${scanPages.length + 1} captured!`);
+    showToast(
+      autoCropEdges
+        ? `✓ Page ${scanPages.length + 1} captured & formatted to A4!`
+        : `✓ Page ${scanPages.length + 1} captured!`
+    );
   };
 
-  // Handle uploading photos/images from device
+  // Handle uploading photos/images from device with automatic A4 edge detection & perspective crop
   const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -228,17 +324,34 @@ export const AdobeScannerTab: React.FC = () => {
         reader.readAsDataURL(file);
       });
 
-      // Filter
-      const filtered = await applyScanFilter(dataUrl, 'magic', 0);
+      // Format to A4 by detecting document edges
+      let a4Url = dataUrl;
+      let detectedCorners: QuadCorners | undefined;
+      let detectedOrient: CameraScanOrientation = cameraOrientation;
 
+      try {
+        const res = await cropAndFormatToA4(dataUrl, undefined, cameraOrientation);
+        a4Url = res.a4DataUrl;
+        detectedCorners = res.detectedQuad;
+      } catch (err) {
+        console.warn('A4 auto-crop failed for uploaded file, using raw image:', err);
+      }
+
+      // Apply signature Magic filter
+      const filtered = await applyScanFilter(a4Url, 'magic', 0);
+
+      const isPortrait = detectedOrient === 'portrait';
       newPages.push({
         id: `page_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`,
         pageNumber: scanPages.length + i + 1,
         dataUrl: filtered,
-        width: 1200,
-        height: 1600,
+        rawOriginalDataUrl: dataUrl,
+        width: isPortrait ? A4_PORTRAIT_WIDTH : A4_LANDSCAPE_WIDTH,
+        height: isPortrait ? A4_PORTRAIT_HEIGHT : A4_LANDSCAPE_HEIGHT,
         rotation: 0,
         filter: 'magic',
+        detectedCorners,
+        orientation: detectedOrient,
       });
     }
 
@@ -247,7 +360,7 @@ export const AdobeScannerTab: React.FC = () => {
       setScanTitle(`Scan - ${new Date().toLocaleDateString()}`);
       setIsScannerModalOpen(true);
     }
-    showToast(`✓ Added ${newPages.length} image(s) to scan`);
+    showToast(`✓ Added ${newPages.length} image(s) formatted to standard A4`);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -504,13 +617,138 @@ export const AdobeScannerTab: React.FC = () => {
     }
   };
 
+  // Open Interactive Corner Adjustment Modal
+  const handleOpenCropModal = (pageIdx: number) => {
+    const page = scanPages[pageIdx];
+    if (!page) return;
+
+    setCropModalPageIdx(pageIdx);
+    const orient = page.orientation || cameraOrientation;
+    setCropOrientation(orient);
+
+    const sourceData = page.rawOriginalDataUrl || page.dataUrl;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      setCropNaturalDim({ width: img.width, height: img.height });
+      const corners = page.detectedCorners || detectDocumentQuad(img, orient);
+      setCropCorners(corners);
+      setIsCropModalOpen(true);
+    };
+    img.src = sourceData;
+  };
+
+  // Dragging corner points on the interactive SVG canvas
+  const handleSvgPointerDown = (corner: keyof QuadCorners, e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    setActiveCornerDrag(corner);
+  };
+
+  const handleSvgPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (!activeCornerDrag || !cropCorners || !cropSvgRef.current) return;
+    const rect = cropSvgRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const xRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const yRatio = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+
+    const realX = Math.round(xRatio * cropNaturalDim.width);
+    const realY = Math.round(yRatio * cropNaturalDim.height);
+
+    setCropCorners((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [activeCornerDrag]: { x: realX, y: realY },
+      };
+    });
+  };
+
+  const handleSvgPointerUp = (e: React.PointerEvent) => {
+    if (activeCornerDrag) {
+      (e.target as Element).releasePointerCapture?.(e.pointerId);
+      setActiveCornerDrag(null);
+    }
+  };
+
+  // Reset to auto-detected corners
+  const handleResetCropAuto = () => {
+    const page = scanPages[cropModalPageIdx];
+    if (!page) return;
+    const sourceData = page.rawOriginalDataUrl || page.dataUrl;
+    const img = new Image();
+    img.onload = () => {
+      const detected = detectDocumentQuad(img, cropOrientation);
+      setCropCorners(detected);
+      showToast('Reset to auto-detected document edges');
+    };
+    img.src = sourceData;
+  };
+
+  // Set crop to full frame (no border crop)
+  const handleFullFrameCrop = () => {
+    if (cropNaturalDim.width === 0) return;
+    setCropCorners({
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: cropNaturalDim.width, y: 0 },
+      bottomRight: { x: cropNaturalDim.width, y: cropNaturalDim.height },
+      bottomLeft: { x: 0, y: cropNaturalDim.height },
+    });
+    showToast('Crop reset to full frame');
+  };
+
+  // Apply crop & format to standard A4
+  const handleApplyCrop = async () => {
+    const page = scanPages[cropModalPageIdx];
+    if (!page || !cropCorners) return;
+
+    try {
+      showToast('Warping document to crisp standard A4...');
+      const sourceData = page.rawOriginalDataUrl || page.dataUrl;
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise((res, rej) => {
+        img.onload = res;
+        img.onerror = rej;
+        img.src = sourceData;
+      });
+
+      const a4Url = await warpQuadToA4(img, cropCorners, cropOrientation);
+      const filtered = await applyScanFilter(a4Url, page.filter, 0);
+
+      const isPortrait = cropOrientation === 'portrait';
+      setScanPages((prev) =>
+        prev.map((p, idx) =>
+          idx === cropModalPageIdx
+            ? {
+                ...p,
+                dataUrl: filtered,
+                detectedCorners: cropCorners,
+                orientation: cropOrientation,
+                width: isPortrait ? A4_PORTRAIT_WIDTH : A4_LANDSCAPE_WIDTH,
+                height: isPortrait ? A4_PORTRAIT_HEIGHT : A4_LANDSCAPE_HEIGHT,
+              }
+            : p
+        )
+      );
+
+      setIsCropModalOpen(false);
+      showToast(`✓ Page ${cropModalPageIdx + 1} cropped & formatted to standard A4!`);
+    } catch (err) {
+      console.warn('Apply crop error:', err);
+      showToast('Failed to apply crop.');
+    }
+  };
+
   // Open Scanner Modal
   const handleOpenScanner = () => {
     setScanTitle(`Scan - ${new Date().toLocaleDateString()}`);
     setScanPages([]);
+    setCameraOrientation('portrait'); // Portrait by default as requested!
     setIsScannerModalOpen(true);
     setTimeout(() => {
-      void startCamera('environment');
+      void startCamera('environment', 'portrait');
     }, 200);
   };
 
@@ -909,8 +1147,63 @@ export const AdobeScannerTab: React.FC = () => {
 
             {/* Modal Body: Camera Viewfinder or Pages Manager */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* Live Camera Viewfinder */}
-              <div className="relative w-full aspect-[4/3] rounded-2xl bg-black overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center">
+              {/* Camera View Orientation & Auto-Edge Crop Configuration Bar */}
+              <div className="flex items-center justify-between gap-2 p-2 rounded-2xl bg-slate-950/80 border border-slate-800 flex-wrap">
+                {/* Camera View Orientation Configuration (Portrait default, Landscape alternative) */}
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleOrientation('portrait')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      cameraOrientation === 'portrait'
+                        ? 'bg-red-600 text-white shadow-md shadow-red-600/30 font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Portrait View (Default for standard vertical documents & letters)"
+                  >
+                    <RectangleVertical className="w-3.5 h-3.5" />
+                    <span>Portrait (A4)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleOrientation('landscape')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      cameraOrientation === 'landscape'
+                        ? 'bg-red-600 text-white shadow-md shadow-red-600/30 font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Landscape View (For horizontal certificates, IDs, and wide forms)"
+                  >
+                    <RectangleHorizontal className="w-3.5 h-3.5" />
+                    <span>Landscape (A4)</span>
+                  </button>
+                </div>
+
+                {/* Auto Edge Crop Document Boundaries Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setAutoCropEdges((prev) => !prev)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                    autoCropEdges
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 shadow-sm'
+                      : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-300'
+                  }`}
+                  title="Detect document edges, ignore remaining areas, and warp into standard A4"
+                >
+                  <Scan className="w-3.5 h-3.5" />
+                  <span>Auto-Crop: {autoCropEdges ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+
+              {/* Live Camera Viewfinder (Adapts to Portrait or Landscape) */}
+              <div
+                className={`relative w-full ${
+                  cameraOrientation === 'portrait'
+                    ? 'max-w-md mx-auto aspect-[3/4] sm:aspect-[1/1.414]'
+                    : 'aspect-[4/3] sm:aspect-[1.414/1]'
+                } rounded-2xl bg-black overflow-hidden border border-slate-800 shadow-inner flex items-center justify-center transition-all duration-300`}
+              >
                 <video
                   ref={videoRef}
                   playsInline
@@ -919,12 +1212,67 @@ export const AdobeScannerTab: React.FC = () => {
                   className="w-full h-full object-cover"
                 />
 
-                {/* Document Edge Alignment Guides (A4 Aspect Ratio Overlay) */}
-                <div className="absolute inset-5 border-2 border-dashed border-red-400/60 rounded-xl pointer-events-none flex items-center justify-center">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-red-300 bg-black/70 px-2.5 py-0.5 rounded-full border border-red-500/30">
-                    Align {pdfPageSize} Document Within Frame
-                  </span>
-                </div>
+                {/* Real-time Document Edge Detection SVG Overlay */}
+                {autoCropEdges && liveDetectedQuad && videoDimensions.width > 0 && (
+                  <svg
+                    viewBox={`0 0 ${videoDimensions.width} ${videoDimensions.height}`}
+                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    preserveAspectRatio="none"
+                  >
+                    <defs>
+                      <mask id="doc-boundary-mask">
+                        <rect width={videoDimensions.width} height={videoDimensions.height} fill="white" />
+                        <polygon
+                          points={`${liveDetectedQuad.topLeft.x},${liveDetectedQuad.topLeft.y} ${liveDetectedQuad.topRight.x},${liveDetectedQuad.topRight.y} ${liveDetectedQuad.bottomRight.x},${liveDetectedQuad.bottomRight.y} ${liveDetectedQuad.bottomLeft.x},${liveDetectedQuad.bottomLeft.y}`}
+                          fill="black"
+                        />
+                      </mask>
+                    </defs>
+                    {/* Dim the surrounding table / desk / remaining area */}
+                    <rect
+                      width={videoDimensions.width}
+                      height={videoDimensions.height}
+                      fill="rgba(0, 0, 0, 0.45)"
+                      mask="url(#doc-boundary-mask)"
+                    />
+                    {/* Glowing quadrilateral border */}
+                    <polygon
+                      points={`${liveDetectedQuad.topLeft.x},${liveDetectedQuad.topLeft.y} ${liveDetectedQuad.topRight.x},${liveDetectedQuad.topRight.y} ${liveDetectedQuad.bottomRight.x},${liveDetectedQuad.bottomRight.y} ${liveDetectedQuad.bottomLeft.x},${liveDetectedQuad.bottomLeft.y}`}
+                      fill="rgba(239, 68, 68, 0.08)"
+                      stroke="#ef4444"
+                      strokeWidth={3}
+                      strokeDasharray="10 5"
+                    />
+                    {/* 4 Corner Markers */}
+                    {[
+                      liveDetectedQuad.topLeft,
+                      liveDetectedQuad.topRight,
+                      liveDetectedQuad.bottomRight,
+                      liveDetectedQuad.bottomLeft,
+                    ].map((pt, idx) => (
+                      <g key={idx}>
+                        <circle cx={pt.x} cy={pt.y} r={16} fill="rgba(239, 68, 68, 0.25)" stroke="#ef4444" strokeWidth={2} />
+                        <circle cx={pt.x} cy={pt.y} r={4} fill="#ffffff" />
+                      </g>
+                    ))}
+                  </svg>
+                )}
+
+                {/* Status Indicator Badge */}
+                {autoCropEdges && liveDetectedQuad ? (
+                  <div className="absolute top-3 inset-x-3 flex justify-center pointer-events-none">
+                    <span className="text-[11px] font-mono tracking-wide text-emerald-300 bg-black/80 px-3 py-1 rounded-full border border-emerald-500/40 shadow-lg flex items-center gap-1.5 backdrop-blur-sm">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                      A4 Document Locked • Auto-Crop Active
+                    </span>
+                  </div>
+                ) : (
+                  <div className="absolute inset-5 border-2 border-dashed border-red-400/60 rounded-xl pointer-events-none flex items-center justify-center">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-red-300 bg-black/70 px-2.5 py-0.5 rounded-full border border-red-500/30">
+                      Align {cameraOrientation === 'portrait' ? 'Portrait A4' : 'Landscape A4'} Inside Frame
+                    </span>
+                  </div>
+                )}
 
                 {cameraError && (
                   <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-4 text-center">
@@ -953,7 +1301,7 @@ export const AdobeScannerTab: React.FC = () => {
                   <button
                     onClick={handleCapturePage}
                     className="w-14 h-14 rounded-full bg-red-600 hover:bg-red-500 border-4 border-white text-white flex items-center justify-center shadow-xl shadow-red-600/50 active:scale-95 transition-transform"
-                    title="Capture Page"
+                    title="Capture Page & Crop to A4"
                   >
                     <div className="w-4 h-4 rounded-full bg-white" />
                   </button>
@@ -1023,6 +1371,17 @@ export const AdobeScannerTab: React.FC = () => {
 
                       <div className="flex items-center gap-1.5">
                         <button
+                          type="button"
+                          onClick={() => handleOpenCropModal(selectedPageIdx)}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center gap-1 text-xs"
+                          title="Adjust Document Boundaries & Corners"
+                        >
+                          <Crop className="w-3.5 h-3.5 text-red-400" />
+                          <span>Adjust Edges</span>
+                        </button>
+
+                        <button
+                          type="button"
                           onClick={() => handleRotatePage(selectedPageIdx)}
                           className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center gap-1 text-xs"
                           title="Rotate 90°"
@@ -1032,6 +1391,7 @@ export const AdobeScannerTab: React.FC = () => {
                         </button>
 
                         <button
+                          type="button"
                           onClick={() => handleDeletePage(selectedPageIdx)}
                           className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center gap-1 text-xs"
                           title="Delete Page"
@@ -1187,6 +1547,192 @@ export const AdobeScannerTab: React.FC = () => {
                     <span>Save {scanPages.length} Page ({pdfPageSize}) PDF</span>
                   </>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* INTERACTIVE DOCUMENT CORNER ADJUSTMENT & CROP MODAL */}
+      {isCropModalOpen && scanPages[cropModalPageIdx] && cropCorners && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-2xl max-h-[92vh] flex flex-col rounded-3xl bg-slate-900 border border-red-500/50 shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-3 sm:p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-red-600 flex items-center justify-center text-white">
+                  <Crop className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    Adjust Page {cropModalPageIdx + 1} Document Edges
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Drag the 4 corner pins to align with your paper • Formats to standard A4
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCropModalOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body: Interactive Image & Draggable SVG Overlay */}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center justify-center bg-slate-950 select-none">
+              {/* Toolbar above crop canvas */}
+              <div className="w-full max-w-lg flex items-center justify-between gap-2 mb-3 flex-wrap">
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setCropOrientation('portrait')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+                      cropOrientation === 'portrait'
+                        ? 'bg-red-600 text-white font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Portrait A4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCropOrientation('landscape')}
+                    className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+                      cropOrientation === 'landscape'
+                        ? 'bg-red-600 text-white font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Landscape A4
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetCropAuto}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-white"
+                  >
+                    Auto-Detect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleFullFrameCrop}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 hover:text-white"
+                  >
+                    Full Frame
+                  </button>
+                </div>
+              </div>
+
+              {/* Crop Canvas container */}
+              <div className="relative max-h-[60vh] max-w-full rounded-xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center bg-black">
+                <img
+                  src={scanPages[cropModalPageIdx].rawOriginalDataUrl || scanPages[cropModalPageIdx].dataUrl}
+                  alt="Original Capture"
+                  className="max-h-[60vh] max-w-full object-contain pointer-events-none"
+                />
+
+                {cropNaturalDim.width > 0 && (
+                  <svg
+                    ref={cropSvgRef}
+                    viewBox={`0 0 ${cropNaturalDim.width} ${cropNaturalDim.height}`}
+                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                    preserveAspectRatio="none"
+                    onPointerMove={handleSvgPointerMove}
+                    onPointerUp={handleSvgPointerUp}
+                    onPointerLeave={handleSvgPointerUp}
+                  >
+                    <defs>
+                      <mask id="crop-interactive-mask">
+                        <rect width={cropNaturalDim.width} height={cropNaturalDim.height} fill="white" />
+                        <polygon
+                          points={`${cropCorners.topLeft.x},${cropCorners.topLeft.y} ${cropCorners.topRight.x},${cropCorners.topRight.y} ${cropCorners.bottomRight.x},${cropCorners.bottomRight.y} ${cropCorners.bottomLeft.x},${cropCorners.bottomLeft.y}`}
+                          fill="black"
+                        />
+                      </mask>
+                    </defs>
+
+                    {/* Dimmed ignored area */}
+                    <rect
+                      width={cropNaturalDim.width}
+                      height={cropNaturalDim.height}
+                      fill="rgba(0, 0, 0, 0.55)"
+                      mask="url(#crop-interactive-mask)"
+                    />
+
+                    {/* Crop boundary polygon */}
+                    <polygon
+                      points={`${cropCorners.topLeft.x},${cropCorners.topLeft.y} ${cropCorners.topRight.x},${cropCorners.topRight.y} ${cropCorners.bottomRight.x},${cropCorners.bottomRight.y} ${cropCorners.bottomLeft.x},${cropCorners.bottomLeft.y}`}
+                      fill="rgba(239, 68, 68, 0.12)"
+                      stroke="#ef4444"
+                      strokeWidth={Math.max(3, cropNaturalDim.width / 250)}
+                      strokeDasharray="6 3"
+                    />
+
+                    {/* 4 Interactive Drag Handles */}
+                    {(
+                      [
+                        { key: 'topLeft' as const, label: 'TL', pt: cropCorners.topLeft },
+                        { key: 'topRight' as const, label: 'TR', pt: cropCorners.topRight },
+                        { key: 'bottomRight' as const, label: 'BR', pt: cropCorners.bottomRight },
+                        { key: 'bottomLeft' as const, label: 'BL', pt: cropCorners.bottomLeft },
+                      ] as const
+                    ).map(({ key, label, pt }) => {
+                      const radius = Math.max(18, cropNaturalDim.width / 35);
+                      return (
+                        <g
+                          key={key}
+                          onPointerDown={(e) => handleSvgPointerDown(key, e)}
+                          className="cursor-grab active:cursor-grabbing"
+                        >
+                          <circle
+                            cx={pt.x}
+                            cy={pt.y}
+                            r={radius}
+                            fill="#ef4444"
+                            stroke="#ffffff"
+                            strokeWidth={Math.max(2, cropNaturalDim.width / 350)}
+                            className="drop-shadow-lg"
+                          />
+                          <text
+                            x={pt.x}
+                            y={pt.y + radius * 0.35}
+                            textAnchor="middle"
+                            fill="#ffffff"
+                            fontSize={radius * 0.9}
+                            fontWeight="bold"
+                            pointerEvents="none"
+                          >
+                            {label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 sm:p-4 border-t border-slate-800 flex items-center justify-between gap-3 bg-slate-950/80">
+              <button
+                type="button"
+                onClick={() => setIsCropModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleApplyCrop}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-lg shadow-red-600/30 flex items-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>Apply A4 Crop & Rectify</span>
               </button>
             </div>
           </div>
