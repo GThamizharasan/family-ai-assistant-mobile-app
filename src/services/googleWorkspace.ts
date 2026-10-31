@@ -217,6 +217,30 @@ export async function fetchGoogleDriveFiles(accessToken?: string, userEmail?: st
             isRealCloudDrive: true,
           });
         }
+
+        // Automatically mirror live Google Drive files into SQLite persistence
+        const liveDriveFiles = Array.from(fileMap.values()).map((f) => ({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          modifiedTime: f.modifiedTime,
+          webViewLink: f.webViewLink,
+          folderId: f.folderId,
+          folderName: f.folderName,
+          category: f.category,
+        }));
+
+        if (liveDriveFiles.length > 0) {
+          fetch(getApiUrl('/api/google/drive/sync-bulk'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userEmail: userEmail || 'chinna.tamil2000@gmail.com',
+              files: liveDriveFiles,
+            }),
+          }).catch((syncErr) => console.warn('Background SQLite drive sync notice:', syncErr));
+        }
       }
     } catch (err) {
       console.warn('Google Drive live API fetch error:', err);
@@ -228,6 +252,43 @@ export async function fetchGoogleDriveFiles(accessToken?: string, userEmail?: st
   }
 
   return FALLBACK_DRIVE_FILES;
+}
+
+/**
+ * Explicitly synchronizes Google Drive files into SQLite persistence
+ */
+export async function syncGoogleDriveToSqliteStore(
+  accessToken: string,
+  userEmail?: string
+): Promise<{ success: boolean; count: number; files: GoogleDriveFile[] }> {
+  try {
+    const files = await fetchGoogleDriveFiles(accessToken, userEmail);
+    const syncFiles = files.map((f) => ({
+      id: f.id,
+      name: f.name,
+      mimeType: f.mimeType,
+      size: f.size,
+      modifiedTime: f.modifiedTime,
+      webViewLink: f.webViewLink,
+      folderId: f.folderId,
+      folderName: f.folderName,
+      category: f.category,
+    }));
+
+    const res = await fetch(getApiUrl('/api/google/drive/sync-bulk'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userEmail: userEmail || 'chinna.tamil2000@gmail.com',
+        files: syncFiles,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { success: true, count: data.count || syncFiles.length, files };
+  } catch (err) {
+    console.warn('Failed to sync Google Drive to SQLite store:', err);
+    return { success: false, count: 0, files: [] };
+  }
 }
 
 // -------------------------------------------------------------

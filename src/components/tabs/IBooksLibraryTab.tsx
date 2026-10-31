@@ -316,7 +316,7 @@ export const IBooksLibraryTab: React.FC = () => {
     if (!book.isLocalCached && book.driveFileId && googleAccessToken) {
       setIsDownloadingBook(book.id);
       try {
-        const dataUrl = await downloadBookContentFromDrive(googleAccessToken, book.driveFileId);
+        const dataUrl = await downloadBookContentFromDrive(googleAccessToken, book.driveFileId, book.id);
         const updated = await markBookAccessedAndCache(book.id, books, dataUrl);
         setBooks(updated);
         const fresh = updated.find((b) => b.id === book.id) || { ...book, pdfUrl: dataUrl, isLocalCached: true };
@@ -348,6 +348,11 @@ export const IBooksLibraryTab: React.FC = () => {
       const result = await refreshAppleBooksFromDrive(googleAccessToken, books, defaultFolder, user?.email);
       const managed = await manageRecentBooksCache(result.books, MAX_LOCAL_RECENT_BOOKS);
       setBooks(managed);
+
+      // Persist newly discovered/refreshed books to SQLite store
+      result.books.forEach((b) => {
+        saveBookToSqliteStore(b).catch(() => {});
+      });
       setDriveSyncNotice(
         result.newCount > 0
           ? `Discovered ${result.newCount} new book(s) from "${defaultFolder} / Apple Books"! Top ${MAX_LOCAL_RECENT_BOOKS} kept in local offline storage.`

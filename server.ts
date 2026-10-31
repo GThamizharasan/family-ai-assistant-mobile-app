@@ -40,6 +40,7 @@ import {
   getGoogleKeepNotesFromSqlite,
   deleteGoogleKeepNoteFromSqlite,
   saveGoogleDriveFileToSqlite,
+  saveGoogleDriveFilesBulkToSqlite,
   updateGoogleDriveFileFolderInSqlite,
   getGoogleDriveFilesFromSqlite,
   deleteGoogleDriveFileFromSqlite,
@@ -2824,11 +2825,12 @@ app.post('/api/sqlite/sync-all', async (req, res) => {
     }
 
     // 6. Sync Google Drive Files
-    for (const d of driveFiles) {
+    if (Array.isArray(driveFiles) && driveFiles.length > 0) {
       try {
-        saveGoogleDriveFileToSqlite({ ...d, userEmail });
-        results.driveFilesSaved++;
-      } catch {}
+        results.driveFilesSaved = saveGoogleDriveFilesBulkToSqlite(driveFiles, userEmail);
+      } catch (driveErr) {
+        console.warn('Error in bulk sync Google Drive files:', driveErr);
+      }
     }
 
     results.quotaAfter = getSqlite3GbStorageQuotaStats();
@@ -3166,6 +3168,16 @@ app.post('/api/google/drive/upload', (req, res) => {
       uploadedBy: uploadedBy || 'voice_assistant',
     });
     res.json({ success: true, file });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/google/drive/sync-bulk', (req, res) => {
+  try {
+    const { userEmail = 'chinna.tamil2000@gmail.com', files = [] } = req.body;
+    const count = saveGoogleDriveFilesBulkToSqlite(files, userEmail);
+    res.json({ success: true, count });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

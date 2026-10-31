@@ -478,6 +478,36 @@ export async function refreshAppleBooksFromDrive(
         };
 
         reconciledBooks.unshift(newBook);
+
+        // Mirror discovered Google Drive book into backend SQLite store
+        fetch(getApiUrl('/api/books/library'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...newBook,
+            userEmail: _userEmail || 'chinna.tamil2000@gmail.com',
+            isLocalCached: true,
+          }),
+        }).catch((err) => console.warn('[Apple Books Drive] SQLite book mirror note:', err));
+
+        // Mirror file metadata into google_drive_files table
+        fetch(getApiUrl('/api/google/drive/upload'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: f.id,
+            name: f.name,
+            mimeType: f.mimeType || 'application/pdf',
+            size: sizeFormatted,
+            folderId: f.parents?.[0],
+            folderName: item.folderPath,
+            category: item.category,
+            webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+            modifiedTime: f.modifiedTime || new Date().toISOString(),
+            userEmail: _userEmail || 'chinna.tamil2000@gmail.com',
+            uploadedBy: 'apple_books_drive',
+          }),
+        }).catch(() => {});
       }
     }
 
@@ -490,10 +520,12 @@ export async function refreshAppleBooksFromDrive(
 
 /**
  * Downloads a book's PDF content from Google Drive on-demand for offline viewing and reading.
+ * Caches the downloaded PDF into SQLite persistence for future offline reading.
  */
 export async function downloadBookContentFromDrive(
   accessToken: string | null | undefined,
-  driveFileId: string
+  driveFileId: string,
+  bookId?: string
 ): Promise<string> {
   if (!accessToken) throw new Error('NO_GOOGLE_AUTH: Active Google authorization required to download book.');
 
@@ -506,10 +538,21 @@ export async function downloadBookContentFromDrive(
   }
 
   const blob = await res.blob();
-  return new Promise<string>((resolve, reject) => {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+
+  // Mirror PDF content to SQLite persistent storage
+  if (bookId && dataUrl) {
+    fetch(getApiUrl(`/api/books/library/${encodeURIComponent(bookId)}/cache-pdf`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdfContentBase64: dataUrl }),
+    }).catch((err) => console.warn('[Apple Books Drive] SQLite cache-pdf note:', err));
+  }
+
+  return dataUrl;
 }

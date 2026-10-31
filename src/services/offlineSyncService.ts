@@ -4,6 +4,7 @@
 import { safeFetchJson, getApiUrl } from './api';
 import { Book } from '../types/book';
 import { MusicTrack } from '../types/music';
+import { fetchGoogleDriveFiles, syncGoogleDriveToSqliteStore, GoogleDriveFile } from './googleWorkspace';
 
 export interface StorageBreakdownItem {
   count: number;
@@ -153,7 +154,9 @@ export async function updateBookProgressInSqliteStore(
 }
 
 /**
- * Unified 1-Click Sync All Features into 3GB Local SQLite Store
+ * Unified 1-Click Sync All Features into 3GB Local SQLite Store.
+ * Fully synchronizes Google Drive files, Apple Books, Apple Music,
+ * Voice Memos, TTS Audio, and Translations into SQLite persistence.
  */
 export async function syncAllFeaturesToSqliteStore(options: {
   userEmail?: string;
@@ -166,29 +169,73 @@ export async function syncAllFeaturesToSqliteStore(options: {
   quota?: Sqlite3GbQuotaDetails;
 }> {
   const { userEmail = 'chinna.tamil2000@gmail.com', onProgress } = options;
+  const token = options.googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
 
   try {
-    onProgress?.('Inspecting local features and Google Drive cache...', 10);
+    onProgress?.('Inspecting local features and preparing SQLite sync...', 10);
 
-    // 1. Gather Books from localStorage / initial data
+    // 1. Synchronize Google Drive Files into SQLite if authenticated
+    let driveFilesToSync: any[] = [];
+    if (token) {
+      onProgress?.('Connecting to Google Drive API & scanning files...', 25);
+      try {
+        const driveFiles = await fetchGoogleDriveFiles(token, userEmail);
+        driveFilesToSync = driveFiles.map((f) => ({
+          id: f.id,
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          modifiedTime: f.modifiedTime,
+          webViewLink: f.webViewLink,
+          folderId: f.folderId,
+          folderName: f.folderName,
+          category: f.category,
+        }));
+      } catch (driveErr) {
+        console.warn('Google Drive scan during offline sync note:', driveErr);
+      }
+    }
+
+    // 2. Gather Books from localStorage / initial data
     let localBooks: Book[] = [];
     try {
       const savedBooks = localStorage.getItem('aura_ibooks_library');
       if (savedBooks) localBooks = JSON.parse(savedBooks);
     } catch {}
 
-    onProgress?.(`Syncing ${localBooks.length} Books to SQLite...`, 30);
+    onProgress?.(`Syncing ${localBooks.length} Books and ${driveFilesToSync.length} Google Drive files...`, 45);
 
-    // 2. Gather Music tracks
+    // 3. Gather Music tracks
     let localMusic: MusicTrack[] = [];
     try {
-      const savedMusic = localStorage.getItem('aura_music_tracks');
+      const savedMusic = localStorage.getItem('aura_music_tracks') || localStorage.getItem('aura_music_library_tracks');
       if (savedMusic) localMusic = JSON.parse(savedMusic);
     } catch {}
 
-    onProgress?.(`Syncing ${localMusic.length} Music Tracks to SQLite...`, 50);
+    // 4. Gather Voice Recordings
+    let localRecordings: any[] = [];
+    try {
+      const savedRecs = localStorage.getItem('aura_voice_recordings_cache_v1');
+      if (savedRecs) localRecordings = JSON.parse(savedRecs);
+    } catch {}
 
-    // 3. Post to unified sync endpoint
+    // 5. Gather TTS Memos
+    let localTts: any[] = [];
+    try {
+      const savedTts = localStorage.getItem('aura_tts_memos_cache_v1');
+      if (savedTts) localTts = JSON.parse(savedTts);
+    } catch {}
+
+    // 6. Gather Translations
+    let localTranslations: any[] = [];
+    try {
+      const savedTranslations = localStorage.getItem('aura_translations_cache_v1');
+      if (savedTranslations) localTranslations = JSON.parse(savedTranslations);
+    } catch {}
+
+    onProgress?.('Writing all records & media into SQLite 3GB storage...', 70);
+
+    // 7. Post to unified sync endpoint
     const syncPayload = {
       userEmail,
       books: localBooks.map((b) => ({
@@ -196,9 +243,11 @@ export async function syncAllFeaturesToSqliteStore(options: {
         isLocalCached: true,
       })),
       musicTracks: localMusic,
+      voiceRecordings: localRecordings,
+      ttsMemos: localTts,
+      translations: localTranslations,
+      driveFiles: driveFilesToSync,
     };
-
-    onProgress?.('Writing records & media into SQLite 3GB storage...', 75);
 
     const res = await safeFetchJson<any>(getApiUrl('/api/sqlite/sync-all'), {
       method: 'POST',
@@ -210,7 +259,7 @@ export async function syncAllFeaturesToSqliteStore(options: {
 
     const quota = await fetchSqlite3GbQuota();
 
-    onProgress?.('Sync complete! All features offline ready.', 100);
+    onProgress?.('Sync complete! All features & Google Drive offline ready.', 100);
 
     // Dispatch sync completion event
     if (typeof window !== 'undefined') {
@@ -219,7 +268,7 @@ export async function syncAllFeaturesToSqliteStore(options: {
 
     return {
       success: true,
-      message: res?.message || 'Successfully synchronized all features into local SQLite 3GB store.',
+      message: res?.message || 'Successfully synchronized Google Drive and all features into local SQLite 3GB store.',
       syncedCounts: res?.syncedCounts,
       quota: quota || undefined,
     };
@@ -231,3 +280,5 @@ export async function syncAllFeaturesToSqliteStore(options: {
     };
   }
 }
+
+export { syncGoogleDriveToSqliteStore };

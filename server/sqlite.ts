@@ -2275,6 +2275,61 @@ export function saveGoogleDriveFileToSqlite(file: {
   };
 }
 
+export function saveGoogleDriveFilesBulkToSqlite(files: any[], userEmail: string): number {
+  if (!db || !Array.isArray(files) || files.length === 0) return 0;
+  const cleanEmail = (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  let count = 0;
+  try {
+    db.run('BEGIN TRANSACTION;');
+    const stmt = db.prepare(`
+      INSERT INTO google_drive_files (id, user_email, name, mime_type, size, size_bytes, web_view_link, file_content_base64, folder_id, folder_name, category, uploaded_by, modified_time)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        mime_type = excluded.mime_type,
+        size = excluded.size,
+        size_bytes = excluded.size_bytes,
+        web_view_link = excluded.web_view_link,
+        file_content_base64 = COALESCE(excluded.file_content_base64, google_drive_files.file_content_base64),
+        folder_id = excluded.folder_id,
+        folder_name = excluded.folder_name,
+        category = excluded.category,
+        modified_time = excluded.modified_time
+    `);
+
+    for (const f of files) {
+      if (!f || !f.id || !f.name) continue;
+      const sizeFormatted = f.size || (f.sizeBytes ? `${(Number(f.sizeBytes) / (1024 * 1024)).toFixed(1)} MB` : '1.0 MB');
+      const sizeBytes = f.sizeBytes || (typeof f.size === 'number' ? f.size : 1024 * 1024);
+      const modTime = f.modifiedTime || new Date().toISOString();
+      const webViewLink = f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`;
+      stmt.run([
+        f.id,
+        cleanEmail,
+        f.name,
+        f.mimeType || 'application/octet-stream',
+        sizeFormatted,
+        sizeBytes,
+        webViewLink,
+        f.fileContentBase64 || null,
+        f.folderId || null,
+        f.folderName || 'Family Circle',
+        f.category || 'General',
+        f.uploadedBy || 'google_drive_sync',
+        modTime,
+      ]);
+      count++;
+    }
+    stmt.free();
+    db.run('COMMIT;');
+    scheduleSave();
+  } catch (err) {
+    try { db.run('ROLLBACK;'); } catch {}
+    console.error('Failed to bulk sync Google Drive files into SQLite:', err);
+  }
+  return count;
+}
+
 export function updateGoogleDriveFileFolderInSqlite(
   id: string,
   folderId: string,
