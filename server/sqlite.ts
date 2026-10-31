@@ -234,7 +234,7 @@ export function saveSqliteToDisk() {
       fs.copyFileSync(tempPath, DB_PATH);
       try {
         if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-      } catch {}
+      } catch { }
     }
 
     // Successfully saved
@@ -243,7 +243,7 @@ export function saveSqliteToDisk() {
     // Clean up temporary file if lingering
     try {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    } catch {}
+    } catch { }
 
     const isLockError =
       err?.code === 'UNKNOWN' ||
@@ -626,24 +626,24 @@ export async function initSqliteDb(): Promise<Database> {
   `);
 
   // Run safe schema migrations for existing SQLite database
-  try { db.run('ALTER TABLE voice_recordings ADD COLUMN transcription_summary TEXT;'); } catch {}
-  try { db.run('ALTER TABLE voice_recordings ADD COLUMN detected_language TEXT DEFAULT "en-US";'); } catch {}
-  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch {}
-  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch {}
-  try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch {}
-  try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch {}
-  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN lyrics TEXT;'); } catch {}
-  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_content_base64 TEXT;'); } catch {}
-  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_mime_type TEXT DEFAULT "audio/mpeg";'); } catch {}
-  try { db.run('ALTER TABLE ai_studio_creations ADD COLUMN drive_sync_status TEXT DEFAULT "synced";'); } catch {}
+  try { db.run('ALTER TABLE voice_recordings ADD COLUMN transcription_summary TEXT;'); } catch { }
+  try { db.run('ALTER TABLE voice_recordings ADD COLUMN detected_language TEXT DEFAULT "en-US";'); } catch { }
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch { }
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_name TEXT;'); } catch { }
+  try { db.run('ALTER TABLE google_drive_files ADD COLUMN category TEXT;'); } catch { }
+  try { db.run('ALTER TABLE voice_assistant_conversations ADD COLUMN action_suggestion TEXT;'); } catch { }
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN lyrics TEXT;'); } catch { }
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_content_base64 TEXT;'); } catch { }
+  try { db.run('ALTER TABLE musical_library_tracks ADD COLUMN audio_mime_type TEXT DEFAULT "audio/mpeg";'); } catch { }
+  try { db.run('ALTER TABLE ai_studio_creations ADD COLUMN drive_sync_status TEXT DEFAULT "synced";'); } catch { }
   try {
     db.run("UPDATE musical_library_tracks SET drive_folder_path = REPLACE(drive_folder_path, 'Musical Library', 'Apple Music') WHERE drive_folder_path LIKE '%Musical Library%';");
-  } catch {}
+  } catch { }
   try {
     db.run("UPDATE google_drive_files SET folder_name = REPLACE(folder_name, 'Musical Library', 'Apple Music') WHERE folder_name LIKE '%Musical Library%';");
-  } catch {}
-  try { db.run('ALTER TABLE apple_books_library ADD COLUMN pdf_content_base64 TEXT;'); } catch {}
-  try { db.run('ALTER TABLE apple_books_library ADD COLUMN is_local_cached INTEGER DEFAULT 1;'); } catch {}
+  } catch { }
+  try { db.run('ALTER TABLE apple_books_library ADD COLUMN pdf_content_base64 TEXT;'); } catch { }
+  try { db.run('ALTER TABLE apple_books_library ADD COLUMN is_local_cached INTEGER DEFAULT 1;'); } catch { }
 
   // Seed default Google Keep notes if empty
   try {
@@ -1677,7 +1677,7 @@ export function getFamilyMembersFromSqlite(familyId = 'family-aura-primary'): Fa
     };
     try {
       if (row[9]) loc = JSON.parse(row[9] as string);
-    } catch {}
+    } catch { }
 
     return {
       id: row[0] as string,
@@ -1893,7 +1893,7 @@ export function getAssistantMemoriesFromSqlite(userEmail: string, familyId?: str
     let tags: string[] = [];
     try {
       tags = JSON.parse((row[5] as string) || '[]');
-    } catch {}
+    } catch { }
     return {
       id: row[0] as string,
       userEmail: row[1] as string,
@@ -2054,7 +2054,7 @@ export function getGoogleKeepNotesFromSqlite(userEmail: string): GoogleKeepNoteR
     let labels: string[] = [];
     try {
       labels = JSON.parse((row[4] as string) || '[]');
-    } catch {}
+    } catch { }
     return {
       id: row[0] as string,
       userEmail: row[1] as string,
@@ -2179,7 +2179,7 @@ export function getLatestDeviceStorageMetricsFromSqlite(deviceId?: string, userE
   let breakdown: Record<string, number> = {};
   try {
     breakdown = JSON.parse((row[12] as string) || '{}');
-  } catch {}
+  } catch { }
 
   return {
     id: row[0] as string,
@@ -2324,7 +2324,7 @@ export function saveGoogleDriveFilesBulkToSqlite(files: any[], userEmail: string
     db.run('COMMIT;');
     scheduleSave();
   } catch (err) {
-    try { db.run('ROLLBACK;'); } catch {}
+    try { db.run('ROLLBACK;'); } catch { }
     console.error('Failed to bulk sync Google Drive files into SQLite:', err);
   }
   return count;
@@ -3620,9 +3620,9 @@ export function getAppleBooksFromSqlite(userEmail?: string): AppleBookRecord[] {
       let chapters = [];
       let bookmarks = [];
       let highlights = [];
-      try { chapters = JSON.parse(String(row.chapters_json || '[]')); } catch {}
-      try { bookmarks = JSON.parse(String(row.bookmarks_json || '[]')); } catch {}
-      try { highlights = JSON.parse(String(row.highlights_json || '[]')); } catch {}
+      try { chapters = JSON.parse(String(row.chapters_json || '[]')); } catch { }
+      try { bookmarks = JSON.parse(String(row.bookmarks_json || '[]')); } catch { }
+      try { highlights = JSON.parse(String(row.highlights_json || '[]')); } catch { }
 
       const hasPdfBlob = Number(row.has_pdf_blob) === 1;
       const id = String(row.id);
@@ -3824,7 +3824,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
     if (fs.existsSync(DB_PATH)) {
       dbFileSizeBytes = fs.statSync(DB_PATH).size;
     }
-  } catch {}
+  } catch { }
 
   const getTableStats = (tableName: string, blobCol?: string, extraCol?: string) => {
     try {
@@ -3923,7 +3923,7 @@ export function getSqliteDbStats() {
     if (fs.existsSync(DB_PATH)) {
       sizeBytes = fs.statSync(DB_PATH).size;
     }
-  } catch (e) {}
+  } catch (e) { }
 
   const tables = [
     'activation_codes',
