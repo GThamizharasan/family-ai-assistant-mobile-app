@@ -767,6 +767,31 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                     </div>
                   </div>
                 )}
+
+                {/* 3GB SQLite Quota Indicator */}
+                {sqliteStats?.quota3Gb && (
+                  <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2 mt-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-200 flex items-center gap-1.5">
+                        <HardDrive className="w-3.5 h-3.5 text-amber-400" />
+                        <span>3.0 GB Max SQLite Storage Quota</span>
+                      </span>
+                      <span className="font-mono text-amber-400 font-bold">
+                        {sqliteStats.quota3Gb.totalUsedMb.toFixed(1)} MB / 3072.0 MB ({sqliteStats.quota3Gb.percentUsed.toFixed(1)}%)
+                      </span>
+                    </div>
+                    <div className="w-full h-2.5 bg-slate-850 rounded-full overflow-hidden p-0.5 border border-slate-800 flex">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-indigo-500 to-amber-500"
+                        style={{ width: `${Math.min(100, Math.max(1, sqliteStats.quota3Gb.percentUsed))}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400 font-mono">
+                      <span>Books: {sqliteStats.quota3Gb.breakdown.books.mb.toFixed(1)}MB • Music: {sqliteStats.quota3Gb.breakdown.music.mb.toFixed(1)}MB • Memos: {sqliteStats.quota3Gb.breakdown.memos.mb.toFixed(1)}MB</span>
+                      <span className="text-emerald-400">{sqliteStats.quota3Gb.freeMb.toFixed(1)}MB free</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Table Breakdown */}

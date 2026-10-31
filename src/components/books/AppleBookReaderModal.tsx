@@ -39,7 +39,9 @@ import { generateReadablePdfDocumentUrl, extractPdfChaptersAndPages, downloadBoo
 import { getPageContent, PageContent } from '../../utils/paginationHelper';
 import { PdfCanvasViewer } from './PdfCanvasViewer';
 import { downloadBookContentFromDrive } from '../../services/appleBooksDrive';
-import { safeFetchJson } from '../../services/api';
+import { safeFetchJson, getApiUrl } from '../../services/api';
+import { updateBookProgressInSqliteStore } from '../../services/offlineSyncService';
+import { useApp } from '../../context/AppContext';
 
 interface AppleBookReaderModalProps {
   book: Book;
@@ -58,6 +60,8 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
   onAddHighlight,
   onAddBookmark,
 }) => {
+  const { isMobileDeviceFrame } = useApp();
+
   // Safe Book fallback to ensure no null crashes ever occur
   const safeBook: Book = book || {
     id: 'unknown-doc',
@@ -127,8 +131,102 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
   // PDF View Mode: 'canvas' (Vector PDF) or 'sheet' (Apple Books Document Sheet)
   const [pdfViewMode, setPdfViewMode] = useState<'canvas' | 'sheet'>('canvas');
 
-  // PDF Zoom
+  // PDF Zoom (supports 0.6x to 3.0x scaling)
   const [pdfZoom, setPdfZoom] = useState<number>(1.0);
+
+  // Flow Mode Reading Text Zoom (Reflowable reading mode: 0.6x to 3.0x scaling)
+  const [flowZoom, setFlowZoom] = useState<number>(1.0);
+
+  // Two-Finger Pinch-to-Zoom Gesture Tracking (Thumb and Index finger)
+  const readerContentRef = useRef<HTMLDivElement | null>(null);
+  const touchStartDistRef = useRef<number | null>(null);
+  const touchStartZoomRef = useRef<number>(1.0);
+  const [isPinching, setIsPinching] = useState<boolean>(false);
+  const [pinchZoomBadge, setPinchZoomBadge] = useState<number | null>(null);
+  const pinchBadgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const pdfZoomRef = useRef(pdfZoom);
+  const flowZoomRef = useRef(flowZoom);
+
+  useEffect(() => {
+    pdfZoomRef.current = pdfZoom;
+  }, [pdfZoom]);
+
+  useEffect(() => {
+    flowZoomRef.current = flowZoom;
+  }, [flowZoom]);
+
+  // Handle two-finger pinch-to-zoom gesture on the reading pane
+  useEffect(() => {
+    const el = readerContentRef.current;
+    if (!el) return;
+
+    const handleTouchStart = (e: TouchEvent) => {
+      // Exactly two touch points (thumb and index finger)
+      if (e.touches.length === 2) {
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        touchStartDistRef.current = dist;
+        touchStartZoomRef.current = readerMode === 'pdf' ? pdfZoomRef.current : flowZoomRef.current;
+        setIsPinching(true);
+        if (pinchBadgeTimeoutRef.current) {
+          clearTimeout(pinchBadgeTimeoutRef.current);
+        }
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && touchStartDistRef.current && touchStartDistRef.current > 0) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+        const dist = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const scaleRatio = dist / touchStartDistRef.current;
+        const targetZoom = Math.min(3.0, Math.max(0.6, touchStartZoomRef.current * scaleRatio));
+        const roundedZoom = Number(targetZoom.toFixed(2));
+
+        if (readerMode === 'pdf') {
+          setPdfZoom(roundedZoom);
+        } else {
+          setFlowZoom(roundedZoom);
+        }
+        setPinchZoomBadge(Math.round(roundedZoom * 100));
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        touchStartDistRef.current = null;
+        setIsPinching(false);
+        if (pinchBadgeTimeoutRef.current) {
+          clearTimeout(pinchBadgeTimeoutRef.current);
+        }
+        pinchBadgeTimeoutRef.current = setTimeout(() => {
+          setPinchZoomBadge(null);
+        }, 1200);
+      }
+    };
+
+    el.addEventListener('touchstart', handleTouchStart, { passive: false });
+    el.addEventListener('touchmove', handleTouchMove, { passive: false });
+    el.addEventListener('touchend', handleTouchEnd);
+    el.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      el.removeEventListener('touchstart', handleTouchStart);
+      el.removeEventListener('touchmove', handleTouchMove);
+      el.removeEventListener('touchend', handleTouchEnd);
+      el.removeEventListener('touchcancel', handleTouchEnd);
+      if (pinchBadgeTimeoutRef.current) {
+        clearTimeout(pinchBadgeTimeoutRef.current);
+      }
+    };
+  }, [readerMode]);
 
   // Dynamic PDF URL resolution (loads from IndexedDB or generates on-demand)
   const [activePdfUrl, setActivePdfUrl] = useState<string | null>(safeBook.pdfUrl || null);
@@ -177,17 +275,30 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     }
 
     if (safeBook.isPdf) {
-      // Check IndexedDB first for uploaded PDF files
+      // Check IndexedDB or SQLite 3GB offline store for uploaded PDF files
       getPdfFromStorage(safeBook.id).then(async (stored) => {
         if (isCancelled) return;
-        if (stored) {
-          setActivePdfUrl(stored);
+        let effectivePdf = stored;
+        if (!effectivePdf) {
+          try {
+            const sqliteCheck = await fetch(getApiUrl(`/api/books/library/${safeBook.id}/pdf`));
+            if (sqliteCheck.ok) {
+              const blob = await sqliteCheck.blob();
+              if (blob && blob.size > 200) {
+                effectivePdf = URL.createObjectURL(blob);
+              }
+            }
+          } catch {}
+        }
+
+        if (effectivePdf) {
+          setActivePdfUrl(effectivePdf);
           if (
             chapters.length <= 1 ||
             (chapters[0]?.content && chapters[0].content[0]?.includes('You have opened'))
           ) {
             try {
-              const extracted = await extractPdfChaptersAndPages(stored);
+              const extracted = await extractPdfChaptersAndPages(effectivePdf);
               if (isCancelled) return;
               if (extracted.chapters.length > 0) {
                 setDynamicChapters(extracted.chapters);
@@ -353,6 +464,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     const percent = Math.min(100, Math.round((newPage / totalPages) * 100));
     const chId = chapters[chapterIdx]?.id || chapters[0]?.id || 'ch1';
     onUpdateBookProgress(safeBook.id, newPage, chId, percent);
+    updateBookProgressInSqliteStore(safeBook.id, newPage, chId, percent).catch(() => {});
   };
 
   const goToNextPage = () => {
@@ -596,7 +708,11 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex flex-col ${themeStyle.bg} transition-colors duration-200 select-text overflow-hidden`}
+      className={`${
+        isMobileDeviceFrame
+          ? 'absolute inset-x-0 top-11 bottom-[66px] z-30 rounded-[32px]'
+          : 'fixed inset-x-2 sm:inset-x-6 top-14 bottom-[72px] z-30 max-w-4xl mx-auto rounded-3xl border border-slate-800/80 shadow-2xl'
+      } flex flex-col ${themeStyle.bg} transition-colors duration-200 select-text overflow-hidden`}
       onMouseUp={handleTextSelect}
       onTouchEnd={handleTextSelect}
     >
@@ -670,11 +786,22 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
         </div>
 
         {/* Center Title & Current Page indicator */}
-        <div className="text-center max-w-[180px] sm:max-w-md truncate px-2">
+        <div className="text-center max-w-[180px] sm:max-w-md truncate px-2 flex flex-col items-center">
           <h2 className="text-xs font-bold truncate opacity-90">{safeBook.title}</h2>
-          <p className="text-[10px] opacity-70 truncate font-mono">
-            Page {currentPage} of {totalPages} &bull; {pageData.chapterTitle}
-          </p>
+          <div className="flex items-center gap-1.5 text-[10px] opacity-70 truncate font-mono">
+            <span>
+              Page {currentPage} of {totalPages} &bull; {pageData.chapterTitle}
+            </span>
+            {readerMode === 'flow' && flowZoom !== 1.0 && (
+              <button
+                onClick={() => setFlowZoom(1.0)}
+                className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40 text-[9px] hover:bg-amber-500/30"
+                title="Reset zoom to 100%"
+              >
+                {Math.round(flowZoom * 100)}%
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Right Tools: Appearance, Audio, AI, Bookmark, Search */}
@@ -1012,297 +1139,339 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
       {/* =========================================================================
           MAIN READING AREA (DUAL PDF VIEWER OR APPLE BOOKS FLOW)
+          WITH PINCH-TO-ZOOM TOUCH GESTURES (THUMB & INDEX FINGER)
           ========================================================================= */}
-      {readerMode === 'pdf' ? (
-        <main className="flex-1 overflow-y-auto flex flex-col items-center bg-slate-950 p-2 sm:p-6 select-text">
-          {/* Top PDF Controls Toolbar */}
-          <div className="w-full max-w-4xl flex items-center justify-between px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-2xl text-xs text-slate-300 mb-4 shadow-lg shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-amber-500" />
-                <span>PDF Document Pane</span>
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-amber-300 font-mono font-bold">
-                Page {currentPage} of {totalPages}
-              </span>
-              {safeBook.pdfFileSize && (
-                <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 font-mono hidden sm:inline">
-                  {safeBook.pdfFileSize}
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Zoom Controls */}
-              <div className="hidden sm:flex items-center bg-slate-950 px-2 py-1 rounded-xl border border-slate-800 text-xs font-mono gap-1.5">
-                <button
-                  onClick={() => setPdfZoom((z) => Math.max(0.75, Number((z - 0.1).toFixed(1))))}
-                  className="px-1.5 py-0.5 hover:text-white"
-                  title="Zoom Out"
-                >
-                  -
-                </button>
-                <span>{Math.round(pdfZoom * 100)}%</span>
-                <button
-                  onClick={() => setPdfZoom((z) => Math.min(1.5, Number((z + 0.1).toFixed(1))))}
-                  className="px-1.5 py-0.5 hover:text-white"
-                  title="Zoom In"
-                >
-                  +
-                </button>
-              </div>
-
-              {/* View Switcher: Vector PDF Canvas vs Text Sheet */}
-              <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-xs font-medium">
-                <button
-                  onClick={() => setPdfViewMode('canvas')}
-                  className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${
-                    pdfViewMode === 'canvas'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="Authentic PDF Vector View (Renders exact layout, tables and diagrams)"
-                >
-                  <span>Vector PDF</span>
-                </button>
-                <button
-                  onClick={() => setPdfViewMode('sheet')}
-                  className={`px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1 ${
-                    pdfViewMode === 'sheet'
-                      ? 'bg-amber-500 text-slate-950 font-bold'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="Clean Apple Books Typography Sheet"
-                >
-                  <span>Text Sheet</span>
-                </button>
-              </div>
-
-              {activePdfUrl && (
-                <a
-                  href={activePdfUrl}
-                  download={safeBook.pdfFileName || `${safeBook.title}.pdf`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 font-medium flex items-center gap-1.5 transition-colors"
-                  title="Download or open original PDF"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Download</span>
-                </a>
-              )}
-
-              <button
-                onClick={() => setReaderMode('flow')}
-                className="px-3 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1.5 transition-colors font-medium"
-                title="Switch to Apple Books Flow View for ambient sounds and voice read aloud"
-              >
-                <BookOpen className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden sm:inline">Flow View</span>
-              </button>
-            </div>
+      <div
+        ref={readerContentRef}
+        className="flex-1 overflow-hidden relative flex flex-col touch-manipulation select-text"
+      >
+        {/* Floating Pinch-to-Zoom Feedback Badge */}
+        {pinchZoomBadge !== null && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 rounded-full bg-slate-950/95 border border-amber-500/60 shadow-2xl text-amber-300 text-xs font-mono font-bold flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md pointer-events-none">
+            <ZoomIn className="w-3.5 h-3.5 text-amber-400" />
+            <span>{pinchZoomBadge}% Zoom</span>
+            <span className="text-[10px] text-slate-400 font-sans font-normal">(Pinch with fingers)</span>
           </div>
+        )}
 
-          {/* Actual PDF Page Rendering */}
-          {activePdfUrl && pdfViewMode === 'canvas' ? (
-            <div className="w-full max-w-4xl flex-1 flex flex-col items-center">
-              <PdfCanvasViewer
-                pdfSource={activePdfUrl}
-                currentPage={currentPage}
-                zoom={pdfZoom}
-                bookTitle={safeBook.title}
-                onNumPagesLoaded={(num) => {
-                  if (num && num !== dynamicTotalPages) {
-                    setDynamicTotalPages(num);
-                  }
-                }}
-                fallbackView={
-                  /* Apple Books High-Definition PDF Document Sheet */
-                  <div
-                    className="w-full max-w-3xl bg-white text-slate-900 rounded-sm shadow-2xl p-8 sm:p-14 border border-slate-300 transition-all font-serif min-h-[750px] flex flex-col justify-between"
-                    style={{
-                      transform: `scale(${pdfZoom})`,
-                      transformOrigin: 'top center',
-                    }}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-6 text-[11px] font-sans text-slate-500 uppercase tracking-widest">
-                        <span className="truncate max-w-xs">{safeBook.title}</span>
-                        <span className="font-mono text-amber-700 font-bold">
-                          Page {currentPage} of {totalPages}
-                        </span>
-                      </div>
-
-                      <div className="mb-6">
-                        <span className="inline-block px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold tracking-wider mb-2">
-                          {pageData.sectionBadge}
-                        </span>
-                        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight leading-snug">
-                          {pageData.chapterTitle}
-                        </h1>
-                        <p className="text-xs text-slate-500 font-sans mt-1 italic">
-                          {safeBook.author} &bull; ~{pageData.readingTimeMinutes} mins reading time
-                        </p>
-                      </div>
-
-                      <div className="space-y-5 text-justify leading-relaxed text-slate-800 text-base sm:text-lg">
-                        {pageData.paragraphs.map((para, idx) => {
-                          const matchingHighlights = localHighlights.filter(
-                            (h) => para.includes(h.text)
-                          );
-
-                          return (
-                            <p key={idx} className="relative">
-                              {idx === 0 && currentPage === 1 ? (
-                                <span className="float-left text-5xl leading-none font-bold text-amber-700 mr-2 font-serif">
-                                  {para.charAt(0)}
-                                </span>
-                              ) : null}
-                              {matchingHighlights.length > 0 ? (
-                                <span className="bg-amber-300/40 text-inherit px-1 rounded">
-                                  {idx === 0 && currentPage === 1 ? para.slice(1) : para}
-                                </span>
-                              ) : (
-                                idx === 0 && currentPage === 1 ? para.slice(1) : para
-                              )}
-                            </p>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div className="pt-8 border-t border-slate-100 flex items-center justify-between text-[11px] font-sans text-slate-400 mt-10">
-                      <span>Aura Apple Books & Sovereign Library Edition</span>
-                      <span className="font-mono font-bold text-slate-600">
-                        {currentPage} / {totalPages}
-                      </span>
-                    </div>
-                  </div>
-                }
-              />
-            </div>
-          ) : (
-            /* Apple Books High-Definition PDF Document Sheet */
-            <div
-              className="w-full max-w-3xl bg-white text-slate-900 rounded-sm shadow-2xl p-8 sm:p-14 border border-slate-300 transition-all font-serif min-h-[750px] flex flex-col justify-between"
-              style={{
-                transform: `scale(${pdfZoom})`,
-                transformOrigin: 'top center',
-              }}
-            >
-              <div>
-                <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-6 text-[11px] font-sans text-slate-500 uppercase tracking-widest">
-                  <span className="truncate max-w-xs">{safeBook.title}</span>
-                  <span className="font-mono text-amber-700 font-bold">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                </div>
-
-                <div className="mb-6">
-                  <span className="inline-block px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold tracking-wider mb-2">
-                    {pageData.sectionBadge}
-                  </span>
-                  <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight leading-snug">
-                    {pageData.chapterTitle}
-                  </h1>
-                  <p className="text-xs text-slate-500 font-sans mt-1 italic">
-                    {safeBook.author} &bull; ~{pageData.readingTimeMinutes} mins reading time
-                  </p>
-                </div>
-
-                <div className="space-y-5 text-justify leading-relaxed text-slate-800 text-base sm:text-lg">
-                  {pageData.paragraphs.map((para, idx) => {
-                    const matchingHighlights = localHighlights.filter(
-                      (h) => para.includes(h.text)
-                    );
-
-                    return (
-                      <p key={idx} className="relative">
-                        {idx === 0 && currentPage === 1 ? (
-                          <span className="float-left text-5xl leading-none font-bold text-amber-700 mr-2 font-serif">
-                            {para.charAt(0)}
-                          </span>
-                        ) : null}
-                        {matchingHighlights.length > 0 ? (
-                          <span className="bg-amber-300/40 text-inherit px-1 rounded">
-                            {idx === 0 && currentPage === 1 ? para.slice(1) : para}
-                          </span>
-                        ) : (
-                          idx === 0 && currentPage === 1 ? para.slice(1) : para
-                        )}
-                      </p>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="pt-8 border-t border-slate-100 flex items-center justify-between text-[11px] font-sans text-slate-400 mt-10">
-                <span>Aura Apple Books & Sovereign Library Edition</span>
-                <span className="font-mono font-bold text-slate-600">
-                  {currentPage} / {totalPages}
+        {readerMode === 'pdf' ? (
+          <main className="flex-1 overflow-y-auto flex flex-col items-center bg-slate-950 p-2 sm:p-6 select-text">
+            {/* Top PDF Controls Toolbar */}
+            <div className="w-full max-w-4xl flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl text-xs text-slate-300 mb-4 shadow-lg shrink-0 gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-amber-400 flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-amber-500" />
+                  <span className="hidden sm:inline">PDF Document Pane</span>
+                  <span className="sm:hidden">PDF</span>
                 </span>
-              </div>
-            </div>
-          )}
-        </main>
-      ) : (
-        <main className="flex-1 overflow-y-auto px-4 sm:px-12 md:px-24 py-8 flex justify-center">
-          <article
-            className={`max-w-2xl w-full space-y-6 ${getFontFamily()} transition-all`}
-            style={{ fontSize: `${fontSize}px`, lineHeight: 1.8 }}
-          >
-            {/* Chapter Heading */}
-            <header className="border-b border-black/10 dark:border-white/10 pb-4 mb-6">
-              <span className="text-[11px] font-mono uppercase tracking-widest opacity-60 block">
-                {safeBook.title} &bull; {safeBook.author}
-              </span>
-              <h1 className="text-2xl sm:text-3xl font-bold mt-1 tracking-tight leading-snug">
-                {pageData.chapterTitle}
-              </h1>
-              <div className="flex items-center gap-2 mt-2 text-xs opacity-60 font-mono">
-                <span>{pageData.readingTimeMinutes} mins read</span>
-                <span>&bull;</span>
-                <span>
-                  Page {currentPage} of {totalPages}
+                <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-amber-300 font-mono font-bold">
+                  {currentPage}/{totalPages}
                 </span>
-                {safeBook.isPdf && (
-                  <>
-                    <span>&bull;</span>
-                    <span className="text-amber-500 font-semibold">PDF Source Document</span>
-                  </>
+                {safeBook.pdfFileSize && (
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400 font-mono hidden sm:inline">
+                    {safeBook.pdfFileSize}
+                  </span>
                 )}
               </div>
-            </header>
 
-            {/* Chapter Paragraphs for this specific page */}
-            <div className="space-y-6 text-justify">
-              {pageData.paragraphs.map((paragraph, idx) => {
-                const matchingHighlights = localHighlights.filter(
-                  (h) => paragraph.includes(h.text)
-                );
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                {/* Zoom Controls (Pinch with thumb & index finger or tap buttons) */}
+                <div className="flex items-center bg-slate-950 px-1.5 sm:px-2 py-1 rounded-xl border border-slate-800 text-xs font-mono gap-1 shadow-inner">
+                  <button
+                    onClick={() => setPdfZoom((z) => Math.max(0.6, Number((z - 0.1).toFixed(1))))}
+                    className="px-1.5 py-0.5 text-slate-300 hover:text-white active:scale-90 transition-transform font-bold"
+                    title="Zoom Out (or pinch fingers together)"
+                    aria-label="Zoom Out"
+                  >
+                    -
+                  </button>
+                  <button
+                    onClick={() => setPdfZoom(1.0)}
+                    className="px-1 py-0.5 text-[11px] font-bold text-amber-400 hover:text-amber-300 active:scale-95 transition-transform"
+                    title="Reset to 100% Zoom"
+                  >
+                    {Math.round(pdfZoom * 100)}%
+                  </button>
+                  <button
+                    onClick={() => setPdfZoom((z) => Math.min(3.0, Number((z + 0.1).toFixed(1))))}
+                    className="px-1.5 py-0.5 text-slate-300 hover:text-white active:scale-90 transition-transform font-bold"
+                    title="Zoom In (or spread fingers apart)"
+                    aria-label="Zoom In"
+                  >
+                    +
+                  </button>
+                </div>
 
-                return (
-                  <p key={idx} className="relative transition-opacity">
-                    {matchingHighlights.length > 0 ? (
-                      <span className="bg-amber-400/20 text-inherit px-1 rounded">
-                        {paragraph}
+                {/* View Switcher: Vector PDF Canvas vs Text Sheet */}
+                <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-xs font-medium">
+                  <button
+                    onClick={() => setPdfViewMode('canvas')}
+                    className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[11px] ${
+                      pdfViewMode === 'canvas'
+                        ? 'bg-amber-500 text-slate-950 font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Authentic PDF Vector View (Renders exact layout, tables and diagrams)"
+                  >
+                    <span>Vector</span>
+                  </button>
+                  <button
+                    onClick={() => setPdfViewMode('sheet')}
+                    className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[11px] ${
+                      pdfViewMode === 'sheet'
+                        ? 'bg-amber-500 text-slate-950 font-bold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Clean Apple Books Typography Sheet"
+                  >
+                    <span>Sheet</span>
+                  </button>
+                </div>
+
+                {activePdfUrl && (
+                  <a
+                    href={activePdfUrl}
+                    download={safeBook.pdfFileName || `${safeBook.title}.pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 font-medium flex items-center gap-1 text-[11px] transition-colors"
+                    title="Download or open original PDF"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">PDF</span>
+                  </a>
+                )}
+
+                <button
+                  onClick={() => setReaderMode('flow')}
+                  className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-1 transition-colors font-medium text-[11px]"
+                  title="Switch to Apple Books Flow View for ambient sounds and voice read aloud"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="hidden sm:inline">Flow</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Actual PDF Page Rendering */}
+            {activePdfUrl && pdfViewMode === 'canvas' ? (
+              <div
+                className="w-full max-w-4xl flex-1 flex flex-col items-center transition-transform origin-top"
+                style={{
+                  transform: `scale(${pdfZoom})`,
+                  transformOrigin: 'top center',
+                  transition: isPinching ? 'none' : 'transform 0.15s ease-out',
+                }}
+              >
+                <PdfCanvasViewer
+                  pdfSource={activePdfUrl}
+                  currentPage={currentPage}
+                  zoom={1.0}
+                  bookTitle={safeBook.title}
+                  onNumPagesLoaded={(num) => {
+                    if (num && num !== dynamicTotalPages) {
+                      setDynamicTotalPages(num);
+                    }
+                  }}
+                  fallbackView={
+                    /* Apple Books High-Definition PDF Document Sheet */
+                    <div
+                      className="w-full max-w-3xl bg-white text-slate-900 rounded-sm shadow-2xl p-6 sm:p-14 border border-slate-300 transition-all font-serif min-h-[750px] flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-6 text-[11px] font-sans text-slate-500 uppercase tracking-widest">
+                          <span className="truncate max-w-xs">{safeBook.title}</span>
+                          <span className="font-mono text-amber-700 font-bold">
+                            Page {currentPage} of {totalPages}
+                          </span>
+                        </div>
+
+                        <div className="mb-6">
+                          <span className="inline-block px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold tracking-wider mb-2">
+                            {pageData.sectionBadge}
+                          </span>
+                          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight leading-snug">
+                            {pageData.chapterTitle}
+                          </h1>
+                          <p className="text-xs text-slate-500 font-sans mt-1 italic">
+                            {safeBook.author} &bull; ~{pageData.readingTimeMinutes} mins reading time
+                          </p>
+                        </div>
+
+                        <div className="space-y-5 text-justify leading-relaxed text-slate-800 text-base sm:text-lg">
+                          {pageData.paragraphs.map((para, idx) => {
+                            const matchingHighlights = localHighlights.filter(
+                              (h) => para.includes(h.text)
+                            );
+
+                            return (
+                              <p key={idx} className="relative">
+                                {idx === 0 && currentPage === 1 ? (
+                                  <span className="float-left text-5xl leading-none font-bold text-amber-700 mr-2 font-serif">
+                                    {para.charAt(0)}
+                                  </span>
+                                ) : null}
+                                {matchingHighlights.length > 0 ? (
+                                  <span className="bg-amber-300/40 text-inherit px-1 rounded">
+                                    {idx === 0 && currentPage === 1 ? para.slice(1) : para}
+                                  </span>
+                                ) : (
+                                  idx === 0 && currentPage === 1 ? para.slice(1) : para
+                                )}
+                              </p>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="pt-8 border-t border-slate-100 flex items-center justify-between text-[11px] font-sans text-slate-400 mt-10">
+                        <span>Aura Apple Books & Sovereign Library Edition</span>
+                        <span className="font-mono font-bold text-slate-600">
+                          {currentPage} / {totalPages}
+                        </span>
+                      </div>
+                    </div>
+                  }
+                />
+              </div>
+            ) : (
+              /* Apple Books High-Definition PDF Document Sheet */
+              <div
+                className="w-full max-w-3xl bg-white text-slate-900 rounded-sm shadow-2xl p-6 sm:p-14 border border-slate-300 font-serif min-h-[750px] flex flex-col justify-between transition-transform origin-top"
+                style={{
+                  transform: `scale(${pdfZoom})`,
+                  transformOrigin: 'top center',
+                  transition: isPinching ? 'none' : 'transform 0.15s ease-out',
+                }}
+              >
+                <div>
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-6 text-[11px] font-sans text-slate-500 uppercase tracking-widest">
+                    <span className="truncate max-w-xs">{safeBook.title}</span>
+                    <span className="font-mono text-amber-700 font-bold">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                  </div>
+
+                  <div className="mb-6">
+                    <span className="inline-block px-2.5 py-1 rounded bg-amber-100 text-amber-900 font-mono text-[10px] font-bold tracking-wider mb-2">
+                      {pageData.sectionBadge}
+                    </span>
+                    <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight leading-snug">
+                      {pageData.chapterTitle}
+                    </h1>
+                    <p className="text-xs text-slate-500 font-sans mt-1 italic">
+                      {safeBook.author} &bull; ~{pageData.readingTimeMinutes} mins reading time
+                    </p>
+                  </div>
+
+                  <div className="space-y-5 text-justify leading-relaxed text-slate-800 text-base sm:text-lg">
+                    {pageData.paragraphs.map((para, idx) => {
+                      const matchingHighlights = localHighlights.filter(
+                        (h) => para.includes(h.text)
+                      );
+
+                      return (
+                        <p key={idx} className="relative">
+                          {idx === 0 && currentPage === 1 ? (
+                            <span className="float-left text-5xl leading-none font-bold text-amber-700 mr-2 font-serif">
+                              {para.charAt(0)}
+                            </span>
+                          ) : null}
+                          {matchingHighlights.length > 0 ? (
+                            <span className="bg-amber-300/40 text-inherit px-1 rounded">
+                              {idx === 0 && currentPage === 1 ? para.slice(1) : para}
+                            </span>
+                          ) : (
+                            idx === 0 && currentPage === 1 ? para.slice(1) : para
+                          )}
+                        </p>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="pt-8 border-t border-slate-100 flex items-center justify-between text-[11px] font-sans text-slate-400 mt-10">
+                  <span>Aura Apple Books & Sovereign Library Edition</span>
+                  <span className="font-mono font-bold text-slate-600">
+                    {currentPage} / {totalPages}
+                  </span>
+                </div>
+              </div>
+            )}
+          </main>
+        ) : (
+          <main className="flex-1 overflow-y-auto px-4 sm:px-12 md:px-24 py-8 flex justify-center">
+            <article
+              className={`max-w-2xl w-full space-y-6 ${getFontFamily()} transition-transform duration-75 origin-top`}
+              style={{
+                fontSize: `${fontSize}px`,
+                lineHeight: 1.8,
+                transform: `scale(${flowZoom})`,
+                transformOrigin: 'top center',
+                transition: isPinching ? 'none' : 'transform 0.15s ease-out',
+              }}
+            >
+              {/* Chapter Heading */}
+              <header className="border-b border-black/10 dark:border-white/10 pb-4 mb-6">
+                <span className="text-[11px] font-mono uppercase tracking-widest opacity-60 block">
+                  {safeBook.title} &bull; {safeBook.author}
+                </span>
+                <h1 className="text-2xl sm:text-3xl font-bold mt-1 tracking-tight leading-snug">
+                  {pageData.chapterTitle}
+                </h1>
+                <div className="flex items-center gap-2 mt-2 text-xs opacity-60 font-mono">
+                  <span>{pageData.readingTimeMinutes} mins read</span>
+                  <span>&bull;</span>
+                  <span>
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  {safeBook.isPdf && (
+                    <>
+                      <span>&bull;</span>
+                      <span className="text-amber-500 font-semibold">PDF Source Document</span>
+                    </>
+                  )}
+                  {flowZoom !== 1.0 && (
+                    <>
+                      <span>&bull;</span>
+                      <span className="text-amber-400 font-bold font-mono">
+                        {Math.round(flowZoom * 100)}% Zoom
                       </span>
-                    ) : (
-                      paragraph
-                    )}
-                  </p>
-                );
-              })}
-            </div>
+                    </>
+                  )}
+                </div>
+              </header>
 
-            {/* Page Turn Footnote */}
-            <div className="pt-10 flex items-center justify-between border-t border-black/10 dark:border-white/10 text-xs opacity-60 font-mono">
-              <span>{safeBook.genre}</span>
-              <span>{pageData.percentComplete}% Completed</span>
-            </div>
-          </article>
-        </main>
-      )}
+              {/* Chapter Paragraphs for this specific page */}
+              <div className="space-y-6 text-justify">
+                {pageData.paragraphs.map((paragraph, idx) => {
+                  const matchingHighlights = localHighlights.filter(
+                    (h) => paragraph.includes(h.text)
+                  );
+
+                  return (
+                    <p key={idx} className="relative transition-opacity">
+                      {matchingHighlights.length > 0 ? (
+                        <span className="bg-amber-400/20 text-inherit px-1 rounded">
+                          {paragraph}
+                        </span>
+                      ) : (
+                        paragraph
+                      )}
+                    </p>
+                  );
+                })}
+              </div>
+
+              {/* Page Turn Footnote */}
+              <div className="pt-10 flex items-center justify-between border-t border-black/10 dark:border-white/10 text-xs opacity-60 font-mono">
+                <span>{safeBook.genre}</span>
+                <span>{pageData.percentComplete}% Completed</span>
+              </div>
+            </article>
+          </main>
+        )}
+      </div>
 
       {/* =========================================================================
           BOTTOM SLIDER CONTROLS BAR (APPLE IBOOKS EXPERIENCE)
@@ -1362,7 +1531,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           TABLE OF CONTENTS DRAWER
           ========================================================================= */}
       {showTocDrawer && (
-        <div className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-slate-950/95 border-r border-slate-800 shadow-2xl p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-left duration-200">
+        <div className="absolute inset-y-0 left-0 z-40 w-72 sm:w-80 bg-slate-950/95 border-r border-slate-800 shadow-2xl p-4 sm:p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-left duration-200">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
             <div className="flex items-center gap-2">
               <List className="w-5 h-5 text-amber-500" />
@@ -1412,7 +1581,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           BOOKMARKS & HIGHLIGHTS DRAWER
           ========================================================================= */}
       {showBookmarksDrawer && (
-        <div className="fixed inset-y-0 left-0 z-50 w-80 sm:w-96 bg-slate-950/95 border-r border-slate-800 shadow-2xl p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-left duration-200">
+        <div className="absolute inset-y-0 left-0 z-40 w-72 sm:w-80 bg-slate-950/95 border-r border-slate-800 shadow-2xl p-4 sm:p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-left duration-200">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
             <div className="flex items-center gap-2">
               <Bookmark className="w-5 h-5 text-amber-500" />
@@ -1497,7 +1666,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           GEMINI AI READING COMPANION SLIDE-OVER
           ========================================================================= */}
       {showAiCompanion && (
-        <div className="fixed inset-y-0 right-0 z-50 w-80 sm:w-96 bg-slate-950/95 border-l border-slate-800 shadow-2xl p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-right duration-200">
+        <div className="absolute inset-y-0 right-0 z-40 w-full sm:w-96 bg-slate-950/95 border-l border-slate-800 shadow-2xl p-4 sm:p-5 flex flex-col text-white backdrop-blur-xl animate-in slide-in-from-right duration-200">
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
             <div className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-amber-400" />
@@ -1596,7 +1765,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           IN-BOOK SEARCH MODAL
           ========================================================================= */}
       {showSearchModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div className="absolute inset-0 z-40 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4">
           <div className="w-full max-w-lg bg-slate-950 border border-slate-800 rounded-3xl p-6 text-white shadow-2xl space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">

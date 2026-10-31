@@ -41,6 +41,7 @@ import {
   MoreVertical,
   Trash2,
   AlertTriangle,
+  Database,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Book, Highlight, Bookmark as BookmarkType } from '../../types/book';
@@ -60,6 +61,10 @@ import {
   APPLE_BOOK_CATEGORIES,
 } from '../../services/appleBooksDrive';
 import { safeFetchJson, getApiUrl } from '../../services/api';
+import {
+  saveBookToSqliteStore,
+  fetchBooksFromSqliteStore,
+} from '../../services/offlineSyncService';
 
 export const IBooksLibraryTab: React.FC = () => {
   const { user, googleAccessToken, googleWorkspaceSettings } = useApp();
@@ -254,25 +259,53 @@ export const IBooksLibraryTab: React.FC = () => {
     safeSetLocalStorage('aura_ibooks_today_mins', String(todayMinutesRead));
   }, [todayMinutesRead]);
 
-  // Load any PDF books synced in SQLite from another device or session
+  // Load any PDF books synced in 3GB SQLite store or family sync
   useEffect(() => {
-    safeFetchJson('/api/family/sync?recordType=pdf_book')
-      .then((data) => {
-        if (data.records && Array.isArray(data.records)) {
+    const loadSqliteLibrary = async () => {
+      try {
+        const sqliteBooks = await fetchBooksFromSqliteStore(user?.email);
+        if (sqliteBooks && sqliteBooks.length > 0) {
           setBooks((prev) => {
-            const currentIds = new Set(prev.map((b) => b.id));
-            const newFromSqlite: Book[] = [];
-            data.records.forEach((rec: any) => {
-              if (rec.data && rec.data.id && !currentIds.has(rec.data.id)) {
-                newFromSqlite.push(rec.data);
-              }
+            const map = new Map<string, Book>();
+            // Mark books from SQLite as locally cached
+            sqliteBooks.forEach((b) => map.set(b.id, { ...b, isLocalCached: true }));
+            prev.forEach((b) => {
+              if (!map.has(b.id)) map.set(b.id, b);
             });
-            return newFromSqlite.length > 0 ? [...newFromSqlite, ...prev] : prev;
+            return Array.from(map.values());
           });
         }
-      })
-      .catch((e) => console.warn('SQLite book fetch note:', e));
-  }, []);
+      } catch (err) {
+        console.warn('SQLite offline library load note:', err);
+      }
+
+      // Also check family sync
+      safeFetchJson('/api/family/sync?recordType=pdf_book')
+        .then((data) => {
+          if (data && data.records && Array.isArray(data.records)) {
+            setBooks((prev) => {
+              const currentIds = new Set(prev.map((b) => b.id));
+              const newFromSqlite: Book[] = [];
+              data.records.forEach((rec: any) => {
+                if (rec.data && rec.data.id && !currentIds.has(rec.data.id)) {
+                  newFromSqlite.push(rec.data);
+                }
+              });
+              return newFromSqlite.length > 0 ? [...newFromSqlite, ...prev] : prev;
+            });
+          }
+        })
+        .catch(() => {});
+    };
+
+    loadSqliteLibrary();
+
+    const handleSyncComplete = () => {
+      loadSqliteLibrary();
+    };
+    window.addEventListener('aura_sqlite_synced', handleSyncComplete);
+    return () => window.removeEventListener('aura_sqlite_synced', handleSyncComplete);
+  }, [user?.email]);
 
   // Initialize and check local cache status for books (LRU top 20 retention)
   useEffect(() => {
@@ -372,6 +405,7 @@ export const IBooksLibraryTab: React.FC = () => {
 
           newAddedBooks.push(parsedBook);
           syncBookToSqlite(parsedBook);
+          saveBookToSqliteStore(parsedBook).catch((err) => console.warn('SQLite store book error:', err));
         }
       }
 
@@ -604,6 +638,34 @@ export const IBooksLibraryTab: React.FC = () => {
                   <div className="text-[10px] text-slate-400">
                     {book.isPdf ? 'Save PDF file' : 'Save readable copy'}
                   </div>
+                </div>
+              </button>
+
+              {/* Cache to 3GB SQLite Store */}
+              <button
+                type="button"
+                onClick={async () => {
+                  setActiveKebabBookId(null);
+                  setDownloadNotice(`Caching "${book.title}" in local 3GB SQLite store...`);
+                  const ok = await saveBookToSqliteStore(book);
+                  if (ok) {
+                    setBooks((prev) =>
+                      prev.map((b) => (b.id === book.id ? { ...b, isLocalCached: true } : b))
+                    );
+                    setDownloadNotice(`✓ Cached "${book.title}" to local 3GB SQLite store!`);
+                  } else {
+                    setDownloadNotice(`⚠️ Could not save to SQLite.`);
+                  }
+                  setTimeout(() => setDownloadNotice(null), 3500);
+                }}
+                className="w-full px-3 py-2 text-left hover:bg-amber-500/15 text-slate-200 hover:text-amber-300 flex items-center gap-2.5 transition-colors"
+              >
+                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+                  <Database className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <div className="font-semibold">{book.isLocalCached ? '3GB Cached (Refresh)' : 'Save to 3GB SQLite'}</div>
+                  <div className="text-[10px] text-slate-400">Offline persistent copy</div>
                 </div>
               </button>
 

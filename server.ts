@@ -73,6 +73,14 @@ import {
   saveTranslationToSqlite,
   deleteTranslationFromSqlite,
   toggleTranslationFavoriteInSqlite,
+  saveAppleBookToSqlite,
+  getAppleBooksFromSqlite,
+  deleteAppleBookFromSqlite,
+  getBookPdfContentFromSqlite,
+  saveBookPdfContentToSqlite,
+  updateBookProgressInSqlite,
+  getSqlite3GbStorageQuotaStats,
+  MAX_SQLITE_STORAGE_BYTES,
   getSqliteDbStats,
   formatFamilyCode,
   normalizeFamilyCode,
@@ -86,6 +94,7 @@ import {
   type AiStudioCreationRecord,
   type MusicalTrackRecord,
   type VoiceRecordingRecord,
+  type AppleBookRecord,
 } from './server/sqlite.ts';
 
 dotenv.config();
@@ -2732,6 +2741,246 @@ app.get('/api/sqlite/status', (_req, res) => {
   try {
     const stats = getSqliteDbStats();
     res.json({ success: true, ...stats });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// 3GB SQLITE STORAGE QUOTA & UNIFIED OFFLINE SYNC ENDPOINTS
+// =========================================================================
+
+// Get live 3GB storage quota status, usage by feature, and capacity breakdown
+app.get('/api/sqlite/storage-quota', (_req, res) => {
+  try {
+    const quota = getSqlite3GbStorageQuotaStats();
+    res.json({ success: true, ...quota });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 1-Click Unified Offline Sync: caches files & items across all features into SQLite
+app.post('/api/sqlite/sync-all', async (req, res) => {
+  try {
+    const {
+      userEmail = 'chinna.tamil2000@gmail.com',
+      books = [],
+      musicTracks = [],
+      voiceRecordings = [],
+      ttsMemos = [],
+      translations = [],
+      driveFiles = [],
+    } = req.body;
+
+    const results = {
+      booksSaved: 0,
+      musicTracksSaved: 0,
+      recordingsSaved: 0,
+      ttsSaved: 0,
+      translationsSaved: 0,
+      driveFilesSaved: 0,
+      quotaAfter: null as any,
+    };
+
+    // 1. Sync Books
+    for (const b of books) {
+      try {
+        saveAppleBookToSqlite({ ...b, userEmail });
+        results.booksSaved++;
+      } catch {}
+    }
+
+    // 2. Sync Music Tracks
+    for (const m of musicTracks) {
+      try {
+        saveMusicTrackToSqlite({ ...m, userEmail });
+        results.musicTracksSaved++;
+      } catch {}
+    }
+
+    // 3. Sync Voice Recordings
+    for (const v of voiceRecordings) {
+      try {
+        saveVoiceRecordingToSqlite({ ...v, userEmail });
+        results.recordingsSaved++;
+      } catch {}
+    }
+
+    // 4. Sync TTS Memos
+    for (const t of ttsMemos) {
+      try {
+        saveTtsMemoToSqlite({ ...t, userEmail });
+        results.ttsSaved++;
+      } catch {}
+    }
+
+    // 5. Sync Language Translations
+    for (const l of translations) {
+      try {
+        saveTranslationToSqlite({ ...l, userEmail });
+        results.translationsSaved++;
+      } catch {}
+    }
+
+    // 6. Sync Google Drive Files
+    for (const d of driveFiles) {
+      try {
+        saveGoogleDriveFileToSqlite({ ...d, userEmail });
+        results.driveFilesSaved++;
+      } catch {}
+    }
+
+    results.quotaAfter = getSqlite3GbStorageQuotaStats();
+
+    res.json({
+      success: true,
+      message: 'All feature records and media synchronized into local SQLite 3GB storage.',
+      syncedCounts: results,
+      quota: results.quotaAfter,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// APPLE BOOKS LIBRARY SQLite STORE REST ENDPOINTS
+// =========================================================================
+
+// List all offline books
+app.get('/api/books/library', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string) || undefined;
+    const books = getAppleBooksFromSqlite(userEmail);
+    res.json({ success: true, count: books.length, books });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Save or cache a book into SQLite
+app.post('/api/books/library', (req, res) => {
+  try {
+    const book = req.body;
+    if (!book.title) {
+      return res.status(400).json({ success: false, error: 'Book title is required' });
+    }
+    const saved = saveAppleBookToSqlite(book);
+    res.json({ success: true, book: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Stream or retrieve offline PDF content for a book (with HTTP Range & caching)
+app.get('/api/books/library/:id/pdf', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const content = getBookPdfContentFromSqlite(id);
+
+    // 1. If stored in SQLite as base64, stream binary PDF
+    if (content?.pdfContentBase64 && content.pdfContentBase64.length > 20) {
+      const cleanBase64 = content.pdfContentBase64.replace(/^data:application\/pdf;base64,/, '');
+      const buffer = Buffer.from(cleanBase64, 'base64');
+      const filename = content.pdfFileName || `${id}.pdf`;
+      const range = req.headers.range;
+
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : buffer.length - 1;
+        const chunkSize = end - start + 1;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${buffer.length}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize,
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(buffer.subarray(start, end + 1));
+      } else {
+        res.writeHead(200, {
+          'Content-Length': buffer.length,
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(buffer);
+      }
+    }
+
+    // 2. If not in SQLite yet, but has driveFileId, fetch from Google Drive and auto-cache
+    const userOAuthToken =
+      (req.query.accessToken as string) ||
+      (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+
+    if (content?.driveFileId && userOAuthToken) {
+      try {
+        const driveRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${content.driveFileId}?alt=media`,
+          { headers: { Authorization: `Bearer ${userOAuthToken}` } }
+        );
+        if (driveRes.ok) {
+          const ab = await driveRes.arrayBuffer();
+          const buf = Buffer.from(ab);
+          saveBookPdfContentToSqlite(id, buf.toString('base64'), content.pdfFileName);
+
+          res.writeHead(200, {
+            'Content-Length': buf.length,
+            'Content-Type': 'application/pdf',
+            'Accept-Ranges': 'bytes',
+          });
+          return res.end(buf);
+        }
+      } catch (dErr) {
+        console.warn('Drive book stream error:', dErr);
+      }
+    }
+
+    res.status(404).json({ error: 'PDF content not found in SQLite or Drive' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cache PDF content directly into SQLite for a book
+app.post('/api/books/library/:id/cache-pdf', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { pdfContentBase64, pdfFileName } = req.body;
+    if (!pdfContentBase64) {
+      return res.status(400).json({ success: false, error: 'pdfContentBase64 is required' });
+    }
+    const ok = saveBookPdfContentToSqlite(id, pdfContentBase64, pdfFileName);
+    res.json({ success: ok, pdfUrl: `/api/books/library/${id}/pdf` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Update reading progress in SQLite
+app.post('/api/books/library/:id/progress', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page, chapterId, percent } = req.body;
+    const ok = updateBookProgressInSqlite(id, Number(page || 1), chapterId, Number(percent || 0));
+    res.json({ success: ok, id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Delete book from SQLite
+app.delete('/api/books/library/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const ok = deleteAppleBookFromSqlite(id, userEmail);
+    res.json({ success: ok, id });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

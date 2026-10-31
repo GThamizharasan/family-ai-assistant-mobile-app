@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useState, useEffect } from 'react';
 import {
   Home,
   Smartphone,
@@ -11,15 +11,18 @@ import {
   Download,
   LogOut,
   Eye,
+  Database,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
+import { isOfflineModeSimulated } from '../services/offlineSyncService';
 
 interface MobileFrameProps {
   children: ReactNode;
   onOpenVoice: () => void;
   onOpenVision?: () => void;
   onOpenInstallerHub: () => void;
+  onOpenOfflineSyncCenter?: () => void;
   onGoHome: () => void;
 }
 
@@ -28,9 +31,19 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   onOpenVoice,
   onOpenVision,
   onOpenInstallerHub,
+  onOpenOfflineSyncCenter,
   onGoHome,
 }) => {
   const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, signOutGoogle } = useApp();
+  const [offlineSimulated, setOfflineSimulated] = useState(() => isOfflineModeSimulated());
+
+  useEffect(() => {
+    const handleOfflineChanged = (e: any) => {
+      setOfflineSimulated(!!e.detail?.active);
+    };
+    window.addEventListener('aura_offline_mode_changed', handleOfflineChanged);
+    return () => window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
+  }, []);
 
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -48,7 +61,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           <span className="text-[10px] text-slate-500 font-mono">v2.4 Sovereign</span>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             onClick={onGoHome}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95"
@@ -58,6 +71,19 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             <Home className="w-3.5 h-3.5 text-indigo-400" />
             <span className="text-[11px] font-semibold">Home</span>
           </button>
+
+          {/* 3GB SQLite Offline Store Sync Center */}
+          {onOpenOfflineSyncCenter && (
+            <button
+              onClick={onOpenOfflineSyncCenter}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              title="3GB SQLite Offline Store & Unified Sync Center"
+              aria-label="Open 3GB SQLite Offline Store"
+            >
+              <Database className="w-3.5 h-3.5 text-amber-400" />
+              <span>3GB Store</span>
+            </button>
+          )}
 
           {/* Auro Vision Launcher Button for Blind / Low-Vision Guide */}
           {onOpenVision && (
@@ -110,7 +136,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
         className={`w-full transition-all duration-300 ${
           isMobileDeviceFrame
             ? 'max-w-[430px] rounded-[52px] border-[10px] border-slate-800/90 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] bg-slate-950 overflow-hidden relative min-h-[890px] ring-1 ring-slate-700/50'
-            : 'max-w-2xl px-3 sm:px-0'
+            : 'max-w-2xl px-3 sm:px-0 relative min-h-[850px]'
         }`}
       >
         {/* Native Mobile Status Bar (Visible in phone frame) */}
@@ -129,7 +155,15 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             </div>
 
             <div className="flex items-center gap-1.5 text-slate-400">
-              {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5 text-rose-400" />}
+              {offlineSimulated ? (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30">
+                  OFFLINE
+                </span>
+              ) : isOnline ? (
+                <Wifi className="w-3.5 h-3.5" />
+              ) : (
+                <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+              )}
               <span className="text-[11px] font-mono">5G</span>
               <div className="flex items-center text-[11px] font-mono">
                 <span>94%</span>

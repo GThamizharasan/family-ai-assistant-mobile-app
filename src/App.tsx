@@ -38,6 +38,7 @@ import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal'
 import { ActiveCallModal } from './components/ActiveCallModal';
 import { AuroVisionModal } from './components/vision/AuroVisionModal';
 import { ActiveAlarmModal } from './components/clock/ActiveAlarmModal';
+import { OfflineSyncCenterModal } from './components/OfflineSyncCenterModal';
 import { Alarm } from './types/clock';
 
 const AppContent: React.FC = () => {
@@ -49,6 +50,7 @@ const AppContent: React.FC = () => {
   const [isVisionOpen, setIsVisionOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
   const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
+  const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
   const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
 
   // Global Alarm Tick Check
@@ -233,6 +235,7 @@ const AppContent: React.FC = () => {
       onOpenVoice={() => setIsVoiceOpen(true)}
       onOpenVision={() => setIsVisionOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
+      onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
       onGoHome={() => setCurrentTab('home')}
     >
       {renderActiveTab()}
@@ -245,6 +248,7 @@ const AppContent: React.FC = () => {
         onSelectTab={(tab) => setCurrentTab(tab)}
         onOpenVoice={() => setIsVoiceOpen(true)}
         onOpenVision={() => setIsVisionOpen(true)}
+        onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
       />
 
       {/* Apple Music Full Screen Modal */}
@@ -287,6 +291,13 @@ const AppContent: React.FC = () => {
           setIsInstallerOpen(false);
           setCurrentTab('home');
         }}
+      />
+
+      {/* 3GB SQLite Offline Store & Unified Sync Center */}
+      <OfflineSyncCenterModal
+        isOpen={isOfflineSyncCenterOpen}
+        onClose={() => setIsOfflineSyncCenterOpen(false)}
+        onNavigateTab={handleNavigate}
       />
 
       <ActiveCallModal />

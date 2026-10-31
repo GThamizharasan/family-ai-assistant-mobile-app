@@ -591,6 +591,38 @@ export async function initSqliteDb(): Promise<Database> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS apple_books_library (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      author TEXT NOT NULL,
+      genre TEXT NOT NULL,
+      subtitle TEXT,
+      description TEXT,
+      cover_gradient TEXT,
+      accent_color TEXT,
+      rating REAL DEFAULT 5,
+      review_count INTEGER DEFAULT 1,
+      total_pages INTEGER DEFAULT 1,
+      current_page INTEGER DEFAULT 1,
+      current_chapter_id TEXT,
+      progress_percent INTEGER DEFAULT 0,
+      is_pdf INTEGER DEFAULT 0,
+      pdf_file_name TEXT,
+      pdf_file_size TEXT,
+      pdf_url TEXT,
+      pdf_content_base64 TEXT,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Apple Books',
+      chapters_json TEXT,
+      bookmarks_json TEXT,
+      highlights_json TEXT,
+      is_local_cached INTEGER DEFAULT 1,
+      added_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
@@ -610,6 +642,8 @@ export async function initSqliteDb(): Promise<Database> {
   try {
     db.run("UPDATE google_drive_files SET folder_name = REPLACE(folder_name, 'Musical Library', 'Apple Music') WHERE folder_name LIKE '%Musical Library%';");
   } catch {}
+  try { db.run('ALTER TABLE apple_books_library ADD COLUMN pdf_content_base64 TEXT;'); } catch {}
+  try { db.run('ALTER TABLE apple_books_library ADD COLUMN is_local_cached INTEGER DEFAULT 1;'); } catch {}
 
   // Seed default Google Keep notes if empty
   try {
@@ -3364,6 +3398,456 @@ export function toggleTranslationFavoriteInSqlite(id: string, isFavorite?: boole
   }
 }
 
+// =========================================================================
+// APPLE BOOKS LIBRARY SQLite STORE & OFFLINE CACHE
+// =========================================================================
+
+export interface AppleBookRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  author: string;
+  genre: string;
+  subtitle?: string;
+  description?: string;
+  coverGradient?: string;
+  accentColor?: string;
+  rating?: number;
+  reviewCount?: number;
+  totalPages?: number;
+  currentPage?: number;
+  currentChapterId?: string;
+  progressPercent?: number;
+  isPdf?: boolean;
+  pdfFileName?: string;
+  pdfFileSize?: string;
+  pdfUrl?: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  chapters?: any[];
+  bookmarks?: any[];
+  highlights?: any[];
+  isLocalCached?: boolean;
+  hasPdfBlob?: boolean;
+  addedAt: string;
+  updatedAt: string;
+}
+
+export function saveAppleBookToSqlite(book: Partial<AppleBookRecord> & {
+  title: string;
+  id?: string;
+  author?: string;
+  genre?: string;
+  pdfContentBase64?: string;
+}): AppleBookRecord {
+  if (!db) throw new Error('Database not initialized');
+  const now = new Date().toISOString();
+  const id = book.id || `book-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const cleanEmail = (book.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const chaptersJson = book.chapters ? JSON.stringify(book.chapters) : '[]';
+  const bookmarksJson = book.bookmarks ? JSON.stringify(book.bookmarks) : '[]';
+  const highlightsJson = book.highlights ? JSON.stringify(book.highlights) : '[]';
+
+  let finalPdfUrl = book.pdfUrl;
+  if (book.pdfContentBase64 && book.pdfContentBase64.length > 20) {
+    finalPdfUrl = `/api/books/library/${id}/pdf`;
+  }
+
+  db.run(
+    `INSERT INTO apple_books_library (
+      id, user_email, title, author, genre, subtitle, description,
+      cover_gradient, accent_color, rating, review_count, total_pages, current_page,
+      current_chapter_id, progress_percent, is_pdf, pdf_file_name, pdf_file_size,
+      pdf_url, pdf_content_base64, drive_file_id, drive_web_view_link, drive_folder_path,
+      chapters_json, bookmarks_json, highlights_json, is_local_cached, added_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      user_email = excluded.user_email,
+      title = excluded.title,
+      author = excluded.author,
+      genre = excluded.genre,
+      subtitle = COALESCE(excluded.subtitle, subtitle),
+      description = COALESCE(excluded.description, description),
+      cover_gradient = COALESCE(excluded.cover_gradient, cover_gradient),
+      accent_color = COALESCE(excluded.accent_color, accent_color),
+      rating = COALESCE(excluded.rating, rating),
+      review_count = COALESCE(excluded.review_count, review_count),
+      total_pages = COALESCE(excluded.total_pages, total_pages),
+      current_page = COALESCE(excluded.current_page, current_page),
+      current_chapter_id = COALESCE(excluded.current_chapter_id, current_chapter_id),
+      progress_percent = COALESCE(excluded.progress_percent, progress_percent),
+      is_pdf = COALESCE(excluded.is_pdf, is_pdf),
+      pdf_file_name = COALESCE(excluded.pdf_file_name, pdf_file_name),
+      pdf_file_size = COALESCE(excluded.pdf_file_size, pdf_file_size),
+      pdf_url = COALESCE(excluded.pdf_url, pdf_url),
+      pdf_content_base64 = CASE WHEN excluded.pdf_content_base64 IS NOT NULL AND length(excluded.pdf_content_base64) > 10 THEN excluded.pdf_content_base64 ELSE pdf_content_base64 END,
+      drive_file_id = COALESCE(excluded.drive_file_id, drive_file_id),
+      drive_web_view_link = COALESCE(excluded.drive_web_view_link, drive_web_view_link),
+      drive_folder_path = COALESCE(excluded.drive_folder_path, drive_folder_path),
+      chapters_json = CASE WHEN excluded.chapters_json != '[]' THEN excluded.chapters_json ELSE chapters_json END,
+      bookmarks_json = COALESCE(excluded.bookmarks_json, bookmarks_json),
+      highlights_json = COALESCE(excluded.highlights_json, highlights_json),
+      is_local_cached = 1,
+      updated_at = excluded.updated_at`,
+    [
+      id,
+      cleanEmail,
+      book.title,
+      book.author || 'Personal Library',
+      book.genre || 'PDF & Documents',
+      book.subtitle || '',
+      book.description || '',
+      book.coverGradient || 'from-amber-600 to-amber-900',
+      book.accentColor || '#f59e0b',
+      book.rating || 5,
+      book.reviewCount || 1,
+      book.totalPages || 10,
+      book.currentPage || 1,
+      book.currentChapterId || 'ch1',
+      book.progressPercent || 0,
+      book.isPdf ? 1 : 0,
+      book.pdfFileName || `${book.title}.pdf`,
+      book.pdfFileSize || '',
+      finalPdfUrl || '',
+      book.pdfContentBase64 || null,
+      book.driveFileId || null,
+      book.driveWebViewLink || null,
+      book.driveFolderPath || 'Family Circle/Apple Books',
+      chaptersJson,
+      bookmarksJson,
+      highlightsJson,
+      1,
+      book.addedAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+  return {
+    ...book,
+    id,
+    userEmail: cleanEmail,
+    title: book.title,
+    author: book.author || 'Personal Library',
+    genre: book.genre || 'PDF & Documents',
+    pdfUrl: finalPdfUrl,
+    isLocalCached: true,
+    addedAt: book.addedAt || now,
+    updatedAt: now,
+  } as AppleBookRecord;
+}
+
+export function getAppleBooksFromSqlite(userEmail?: string): AppleBookRecord[] {
+  if (!db) return [];
+  try {
+    let query = `
+      SELECT id, user_email, title, author, genre, subtitle, description,
+             cover_gradient, accent_color, rating, review_count, total_pages,
+             current_page, current_chapter_id, progress_percent, is_pdf,
+             pdf_file_name, pdf_file_size, pdf_url, drive_file_id,
+             drive_web_view_link, drive_folder_path, chapters_json,
+             bookmarks_json, highlights_json, is_local_cached, added_at, updated_at,
+             (CASE WHEN pdf_content_base64 IS NOT NULL AND length(pdf_content_base64) > 10 THEN 1 ELSE 0 END) as has_pdf_blob
+      FROM apple_books_library
+    `;
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY updated_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const books: AppleBookRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      let chapters = [];
+      let bookmarks = [];
+      let highlights = [];
+      try { chapters = JSON.parse(String(row.chapters_json || '[]')); } catch {}
+      try { bookmarks = JSON.parse(String(row.bookmarks_json || '[]')); } catch {}
+      try { highlights = JSON.parse(String(row.highlights_json || '[]')); } catch {}
+
+      const hasPdfBlob = Number(row.has_pdf_blob) === 1;
+      const id = String(row.id);
+      const pdfUrl = hasPdfBlob ? `/api/books/library/${id}/pdf` : (row.pdf_url ? String(row.pdf_url) : undefined);
+
+      books.push({
+        id,
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        author: String(row.author),
+        genre: String(row.genre),
+        subtitle: row.subtitle ? String(row.subtitle) : undefined,
+        description: row.description ? String(row.description) : undefined,
+        coverGradient: String(row.cover_gradient || 'from-amber-600 to-amber-900'),
+        accentColor: String(row.accent_color || '#f59e0b'),
+        rating: Number(row.rating || 5),
+        reviewCount: Number(row.review_count || 1),
+        totalPages: Number(row.total_pages || 1),
+        currentPage: Number(row.current_page || 1),
+        currentChapterId: String(row.current_chapter_id || 'ch1'),
+        progressPercent: Number(row.progress_percent || 0),
+        isPdf: Number(row.is_pdf) === 1,
+        pdfFileName: row.pdf_file_name ? String(row.pdf_file_name) : undefined,
+        pdfFileSize: row.pdf_file_size ? String(row.pdf_file_size) : undefined,
+        pdfUrl,
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Apple Books'),
+        chapters,
+        bookmarks,
+        highlights,
+        isLocalCached: hasPdfBlob || Number(row.is_local_cached) === 1,
+        hasPdfBlob,
+        addedAt: String(row.added_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return books;
+  } catch (err) {
+    console.warn('Failed to query apple_books_library from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteAppleBookFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  try {
+    if (userEmail && userEmail.trim()) {
+      db.run('DELETE FROM apple_books_library WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+    } else {
+      db.run('DELETE FROM apple_books_library WHERE id = ?', [id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to delete book from SQLite:', err);
+    return false;
+  }
+}
+
+export function getBookPdfContentFromSqlite(id: string): { pdfContentBase64?: string; pdfFileName?: string; driveFileId?: string } | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare('SELECT pdf_content_base64, pdf_file_name, drive_file_id FROM apple_books_library WHERE id = ?');
+    stmt.bind([id]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      const res = {
+        pdfContentBase64: row.pdf_content_base64 ? String(row.pdf_content_base64) : undefined,
+        pdfFileName: row.pdf_file_name ? String(row.pdf_file_name) : undefined,
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+      };
+      stmt.free();
+      return res;
+    }
+    stmt.free();
+    return null;
+  } catch (err) {
+    console.warn('Failed to get book PDF content from SQLite:', err);
+    return null;
+  }
+}
+
+export function saveBookPdfContentToSqlite(id: string, pdfContentBase64: string, pdfFileName?: string): boolean {
+  if (!db) return false;
+  try {
+    const now = new Date().toISOString();
+    if (pdfFileName) {
+      db.run('UPDATE apple_books_library SET pdf_content_base64 = ?, pdf_file_name = ?, pdf_url = ?, is_local_cached = 1, updated_at = ? WHERE id = ?', [
+        pdfContentBase64,
+        pdfFileName,
+        `/api/books/library/${id}/pdf`,
+        now,
+        id,
+      ]);
+    } else {
+      db.run('UPDATE apple_books_library SET pdf_content_base64 = ?, pdf_url = ?, is_local_cached = 1, updated_at = ? WHERE id = ?', [
+        pdfContentBase64,
+        `/api/books/library/${id}/pdf`,
+        now,
+        id,
+      ]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to save book PDF content to SQLite:', err);
+    return false;
+  }
+}
+
+export function updateBookProgressInSqlite(id: string, page: number, chapterId?: string, percent?: number): boolean {
+  if (!db) return false;
+  try {
+    const now = new Date().toISOString();
+    db.run(
+      `UPDATE apple_books_library 
+       SET current_page = ?, 
+           current_chapter_id = COALESCE(?, current_chapter_id), 
+           progress_percent = COALESCE(?, progress_percent), 
+           updated_at = ? 
+       WHERE id = ?`,
+      [page, chapterId || null, percent !== undefined ? percent : null, now, id]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to update book progress in SQLite:', err);
+    return false;
+  }
+}
+
+// =========================================================================
+// 3GB MAXIMUM SQLITE STORAGE QUOTA & BREAKDOWN ANALYZER
+// =========================================================================
+
+export const MAX_SQLITE_STORAGE_BYTES = 3 * 1024 * 1024 * 1024; // 3GB Quota (3,221,225,472 bytes)
+
+export interface Sqlite3GbStorageQuota {
+  quotaBytes: number;
+  quotaGb: number;
+  totalUsedBytes: number;
+  totalUsedMb: number;
+  totalUsedGb: number;
+  freeBytes: number;
+  freeMb: number;
+  freeGb: number;
+  percentUsed: number;
+  isNearQuota: boolean;
+  isQuotaExceeded: boolean;
+  dbFileSizeFormatted: string;
+  breakdown: {
+    books: { count: number; bytes: number; mb: number };
+    music: { count: number; bytes: number; mb: number };
+    memos: { count: number; bytes: number; mb: number };
+    tts: { count: number; bytes: number; mb: number };
+    translations: { count: number; bytes: number; mb: number };
+    driveFiles: { count: number; bytes: number; mb: number };
+    aiCreations: { count: number; bytes: number; mb: number };
+    keepNotes: { count: number; bytes: number; mb: number };
+    other: { bytes: number; mb: number };
+  };
+  lastUpdated: string;
+}
+
+export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
+  if (!db) {
+    return {
+      quotaBytes: MAX_SQLITE_STORAGE_BYTES,
+      quotaGb: 3.0,
+      totalUsedBytes: 0,
+      totalUsedMb: 0,
+      totalUsedGb: 0,
+      freeBytes: MAX_SQLITE_STORAGE_BYTES,
+      freeMb: 3072,
+      freeGb: 3.0,
+      percentUsed: 0,
+      isNearQuota: false,
+      isQuotaExceeded: false,
+      dbFileSizeFormatted: '0 KB',
+      breakdown: {
+        books: { count: 0, bytes: 0, mb: 0 },
+        music: { count: 0, bytes: 0, mb: 0 },
+        memos: { count: 0, bytes: 0, mb: 0 },
+        tts: { count: 0, bytes: 0, mb: 0 },
+        translations: { count: 0, bytes: 0, mb: 0 },
+        driveFiles: { count: 0, bytes: 0, mb: 0 },
+        aiCreations: { count: 0, bytes: 0, mb: 0 },
+        keepNotes: { count: 0, bytes: 0, mb: 0 },
+        other: { bytes: 0, mb: 0 },
+      },
+      lastUpdated: new Date().toISOString(),
+    };
+  }
+
+  let dbFileSizeBytes = 0;
+  try {
+    if (fs.existsSync(DB_PATH)) {
+      dbFileSizeBytes = fs.statSync(DB_PATH).size;
+    }
+  } catch {}
+
+  const getTableStats = (tableName: string, blobCol?: string, extraCol?: string) => {
+    try {
+      let sql = `SELECT COUNT(*) as cnt`;
+      if (blobCol && extraCol) {
+        sql += `, COALESCE(SUM(LENGTH(COALESCE(${blobCol}, '')) + LENGTH(COALESCE(${extraCol}, '')) + 1024), 0) as bts FROM ${tableName}`;
+      } else if (blobCol) {
+        sql += `, COALESCE(SUM(LENGTH(COALESCE(${blobCol}, '')) + 1024), 0) as bts FROM ${tableName}`;
+      } else {
+        sql += `, COALESCE(COUNT(*) * 1024, 0) as bts FROM ${tableName}`;
+      }
+      const res = db!.exec(sql);
+      const count = Number(res[0]?.values[0]?.[0] || 0);
+      const bytes = Number(res[0]?.values[0]?.[1] || 0);
+      return { count, bytes, mb: Number((bytes / (1024 * 1024)).toFixed(2)) };
+    } catch {
+      return { count: 0, bytes: 0, mb: 0 };
+    }
+  };
+
+  const booksStats = getTableStats('apple_books_library', 'pdf_content_base64', 'chapters_json');
+  const musicStats = getTableStats('musical_library_tracks', 'audio_content_base64', 'lyrics');
+  const memosStats = getTableStats('voice_recordings', 'audio_content_base64', 'transcription');
+  const ttsStats = getTableStats('tts_memos', 'audio_content_base64');
+  const translationsStats = getTableStats('language_translations', 'audio_content_base64');
+  const driveStats = getTableStats('google_drive_files', 'file_content_base64');
+  const aiStats = getTableStats('ai_studio_creations', 'metadata_json');
+  const keepStats = getTableStats('google_keep_notes', 'body');
+
+  const contentTotalBytes =
+    booksStats.bytes +
+    musicStats.bytes +
+    memosStats.bytes +
+    ttsStats.bytes +
+    translationsStats.bytes +
+    driveStats.bytes +
+    aiStats.bytes +
+    keepStats.bytes;
+
+  const totalUsedBytes = Math.max(dbFileSizeBytes, contentTotalBytes);
+  const totalUsedMb = Number((totalUsedBytes / (1024 * 1024)).toFixed(2));
+  const totalUsedGb = Number((totalUsedBytes / (1024 * 1024 * 1024)).toFixed(3));
+  const freeBytes = Math.max(0, MAX_SQLITE_STORAGE_BYTES - totalUsedBytes);
+  const freeMb = Number((freeBytes / (1024 * 1024)).toFixed(2));
+  const freeGb = Number((freeBytes / (1024 * 1024 * 1024)).toFixed(3));
+  const percentUsed = Number(((totalUsedBytes / MAX_SQLITE_STORAGE_BYTES) * 100).toFixed(2));
+
+  return {
+    quotaBytes: MAX_SQLITE_STORAGE_BYTES,
+    quotaGb: 3.0,
+    totalUsedBytes,
+    totalUsedMb,
+    totalUsedGb,
+    freeBytes,
+    freeMb,
+    freeGb,
+    percentUsed,
+    isNearQuota: percentUsed >= 85,
+    isQuotaExceeded: totalUsedBytes >= MAX_SQLITE_STORAGE_BYTES,
+    dbFileSizeFormatted: `${(dbFileSizeBytes / (1024 * 1024)).toFixed(2)} MB`,
+    breakdown: {
+      books: booksStats,
+      music: musicStats,
+      memos: memosStats,
+      tts: ttsStats,
+      translations: translationsStats,
+      driveFiles: driveStats,
+      aiCreations: aiStats,
+      keepNotes: keepStats,
+      other: {
+        bytes: Math.max(0, dbFileSizeBytes - contentTotalBytes),
+        mb: Number((Math.max(0, dbFileSizeBytes - contentTotalBytes) / (1024 * 1024)).toFixed(2)),
+      },
+    },
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
 // -------------------------------------------------------------
 // Diagnostics & SQLite Database Stats
 // -------------------------------------------------------------
@@ -3375,6 +3859,7 @@ export function getSqliteDbStats() {
       sizeBytes: 0,
       tables: {},
       totalRows: 0,
+      quota3Gb: getSqlite3GbStorageQuotaStats(),
     };
   }
 
@@ -3404,6 +3889,7 @@ export function getSqliteDbStats() {
     'voice_recordings',
     'tts_memos',
     'language_translations',
+    'apple_books_library',
   ];
 
   const tableCounts: Record<string, number> = {};
@@ -3428,6 +3914,7 @@ export function getSqliteDbStats() {
     sizeFormatted: `${(sizeBytes / 1024).toFixed(1)} KB`,
     totalRows,
     tableCounts,
+    quota3Gb: getSqlite3GbStorageQuotaStats(),
     lastSaved: new Date().toISOString(),
   };
 }
