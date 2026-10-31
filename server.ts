@@ -173,9 +173,11 @@ function getEffectiveGeminiApiKey(customApiKey?: string): string {
   return '';
 }
 
-function getAiClient(customApiKey?: string): GoogleGenAI | null {
+function getAiClient(customApiKey?: string): GoogleGenAI {
   const apiKey = getEffectiveGeminiApiKey(customApiKey);
-  if (!apiKey) return null;
+  if (!apiKey) {
+    throw new Error('Gemini API key is not configured. Please add your GEMINI_API_KEY in Keys & SQLite.');
+  }
 
   return new GoogleGenAI({
     apiKey,
@@ -188,30 +190,36 @@ function getAiClient(customApiKey?: string): GoogleGenAI | null {
 }
 
 let ai: GoogleGenAI | null = null;
-if (getEffectiveGeminiApiKey()) {
-  ai = getAiClient();
-}
+try {
+  if (getEffectiveGeminiApiKey()) {
+    ai = getAiClient();
+  }
+} catch {}
 
 function refreshAiClient(customApiKey?: string): GoogleGenAI | null {
-  if (customApiKey && customApiKey.trim()) {
-    return getAiClient(customApiKey.trim());
-  }
-
   try {
-    const keys = getHubApiKeysFromSqlite();
-    const modelRecord = keys.find((k) => k.keyName === 'DEFAULT_GEMINI_MODEL' || k.keyName === 'GEMINI_MODEL');
-    if (modelRecord?.keyValue) {
-      process.env.DEFAULT_GEMINI_MODEL = modelRecord.keyValue;
+    if (customApiKey && customApiKey.trim()) {
+      return getAiClient(customApiKey.trim());
     }
-    const geminiRecord = keys.find((k) => k.keyName === 'GEMINI_API_KEY');
-    if (geminiRecord?.keyValue && geminiRecord.keyValue.trim()) {
-      ai = getAiClient(geminiRecord.keyValue);
-      return ai;
-    }
-  } catch {}
 
-  ai = getAiClient();
-  return ai;
+    try {
+      const keys = getHubApiKeysFromSqlite();
+      const modelRecord = keys.find((k) => k.keyName === 'DEFAULT_GEMINI_MODEL' || k.keyName === 'GEMINI_MODEL');
+      if (modelRecord?.keyValue) {
+        process.env.DEFAULT_GEMINI_MODEL = modelRecord.keyValue;
+      }
+      const geminiRecord = keys.find((k) => k.keyName === 'GEMINI_API_KEY');
+      if (geminiRecord?.keyValue && geminiRecord.keyValue.trim()) {
+        ai = getAiClient(geminiRecord.keyValue);
+        return ai;
+      }
+    } catch {}
+
+    ai = getAiClient();
+    return ai;
+  } catch {
+    return null;
+  }
 }
 
 // API Status & Key Diagnostics (instant, non-blocking)
