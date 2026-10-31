@@ -45,7 +45,6 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Book, Highlight, Bookmark as BookmarkType } from '../../types/book';
-import { INITIAL_BOOKS } from '../../data/initialBooks';
 import { AppleBookReaderModal } from '../books/AppleBookReaderModal';
 import { parsePdfFileToBook, syncBookToSqlite, downloadBookFile } from '../../utils/pdfHelper';
 import {
@@ -88,12 +87,10 @@ export const IBooksLibraryTab: React.FC = () => {
           }
           return b;
         });
-        const existingIds = new Set(sanitized.map((b) => b.id));
-        const missing = INITIAL_BOOKS.filter((b: Book) => !existingIds.has(b.id));
-        return [...sanitized, ...missing];
+        return sanitized;
       }
     } catch {}
-    return INITIAL_BOOKS;
+    return [];
   });
 
   // Selected Book for Reading Modal
