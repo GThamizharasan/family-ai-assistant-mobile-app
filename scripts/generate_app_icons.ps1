@@ -1,9 +1,13 @@
 param(
-    [string]$SourcePath = "C:\Users\THAMIZHARASAN G\.gemini\antigravity-ide\brain\6d18f4b0-3cb1-45a8-8701-e17515dc46d5\.user_uploaded\media_1792281713085.jpg",
+    [string]$SourcePath = "src\assets\logo.png",
     [string]$RootDir = "c:\Users\THAMIZHARASAN G\OneDrive\Documents\GitHub\family-ai-assistant-mobile-app"
 )
 
 Add-Type -AssemblyName System.Drawing
+
+if (-not [System.IO.Path]::IsPathRooted($SourcePath)) {
+    $SourcePath = Join-Path $RootDir $SourcePath
+}
 
 Write-Host "Loading source image from: $SourcePath"
 $sourceImg = [System.Drawing.Bitmap]::new($SourcePath)
@@ -20,9 +24,9 @@ $publicDir = Join-Path $RootDir "public"
 $resDir = Join-Path $RootDir "android\app\src\main\res"
 
 # Save master logo in assets and public
-$sourceImg.Save((Join-Path $assetsDir "logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
 $sourceImg.Save((Join-Path $publicDir "app-logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-Write-Host "Saved master logo to src/assets/logo.png and public/app-logo.png"
+$sourceImg.Save((Join-Path $publicDir "logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+Write-Host "Saved master logo to src/assets/logo.png, public/app-logo.png, and public/logo.png"
 
 # Helper function to resize with high quality bicubic interpolation
 function Resize-Image {
