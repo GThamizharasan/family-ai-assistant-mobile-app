@@ -24,6 +24,15 @@ export function isIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
+export function isMobileDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1)
+  );
+}
+
 function blobToBase64(blob: Blob | null | undefined): Promise<string> {
   if (!blob || !(blob instanceof Blob) || blob.size === 0) {
     return Promise.resolve('');
@@ -302,8 +311,14 @@ export class VoiceAssistantEngine {
 
     try {
       const recognition = new SpeechRecognitionClass();
-      recognition.continuous = true;
+      const isMobile = isMobileDevice();
+
+      // CRITICAL FOR MOBILE WEB (iOS Safari & Android Chrome):
+      // On mobile browsers, continuous: true causes WebKit/Blink to abort or throw immediately.
+      // Setting continuous: false is standard for mobile Web Speech.
+      recognition.continuous = !isMobile;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
       recognition.lang = this.currentLanguage;
 
       recognition.onstart = () => {
@@ -355,13 +370,15 @@ export class VoiceAssistantEngine {
       recognition.onerror = (event: any) => {
         console.warn('Speech recognition status:', event.error);
         if (event.error === 'no-speech' || event.error === 'aborted') {
-          // Normal silence, brief pause, or programmatic stop/restart
+          // Normal silence, brief pause, or programmatic stop/restart on mobile
+          if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
+            this.scheduleAutoRestart(isMobile ? 350 : 600);
+          }
           return;
         }
 
         // If Web Speech API fails due to permissions, network, or service error, try MediaRecorder fallback
         if (
-          event.error === 'not-allowed' ||
           event.error === 'service-not-allowed' ||
           event.error === 'network' ||
           event.error === 'audio-capture'
@@ -389,7 +406,7 @@ export class VoiceAssistantEngine {
           this.commitCurrentSpeech();
         } else {
           if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
-            this.scheduleAutoRestart(600);
+            this.scheduleAutoRestart(isMobile ? 350 : 600);
           } else {
             this.isListening = false;
             this.onListeningChange?.(false);

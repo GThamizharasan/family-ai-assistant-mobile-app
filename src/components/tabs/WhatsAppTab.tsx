@@ -211,10 +211,6 @@ export const WhatsAppTab: React.FC<WhatsAppTabProps> = ({ initialContactId, onOp
       speechEngine.stopListening();
       setIsDictating(false);
     } else {
-      if (isIOSChrome()) {
-        showToast('iOS Chrome restricts speech recognition. Please use Safari on iPhone or type your message.');
-        return;
-      }
       setIsDictating(true);
       speechEngine.onTranscriptCallback = (transcript, isFinal) => {
         setReplyText(transcript);

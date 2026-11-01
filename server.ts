@@ -459,6 +459,46 @@ app.all('/api/tts', async (req, res) => {
   }
 });
 
+// High-Fidelity Audio Transcription via Gemini (Mobile Web & MediaRecorder Fallback)
+app.post('/api/ai/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = req.body || {};
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'audioBase64 is required' });
+    }
+    const client = refreshAiClient();
+    if (!client) {
+      return res.status(503).json({ error: 'Gemini client not initialized' });
+    }
+    const cleanBase64 = String(audioBase64).replace(/^data:[^;]+;base64,/, '');
+    const audioMime = mimeType || 'audio/webm';
+    const response = await client.models.generateContent({
+      model: process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                data: cleanBase64,
+                mimeType: audioMime,
+              },
+            },
+            {
+              text: 'Transcribe this spoken audio exactly as spoken by the user. Accurately transcribe Tamil, English, Tanglish, and Hindi. Return ONLY the transcribed text, without any additional commentary, notes, or quotes.',
+            },
+          ],
+        },
+      ],
+    });
+    const text = response?.text?.trim() || '';
+    return res.json({ text });
+  } catch (err: any) {
+    console.warn('Audio transcribe API error:', err);
+    return res.status(500).json({ error: err.message || 'Transcription failed' });
+  }
+});
+
 // 1. Natural Empathetic AI Assistant Chat
 app.post('/api/chat', async (req, res) => {
   try {

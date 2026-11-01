@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../types';
-import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
+import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
 
@@ -271,13 +271,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speechEngine.unlockAudio();
       speechEngine.setContinuousMode(isHandsFreeRef.current);
       loadAssistantMemories();
-      // Automatically activate speech listening for real-time conversation
-      const startTimer = setTimeout(() => {
-        if (isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
-          speechEngine.startListening();
-        }
-      }, 400);
-      return () => clearTimeout(startTimer);
+      // On native Android/iOS app or desktop, auto-activate speech listening.
+      // On mobile web browsers, wait for explicit user tap on mic or persona orb to preserve active User Activation token.
+      const isMobileWeb = !Capacitor.isNativePlatform() && isMobileDevice();
+      if (!isMobileWeb) {
+        const startTimer = setTimeout(() => {
+          if (isOpenRef.current && !isSpeakingRef.current && !isThinkingRef.current) {
+            speechEngine.startListening();
+          }
+        }, 400);
+        return () => clearTimeout(startTimer);
+      }
     } else {
       speechEngine.setContinuousMode(false);
       speechEngine.stopListening(true);
@@ -1571,7 +1575,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
-  const toggleMic = async () => {
+  const toggleMic = () => {
     if (isSpeaking) {
       // Barge-in: User tapped mic while Auro is speaking -> stop speech and start listening
       speechEngine.stopSpeaking();
@@ -1594,32 +1598,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speechEngine.setContinuousMode(isHandsFreeRef.current);
 
       if (typeof window !== 'undefined' && !window.isSecureContext) {
-        setMicStatusMessage('Microphone access requires a secure connection (HTTPS or http://localhost). If accessing via local network IP, please use http://localhost:3000 or enable HTTPS.');
+        setMicStatusMessage('Microphone access requires a secure connection (HTTPS or localhost). If connecting from mobile over Wi-Fi IP, access via HTTPS or use USB forwarding (adb reverse tcp:3000 tcp:3000 to open http://localhost:3000).');
         return;
       }
 
-      if (isIOSChrome()) {
-        setMicStatusMessage('Apple iOS WebKit restricts speech recognition in Chrome. On iPhone, please use Safari for voice dictation, or type your message below.');
-        return;
-      }
-
-      try {
-        const hasPerm = await speechEngine.requestMicPermission();
-        if (!hasPerm) {
-          setMicStatusMessage(
-            Capacitor.isNativePlatform()
-              ? 'Microphone access is blocked. Open Android Settings > Apps > AuraFamily > Permissions > Microphone and allow access.'
-              : 'Microphone access was blocked. Please click the lock 🔒 or tune 🎛️ icon next to the URL in your browser address bar and set Microphone to "Allow".'
-          );
-          return;
-        }
-      } catch (permErr) {
-        console.warn('Microphone permission notice:', permErr);
-      }
-
+      // Start listening SYNCHRONOUSLY within this user tap gesture!
+      // This preserves the active User Activation token on iOS Safari and Android Chrome,
+      // allowing the browser to immediately display the native mic permission prompt without expiring.
       const started = speechEngine.startListening();
       if (!started) {
-        setMicStatusMessage('Speech recognition could not be started in this browser. Please use Chrome on Desktop/Android, or Safari on iPhone, or type below.');
+        setMicStatusMessage('Speech recognition could not be started in this browser. Please check your browser microphone settings, or type below.');
       }
     }
   };
@@ -2190,16 +2178,20 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             />
 
             {/* Glowing Orb */}
-            <div
-              className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 z-10 ${
+            <button
+              type="button"
+              onClick={toggleMic}
+              className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 z-10 cursor-pointer active:scale-95 ${
                 isSpeaking
-                  ? 'bg-gradient-to-tr from-purple-600 via-indigo-500 to-pink-500 shadow-purple-500/40 scale-105'
+                  ? 'bg-gradient-to-tr from-purple-600 via-indigo-500 to-pink-500 shadow-purple-500/40 scale-105 ring-4 ring-purple-500/40'
                   : isListening
                   ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-emerald-500/40 scale-105 ring-4 ring-emerald-500/30'
                   : isThinking
                   ? 'bg-gradient-to-tr from-amber-600 to-orange-500 shadow-amber-500/40'
-                  : 'bg-gradient-to-tr from-indigo-900 to-slate-800 shadow-indigo-950/50'
+                  : 'bg-gradient-to-tr from-indigo-900 to-slate-800 shadow-indigo-950/50 hover:ring-4 hover:ring-indigo-500/30'
               }`}
+              title={isListening ? 'Tap to pause/commit speech' : 'Tap to speak with Auro'}
+              aria-label={isListening ? 'Stop listening' : 'Start speaking'}
             >
               {isListening ? (
                 <Mic className="w-8 h-8 text-white animate-bounce" />
@@ -2210,7 +2202,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               ) : (
                 <Mic className="w-8 h-8 text-indigo-300" />
               )}
-            </div>
+            </button>
           </div>
 
           {/* Status Label & Waveform bars */}
