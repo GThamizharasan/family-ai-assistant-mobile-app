@@ -190,11 +190,15 @@ export async function sendChatMessage(payload: {
   }
 }
 
-export async function transcribeAudioApi(audioBase64: string, mimeType = 'audio/webm') {
+export async function transcribeAudioApi(
+  audioBase64: string,
+  mimeType = 'audio/webm',
+  language = 'auto'
+): Promise<{ success?: boolean; text?: string; error?: string }> {
   return safeFetchJson('/api/ai/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mimeType }),
+    body: JSON.stringify({ audioBase64, mimeType, language }),
   });
 }
 

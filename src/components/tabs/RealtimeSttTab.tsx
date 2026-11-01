@@ -48,8 +48,26 @@ import {
   summarizeSttText,
   STT_DRIVE_FOLDER_NAME,
 } from '../../services/sttService';
+import { transcribeAudioApi } from '../../services/api';
 import { getAudioFromStorage, saveAudioToStorage, getAllCachedTrackIds } from '../../utils/audioStorage';
 import { saveSttMemoToSqliteStore, cacheAllSttMemosToSqlite } from '../../services/offlineSyncService';
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const res = reader.result;
+      if (typeof res === 'string') {
+        const commaIndex = res.indexOf(',');
+        resolve(commaIndex !== -1 ? res.slice(commaIndex + 1).trim() : res.trim());
+      } else {
+        resolve('');
+      }
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(blob);
+  });
+}
 
 export const RealtimeSttTab: React.FC = () => {
   const { user, googleAccessToken, isGoogleConnected, signInWithGoogleOAuth } = useApp();
@@ -71,11 +89,19 @@ export const RealtimeSttTab: React.FC = () => {
   const [selectedLanguage, setSelectedLanguage] = useState<SttLanguageCode>('ta-IN');
   const [selectedCategory, setSelectedCategory] = useState<string>('Personal');
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isTranscribingAi, setIsTranscribingAi] = useState(false);
   const [summaryData, setSummaryData] = useState<{ summary?: string; keyPoints?: string[] } | null>(null);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
+
+  // Synchronized refs for speech capture
+  const isRecordingRef = useRef(false);
+  const liveTranscriptRef = useRef('');
+  useEffect(() => {
+    liveTranscriptRef.current = liveTranscript;
+  }, [liveTranscript]);
 
   // Audio Playback for Saved Memos
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
@@ -235,6 +261,35 @@ export const RealtimeSttTab: React.FC = () => {
     setAudioLevel(0);
   };
 
+  // Gemini AI High-Fidelity Audio Transcription Fallback & Enhancer
+  const runGeminiAiTranscription = async (blob: Blob) => {
+    if (!blob || blob.size < 500) {
+      showToast('Recording too short to transcribe.');
+      return;
+    }
+    setIsTranscribingAi(true);
+    showToast('Gemini AI transcribing your audio in authentic script...');
+    try {
+      const base64 = await blobToBase64(blob);
+      const res = await transcribeAudioApi(base64, blob.type || 'audio/webm', selectedLanguage);
+      if (res && res.text && res.text.trim()) {
+        const transcribed = res.text.trim();
+        setLiveTranscript((prev) => {
+          const base = prev.trim();
+          return base ? `${base} ${transcribed}` : transcribed;
+        });
+        showToast('✓ Audio successfully transcribed with Gemini AI!');
+      } else {
+        showToast('No clear speech detected in recording.');
+      }
+    } catch (err: any) {
+      console.warn('Gemini STT error:', err);
+      showToast('AI transcription notice: ' + (err.message || 'Please retry speaking.'));
+    } finally {
+      setIsTranscribingAi(false);
+    }
+  };
+
   // Start Realtime Speech To Text Dictation
   const startRecording = async () => {
     try {
@@ -242,29 +297,51 @@ export const RealtimeSttTab: React.FC = () => {
         (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
       const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      setRecordingDuration(0);
 
-      // Check mic access & setup MediaRecorder for audio recording
+      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      durationTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+
+      // Setup MediaRecorder for high-fidelity audio capture and backup
       let stream: MediaStream | null = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         startVisualizer(stream);
 
-        const recorder = new MediaRecorder(stream);
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : MediaRecorder.isTypeSupported('audio/mp4')
+          ? 'audio/mp4'
+          : '';
+
+        const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
         mediaRecorderRef.current = recorder;
         audioChunksRef.current = [];
 
         recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
+          if (e.data && e.data.size > 0) {
             audioChunksRef.current.push(e.data);
           }
         };
 
-        recorder.onstop = () => {
-          const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        recorder.onstop = async () => {
+          const blobType = recorder.mimeType || 'audio/webm';
+          const blob = new Blob(audioChunksRef.current, { type: blobType });
           setAudioBlob(blob);
           const url = URL.createObjectURL(blob);
           setAudioUrl(url);
           stream?.getTracks().forEach((t) => t.stop());
+
+          // If browser speech recognition produced no text or isn't supported, transcribe via Gemini AI
+          if (!liveTranscriptRef.current.trim() && blob.size > 800) {
+            await runGeminiAiTranscription(blob);
+          }
         };
 
         recorder.start(500);
@@ -277,31 +354,31 @@ export const RealtimeSttTab: React.FC = () => {
         recognitionRef.current = recognition;
         recognition.continuous = !isMobile;
         recognition.interimResults = true;
-        recognition.lang = selectedLanguage === 'auto' ? 'en-US' : selectedLanguage;
+        recognition.lang = selectedLanguage === 'auto' ? 'ta-IN' : selectedLanguage;
 
         recognition.onstart = () => {
-          setIsRecording(true);
-          setRecordingDuration(0);
-          durationTimerRef.current = setInterval(() => {
-            setRecordingDuration((prev) => prev + 1);
-          }, 1000);
+          // Recording started
         };
 
         recognition.onresult = (event: any) => {
-          let finalStr = '';
-          let interimStr = '';
-          for (let i = 0; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-              finalStr += transcript + ' ';
+          let newFinalStr = '';
+          let currentInterim = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            const res = event.results[i];
+            if (res.isFinal) {
+              newFinalStr += res[0].transcript + ' ';
             } else {
-              interimStr += transcript;
+              currentInterim += res[0].transcript;
             }
           }
-          if (finalStr) {
-            setLiveTranscript((prev) => (prev ? prev + ' ' + finalStr.trim() : finalStr.trim()));
+          if (newFinalStr.trim()) {
+            setLiveTranscript((prev) => {
+              const base = prev.trim();
+              const addition = newFinalStr.trim();
+              return base ? `${base} ${addition}` : addition;
+            });
           }
-          setInterimText(interimStr);
+          setInterimText(currentInterim);
         };
 
         recognition.onerror = (event: any) => {
@@ -314,7 +391,7 @@ export const RealtimeSttTab: React.FC = () => {
 
         recognition.onend = () => {
           // If still marked as recording on mobile, restart recognition seamlessly
-          if (isRecording && isMobile) {
+          if (isRecordingRef.current && isMobile) {
             try {
               recognition.start();
             } catch {}
@@ -324,11 +401,7 @@ export const RealtimeSttTab: React.FC = () => {
         recognition.start();
       } else {
         // Fallback for browsers without SpeechRecognition: record audio only and prompt user
-        showToast('Web Speech API not supported on this browser. Voice audio is being recorded.');
-        setIsRecording(true);
-        durationTimerRef.current = setInterval(() => {
-          setRecordingDuration((prev) => prev + 1);
-        }, 1000);
+        showToast('Web Speech API not active. Audio is recording; Gemini AI will transcribe automatically on stop.');
       }
     } catch (err: any) {
       console.error('Failed to start speech recognition:', err);
@@ -339,6 +412,7 @@ export const RealtimeSttTab: React.FC = () => {
 
   // Stop Recording
   const stopRecording = () => {
+    isRecordingRef.current = false;
     setIsRecording(false);
     if (durationTimerRef.current) {
       clearInterval(durationTimerRef.current);
@@ -361,7 +435,11 @@ export const RealtimeSttTab: React.FC = () => {
 
     // Flush any pending interim text into final transcript
     if (interimText.trim()) {
-      setLiveTranscript((prev) => (prev ? prev + ' ' + interimText.trim() : interimText.trim()));
+      setLiveTranscript((prev) => {
+        const base = prev.trim();
+        const addition = interimText.trim();
+        return base ? `${base} ${addition}` : addition;
+      });
       setInterimText('');
     }
   };
@@ -439,6 +517,7 @@ export const RealtimeSttTab: React.FC = () => {
 
       const newMemo: SttMemo = {
         id: `stt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        userEmail: user?.email || undefined,
         title: generatedTitle,
         transcribedText: fullText,
         sourceLanguage: selectedLanguage,
@@ -457,24 +536,12 @@ export const RealtimeSttTab: React.FC = () => {
         updatedAt: new Date().toISOString(),
       };
 
-      // 1. Save to SQLite Store and IndexedDB
-      await saveSttMemo(newMemo, googleAccessToken, user?.email);
-      await saveSttMemoToSqliteStore(newMemo, audioBase64);
+      // 1. Save to SQLite Store, IndexedDB, and Google Drive (if connected)
+      const savedMemo = await saveSttMemo(newMemo, googleAccessToken, user?.email);
+      await saveSttMemoToSqliteStore(savedMemo, audioBase64);
 
-      // 2. Upload to Google Drive if connected
-      if (googleAccessToken && isGoogleConnected) {
-        showToast('Syncing transcript & audio to Google Drive...');
-        const driveRes = await uploadSttMemoToDrive(newMemo, googleAccessToken, user?.email);
-        if (driveRes.success && driveRes.fileId) {
-          newMemo.driveFileId = driveRes.fileId;
-          newMemo.driveWebViewLink = driveRes.webViewLink;
-          newMemo.driveFolderPath = STT_DRIVE_FOLDER_NAME;
-          await saveSttMemo(newMemo, googleAccessToken, user?.email);
-        }
-      }
-
-      // 3. Update local state
-      setMemos((prev) => [newMemo, ...prev]);
+      // 2. Update local state
+      setMemos((prev) => [savedMemo, ...prev.filter((m) => m.id !== savedMemo.id)]);
 
       // Reset form
       setLiveTranscript('');
@@ -804,6 +871,12 @@ export const RealtimeSttTab: React.FC = () => {
 
           {/* Live Transcript Display Box */}
           <div className="relative min-h-[140px] max-h-[300px] overflow-y-auto p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 focus-within:border-sky-500/60 transition-colors">
+            {isTranscribingAi && (
+              <div className="mb-2 flex items-center gap-2 p-2 rounded-xl bg-sky-950/60 text-sky-300 text-xs animate-pulse border border-sky-500/30">
+                <Sparkles className="w-4 h-4 text-sky-400 animate-spin shrink-0" />
+                <span>Transcribing your speech with Gemini AI High-Fidelity STT...</span>
+              </div>
+            )}
             {liveTranscript || interimText ? (
               <div className="text-sm leading-relaxed text-slate-100 space-y-1">
                 <span>{liveTranscript}</span>
@@ -857,16 +930,18 @@ export const RealtimeSttTab: React.FC = () => {
           </div>
 
           {/* Action Center: Big Mic Button, AI Polish, Save */}
-          <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+          <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-800/80 flex-wrap">
             <button
               onClick={() => {
                 setLiveTranscript('');
                 setInterimText('');
                 setSummaryData(null);
                 setRecordingDuration(0);
-                showToast('Transcript cleared.');
+                setAudioBlob(null);
+                setAudioUrl(null);
+                showToast('Transcript and audio cleared.');
               }}
-              disabled={isRecording || (!liveTranscript && !interimText)}
+              disabled={isRecording || (!liveTranscript && !interimText && !audioBlob)}
               className="p-2.5 rounded-2xl bg-slate-800/60 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700/60 transition-colors disabled:opacity-40"
               title="Clear transcript"
             >
@@ -895,16 +970,31 @@ export const RealtimeSttTab: React.FC = () => {
               )}
             </button>
 
-            {/* Gemini AI Summarize & Polish */}
-            <button
-              onClick={handleSummarizeWithGemini}
-              disabled={isSummarizing || isRecording || (!liveTranscript && !interimText)}
-              className="flex items-center gap-1.5 px-3 py-2.5 rounded-2xl bg-gradient-to-r from-purple-900/60 to-indigo-900/60 hover:from-purple-800/70 hover:to-indigo-800/70 border border-purple-500/40 text-purple-200 text-xs font-semibold shadow-lg transition-all disabled:opacity-40"
-              title="Polish grammar, generate title and extract key summary points with Gemini"
-            >
-              <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isSummarizing ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">AI Polish</span>
-            </button>
+            <div className="flex items-center gap-1.5">
+              {/* Gemini AI Re-Transcribe Audio Button */}
+              {audioBlob && !isRecording && (
+                <button
+                  onClick={() => runGeminiAiTranscription(audioBlob)}
+                  disabled={isTranscribingAi}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-sky-900/50 hover:bg-sky-800/60 border border-sky-500/40 text-sky-200 text-xs font-semibold shadow-md transition-all disabled:opacity-40"
+                  title="Re-transcribe recorded audio with Gemini AI STT"
+                >
+                  <Radio className={`w-3.5 h-3.5 text-sky-400 ${isTranscribingAi ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">AI STT</span>
+                </button>
+              )}
+
+              {/* Gemini AI Summarize & Polish */}
+              <button
+                onClick={handleSummarizeWithGemini}
+                disabled={isSummarizing || isRecording || (!liveTranscript && !interimText)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-gradient-to-r from-purple-900/60 to-indigo-900/60 hover:from-purple-800/70 hover:to-indigo-800/70 border border-purple-500/40 text-purple-200 text-xs font-semibold shadow-lg transition-all disabled:opacity-40"
+                title="Polish grammar, generate title and extract key summary points with Gemini"
+              >
+                <Sparkles className={`w-3.5 h-3.5 text-purple-400 ${isSummarizing ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">AI Polish</span>
+              </button>
+            </div>
           </div>
 
           {/* AI Generated Summary and Key Points Preview */}

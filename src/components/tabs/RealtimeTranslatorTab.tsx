@@ -90,6 +90,9 @@ export const RealtimeTranslatorTab: React.FC = () => {
   const micStreamRef = useRef<MediaStream | null>(null);
   const latestVoiceTextRef = useRef<string>('');
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const silenceTimerRef = useRef<any>(null);
+  const isSubmittingConversationRef = useRef<boolean>(false);
+  const micPermissionGrantedRef = useRef<boolean>(false);
 
   // Toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -111,6 +114,8 @@ export const RealtimeTranslatorTab: React.FC = () => {
   // Clean up any active microphone/speech recognition on unmount
   useEffect(() => {
     return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -124,16 +129,30 @@ export const RealtimeTranslatorTab: React.FC = () => {
       if (micStreamRef.current) {
         micStreamRef.current.getTracks().forEach((t) => t.stop());
       }
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {}
+      }
     };
   }, []);
 
-  // Stop active speech recognition or media recording
+  // Stop active speech recognition or media recording safely
   const stopListening = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
     setIsListening(false);
     if (recognitionRef.current) {
       try {
+        recognitionRef.current.onstart = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
         recognitionRef.current.stop();
       } catch {}
+      recognitionRef.current = null;
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try {
@@ -190,7 +209,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
         showToast('✨ Transcribing voice with Gemini AI...');
         try {
           const base64 = await blobToBase64(blob);
-          const result = await transcribeAudioApi(base64, blob.type);
+          const result = await transcribeAudioApi(base64, blob.type, sourceLang);
           if (result && result.text && result.text.trim()) {
             const cleanText = result.text.trim();
             latestVoiceTextRef.current = cleanText;
@@ -213,25 +232,28 @@ export const RealtimeTranslatorTab: React.FC = () => {
     }
   };
 
-  // Toggle Live Voice Input
+  // Toggle Live Voice Input (Direct Mode)
   const handleToggleListening = async () => {
     if (isListening) {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       stopListening();
-      // If we already have accumulated live text from this session, translate it now
       if (latestVoiceTextRef.current.trim().length > 1) {
         void handleTranslate(latestVoiceTextRef.current.trim());
       }
       return;
     }
 
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const currentLangObj = SUPPORTED_LANGUAGES.find((l) => l.code === sourceLang);
     const speechCode = currentLangObj?.speechCode || 'en-US';
 
-    // 1. Request microphone permission explicitly
+    // 1. Request microphone permission explicitly once
     let stream: MediaStream | null = null;
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+    if (!micPermissionGrantedRef.current && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        micPermissionGrantedRef.current = true;
       } catch (permErr: any) {
         console.warn('Microphone permission request failed:', permErr);
         showToast('⚠️ Microphone permission required. Please allow microphone in browser settings.');
@@ -247,12 +269,6 @@ export const RealtimeTranslatorTab: React.FC = () => {
         : null;
 
     if (SpeechRecognitionClass) {
-      // Release temporary permission stream so SpeechRecognition has full audio focus
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-      }
-
-      // Stop previous instance if still running
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -261,7 +277,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
 
       try {
         const recognition = new SpeechRecognitionClass();
-        recognition.continuous = true;
+        recognition.continuous = !isMobile;
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
         recognition.lang = speechCode;
@@ -277,11 +293,13 @@ export const RealtimeTranslatorTab: React.FC = () => {
         recognition.onresult = (event: any) => {
           let finalTranscript = '';
           let interimTranscript = '';
+          let hasFinal = false;
 
           for (let i = 0; i < event.results.length; ++i) {
             const chunk = event.results[i][0]?.transcript || '';
             if (event.results[i].isFinal) {
               finalTranscript += chunk + ' ';
+              hasFinal = true;
             } else {
               interimTranscript += chunk;
             }
@@ -290,7 +308,16 @@ export const RealtimeTranslatorTab: React.FC = () => {
           const combined = (finalTranscript + interimTranscript).trim();
           if (combined) {
             latestVoiceTextRef.current = combined;
-            setSourceText(combined); // <-- Live words immediately display in text box
+            setSourceText(combined); // Live words immediately display
+
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(() => {
+              const textToTranslate = latestVoiceTextRef.current.trim();
+              if (textToTranslate.length > 1) {
+                stopListening();
+                void handleTranslate(textToTranslate);
+              }
+            }, hasFinal ? 750 : 1200);
           }
         };
 
@@ -301,7 +328,6 @@ export const RealtimeTranslatorTab: React.FC = () => {
           }
 
           if (err.error === 'not-allowed' || err.error === 'service-not-allowed') {
-            // Attempt MediaRecorder + Gemini Transcribe fallback
             if (navigator.mediaDevices?.getUserMedia) {
               navigator.mediaDevices
                 .getUserMedia({ audio: true })
@@ -319,7 +345,6 @@ export const RealtimeTranslatorTab: React.FC = () => {
 
         recognition.onend = () => {
           setIsListening(false);
-          // Auto-trigger translation if new text was spoken
           if (latestVoiceTextRef.current.trim().length > 1) {
             void handleTranslate(latestVoiceTextRef.current.trim());
           }
@@ -329,18 +354,21 @@ export const RealtimeTranslatorTab: React.FC = () => {
         recognition.start();
       } catch (startErr: any) {
         console.warn('SpeechRecognition start failed, switching to MediaRecorder fallback:', startErr);
-        if (stream) {
-          void startMediaRecorderFallback(stream);
-        } else if (navigator.mediaDevices?.getUserMedia) {
+        if (navigator.mediaDevices?.getUserMedia) {
           navigator.mediaDevices
             .getUserMedia({ audio: true })
             .then((newStream) => startMediaRecorderFallback(newStream))
             .catch(() => setIsListening(false));
         }
       }
-    } else if (stream) {
-      // Browser does not support Web Speech API (e.g. Firefox, Safari iOS) -> MediaRecorder fallback
-      void startMediaRecorderFallback(stream);
+    } else if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then((newStream) => startMediaRecorderFallback(newStream))
+        .catch(() => {
+          showToast('Speech recognition not supported in this browser.');
+          setIsListening(false);
+        });
     } else {
       showToast('Speech recognition not supported in this browser.');
       setIsListening(false);
@@ -353,21 +381,28 @@ export const RealtimeTranslatorTab: React.FC = () => {
   }, [conversationHistory, conversationLiveTranscript, isConversationTranslating]);
 
   // Start Conversation Listening for Speaker A (sourceLang) or Speaker B (targetLang)
-  const startConversationListening = async (speaker: 'A' | 'B') => {
-    // If already listening for this speaker, stop and submit
+  const startConversationListening = async (speaker: 'A' | 'B', isAutoSwitch = false) => {
+    // If already listening for this speaker, stop and submit immediately
     if (isListening && activeSpeaker === speaker) {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      const text = latestVoiceTextRef.current.trim();
       stopListening();
-      if (latestVoiceTextRef.current.trim().length > 0) {
-        void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
+      setActiveSpeaker(null);
+      if (text.length > 0) {
+        void handleConversationSubmit(speaker, text);
       }
       return;
     }
 
+    // Stop active listening and cancel any active TTS speech
     stopListening();
     if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch {}
     }
 
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     const speakerLangCode = speaker === 'A' ? sourceLang : targetLang;
     const langObj = SUPPORTED_LANGUAGES.find((l) => l.code === speakerLangCode);
     const speechCode = langObj?.speechCode || (speakerLangCode === 'ta' ? 'ta-IN' : 'en-US');
@@ -375,13 +410,14 @@ export const RealtimeTranslatorTab: React.FC = () => {
     setActiveSpeaker(speaker);
     setConversationLiveTranscript('');
     latestVoiceTextRef.current = '';
+    isSubmittingConversationRef.current = false;
 
-    // Request permission explicitly with user gesture
-    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+    // Only request permission if user explicitly tapped manually (NEVER on automatic turn switch!)
+    if (!isAutoSwitch && !micPermissionGrantedRef.current && typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach((t) => t.stop());
-        await new Promise((r) => setTimeout(r, 120));
+        micPermissionGrantedRef.current = true;
       } catch (permErr: any) {
         console.warn('Microphone permission request failed:', permErr);
         showToast('⚠️ Microphone permission required. Please allow access in browser.');
@@ -398,7 +434,7 @@ export const RealtimeTranslatorTab: React.FC = () => {
     if (SpeechRecognitionClass) {
       try {
         const recognition = new SpeechRecognitionClass();
-        recognition.continuous = true;
+        recognition.continuous = !isMobile;
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
         recognition.lang = speechCode;
@@ -408,15 +444,34 @@ export const RealtimeTranslatorTab: React.FC = () => {
           showToast(`🎙️ Speaker ${speaker === 'A' ? '1' : '2'} (${langObj?.name || speakerLangCode}) listening... Speak now!`);
         };
 
-        let silenceTimer: any = null;
+        const commitConversationSpeech = (spk: 'A' | 'B') => {
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          if (isSubmittingConversationRef.current) return;
+          const text = latestVoiceTextRef.current.trim();
+          if (!text) {
+            stopListening();
+            setActiveSpeaker(null);
+            return;
+          }
+          isSubmittingConversationRef.current = true;
+          latestVoiceTextRef.current = '';
+          stopListening();
+          void handleConversationSubmit(spk, text);
+        };
 
         recognition.onresult = (event: any) => {
           let finalTranscript = '';
           let interimTranscript = '';
+          let hasFinal = false;
+
           for (let i = 0; i < event.results.length; ++i) {
             const chunk = event.results[i][0]?.transcript || '';
             if (event.results[i].isFinal) {
               finalTranscript += chunk + ' ';
+              hasFinal = true;
             } else {
               interimTranscript += chunk;
             }
@@ -426,14 +481,11 @@ export const RealtimeTranslatorTab: React.FC = () => {
             latestVoiceTextRef.current = combined;
             setConversationLiveTranscript(combined);
 
-            clearTimeout(silenceTimer);
-            // Automatic pause detection: 1.3 seconds of silence commits and translates
-            silenceTimer = setTimeout(() => {
-              if (latestVoiceTextRef.current.trim().length > 0) {
-                stopListening();
-                void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
-              }
-            }, 1300);
+            if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+            // Rhythmic natural turn-taking: 700ms pause after finalized sentence, 1100ms on interim
+            silenceTimerRef.current = setTimeout(() => {
+              commitConversationSpeech(speaker);
+            }, hasFinal ? 700 : 1100);
           }
         };
 
@@ -448,10 +500,10 @@ export const RealtimeTranslatorTab: React.FC = () => {
 
         recognition.onend = () => {
           setIsListening(false);
-          setActiveSpeaker(null);
-          clearTimeout(silenceTimer);
-          if (latestVoiceTextRef.current.trim().length > 0) {
-            void handleConversationSubmit(speaker, latestVoiceTextRef.current.trim());
+          if (!isSubmittingConversationRef.current && latestVoiceTextRef.current.trim().length > 0) {
+            commitConversationSpeech(speaker);
+          } else if (!isSubmittingConversationRef.current) {
+            setActiveSpeaker(null);
           }
         };
 
@@ -513,27 +565,28 @@ export const RealtimeTranslatorTab: React.FC = () => {
         googleAccessToken
       );
 
-      // Automatic spoken response in destination language
+      // Automatic spoken response in destination language with smooth rhythmic turn-taking
       if (isAutoSpeak) {
         speakText(res.translatedText, destLangCode, () => {
           if (isAutoTurn) {
             const nextSpeaker: 'A' | 'B' = speaker === 'A' ? 'B' : 'A';
             setTimeout(() => {
-              void startConversationListening(nextSpeaker);
-            }, 600);
+              void startConversationListening(nextSpeaker, true);
+            }, 250);
           }
         });
       } else if (isAutoTurn) {
         const nextSpeaker: 'A' | 'B' = speaker === 'A' ? 'B' : 'A';
         setTimeout(() => {
-          void startConversationListening(nextSpeaker);
-        }, 600);
+          void startConversationListening(nextSpeaker, true);
+        }, 250);
       }
     } catch (err: any) {
       console.error('Conversation translation error:', err);
       showToast(`Translation error: ${err.message || 'Failed'}`);
     } finally {
       setIsConversationTranslating(false);
+      isSubmittingConversationRef.current = false;
     }
   };
 

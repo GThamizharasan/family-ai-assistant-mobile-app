@@ -178,6 +178,15 @@ export interface VoiceMessage {
   timestamp: string;
   emotion?: string;
   actionSuggestion?: string;
+  attachment?: {
+    name: string;
+    mimeType: string;
+    size: string;
+    previewUrl?: string;
+    isImage?: boolean;
+    isPdf?: boolean;
+    textContent?: string;
+  };
 }
 
 export interface GoogleWorkspaceSettings {

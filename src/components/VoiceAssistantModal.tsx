@@ -30,6 +30,9 @@ import {
   UploadCloud,
   Check,
   Eye,
+  Camera,
+  Image as ImageIcon,
+  Scan,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../types';
@@ -115,11 +118,32 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [newMemContent, setNewMemContent] = useState('');
   const [isAddingMem, setIsAddingMem] = useState(false);
 
-  // Attachment state for uploading into Google Drive and voice discussing
+  // Attachment & Multimodal Plus Menu state for real-time analysis, camera, and Drive sync
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileSnippet, setFileSnippet] = useState<string>('');
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
   const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const plusMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close Plus (+) action menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (plusMenuRef.current && !plusMenuRef.current.contains(e.target as Node)) {
+        setShowPlusMenu(false);
+      }
+    };
+    if (showPlusMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showPlusMenu]);
 
   const handleSelectLanguage = (code: string) => {
     speechEngine.setLanguage(code);
@@ -311,6 +335,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     if (file) {
       setSelectedFile(file);
       setMicStatusMessage(null);
+      setShowPlusMenu(false);
+      if (file.type.startsWith('image/')) {
+        setFilePreviewUrl(URL.createObjectURL(file));
+      } else {
+        setFilePreviewUrl(null);
+      }
       if (
         file.type.startsWith('text/') ||
         file.name.endsWith('.txt') ||
@@ -326,6 +356,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         }
       } else {
         setFileSnippet('');
+      }
+    }
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleCameraCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setMicStatusMessage(null);
+      setShowPlusMenu(false);
+      setFilePreviewUrl(URL.createObjectURL(file));
+      setFileSnippet('');
+      if (!textInput.trim()) {
+        const isTamil = voiceLanguage.startsWith('ta');
+        setTextInput(
+          isTamil
+            ? 'இந்த கேமரா புகைப்படத்தை நிகழ்நேரத்தில் ஆய்வு செய்து விளக்குங்கள்.'
+            : 'Please analyze this camera photo in real time and explain what you see.'
+        );
       }
     }
     if (e.target) {
@@ -384,6 +436,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       });
       setIsUploadingToDrive(false);
       setSelectedFile(null);
+      setFilePreviewUrl(null);
       setFileSnippet('');
       setDriveUploadNotice(uploaded.name);
       setTimeout(() => setDriveUploadNotice(null), 6000);
@@ -477,18 +530,47 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     setLiveTranscript('');
     speechEngine.stopListening(false);
 
+    const currentAttachment = selectedFile
+      ? {
+          name: selectedFile.name,
+          mimeType: selectedFile.type || 'application/octet-stream',
+          size:
+            selectedFile.size > 1024 * 1024
+              ? `${(selectedFile.size / (1024 * 1024)).toFixed(1)} MB`
+              : `${Math.max(1, Math.round(selectedFile.size / 1024))} KB`,
+          previewUrl: filePreviewUrl || undefined,
+          isImage: selectedFile.type.startsWith('image/'),
+          isPdf: selectedFile.type === 'application/pdf' || selectedFile.name.endsWith('.pdf'),
+        }
+      : undefined;
+
     const userMsg = {
       role: 'user' as const,
       content: spokenText.trim(),
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      attachment: currentAttachment,
     };
     addVoiceMessage(userMsg);
 
     const lower = spokenText.toLowerCase().trim();
 
-    // =========================================================================
-    // AURO VOICE INTENT: FEATURE & SCREEN NAVIGATION
-    // =========================================================================
+    const isExplicitNavigation =
+      lower.startsWith('open ') ||
+      lower.startsWith('go to ') ||
+      lower.startsWith('navigate to ') ||
+      lower.startsWith('switch to ') ||
+      lower.startsWith('launch ') ||
+      lower.startsWith('show tab ') ||
+      lower.startsWith('திற ') ||
+      lower.includes('திரைக்கு செல்');
+
+    // If an attachment is attached and user didn't explicitly ask to navigate screens, bypass navigation intents to prioritize multimodal file analysis
+    const shouldCheckNavigation = !selectedFile || isExplicitNavigation;
+
+    if (shouldCheckNavigation) {
+      // =========================================================================
+      // AURO VOICE INTENT: FEATURE & SCREEN NAVIGATION
+      // =========================================================================
 
     // 1. Voice Memo / Voice Memos
     if (
@@ -1379,8 +1461,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speakWithAuro(summaryText);
       return;
     }
+  }
 
     setIsThinking(true);
+    if (selectedFile) {
+      setIsAnalyzingFile(true);
+    }
     try {
       const historyPayload = chatHistory.slice(-6).map((m) => ({
         role: m.role,
@@ -1505,6 +1591,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         };
 
         setSelectedFile(null);
+        setFilePreviewUrl(null);
+        setFileSnippet('');
       }
 
       const result = await sendChatMessage({
@@ -1520,6 +1608,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       });
 
       setIsThinking(false);
+      setIsAnalyzingFile(false);
       const replyText = result.reply || "I'm right here with you.";
       const emotionText = result.emotion || 'supportive';
       setCurrentEmotion(emotionText);
@@ -1570,6 +1659,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     } catch (err: any) {
       console.error('Voice assistant chat request failed:', err);
       setIsThinking(false);
+      setIsAnalyzingFile(false);
       const errMsg = err?.message || (typeof err === 'string' ? err : JSON.stringify(err || {}));
       let fallbackReply = "I couldn't connect to the AI assistant service just now. Please check your connection and try again, or type your message below.";
 
@@ -1639,7 +1729,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     const msg =
       textInput.trim() ||
       (selectedFile
-        ? `Please upload this attached file "${selectedFile.name}" to my Google Drive and summarize its contents.`
+        ? (voiceLanguage.startsWith('ta')
+            ? `இந்த இணைக்கப்பட்ட கோப்பை ("${selectedFile.name}") நிகழ்நேரத்தில் ஆய்வு செய்து என்னவென்று விளக்குங்கள்.`
+            : `Please analyze this attached file "${selectedFile.name}" in real time, extract key facts, and tell me what it is about.`)
         : '');
     setTextInput('');
     handleUserSpeech(msg);
@@ -2347,6 +2439,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                     <span>Empathetic Resonance: {msg.emotion}</span>
                   </div>
                 )}
+
+                {msg.attachment && (
+                  <div className="mb-2.5 p-2 rounded-xl bg-indigo-700/60 border border-indigo-400/30 flex items-center gap-2">
+                    {msg.attachment.previewUrl ? (
+                      <img
+                        src={msg.attachment.previewUrl}
+                        alt={msg.attachment.name}
+                        className="w-11 h-11 object-cover rounded-lg border border-indigo-300/40 shrink-0"
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-lg bg-indigo-800/90 flex items-center justify-center shrink-0 text-white shadow-inner">
+                        <Paperclip className="w-4 h-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-white truncate">{msg.attachment.name}</p>
+                      <p className="text-[10px] text-indigo-200">{msg.attachment.size}</p>
+                    </div>
+                  </div>
+                )}
+
                 <p className="whitespace-pre-wrap">{msg.content}</p>
 
                 {msg.actionSuggestion && (
@@ -2363,7 +2476,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           {isThinking && (
             <div className="flex items-center gap-2 text-slate-400 text-xs p-2">
               <Sparkles className="w-4 h-4 animate-spin text-indigo-400" />
-              <span>Aura is reflecting on your personal memory and goals...</span>
+              <span>
+                {isAnalyzingFile
+                  ? 'Auro is analyzing your attached file in real time...'
+                  : 'Aura is reflecting on your personal memory and goals...'}
+              </span>
             </div>
           )}
 
@@ -2430,9 +2547,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         {selectedFile && (
           <div className="px-4 py-2.5 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-indigo-950/90 border-t border-indigo-500/40 flex items-center justify-between gap-3 animate-fade-in shadow-lg">
             <div className="flex items-center gap-2.5 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center shrink-0 text-indigo-300">
-                <Paperclip className="w-4 h-4" />
-              </div>
+              {filePreviewUrl ? (
+                <img
+                  src={filePreviewUrl}
+                  alt={selectedFile.name}
+                  className="w-10 h-10 rounded-xl object-cover border border-indigo-400/50 shrink-0 shadow-md"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center shrink-0 text-indigo-300">
+                  <Paperclip className="w-4 h-4" />
+                </div>
+              )}
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-semibold text-white truncate max-w-[200px] sm:max-w-xs">{selectedFile.name}</span>
@@ -2444,14 +2569,30 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                   <HardDrive className={`w-3 h-3 ${isGoogleConnected ? 'text-emerald-400' : 'text-amber-400'} shrink-0`} />
                   <span>
                     {isGoogleConnected
-                      ? 'Ready to upload into your Google Drive & discuss with Aura'
-                      : 'Connect Google account to upload directly to drive.google.com'}
+                      ? 'Ready for real-time Auro multimodal analysis & Google Drive sync'
+                      : 'Attach to analyze in real time with Auro, or connect Drive'}
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() =>
+                  handleUserSpeech(
+                    voiceLanguage.startsWith('ta')
+                      ? `இந்த இணைக்கப்பட்ட கோப்பை ("${selectedFile.name}") நிகழ்நேரத்தில் ஆய்வு செய்து என்னவென்று விளக்குங்கள்.`
+                      : `Please analyze this attached file "${selectedFile.name}" in real time, extract key facts, and tell me what it is about.`
+                  )
+                }
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-xs shadow-md shadow-indigo-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95"
+                title="Ask Auro to analyze this file in real-time"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-spin" />
+                <span>Analyze with Auro</span>
+              </button>
+
               <button
                 type="button"
                 disabled={isUploadingToDrive}
@@ -2479,7 +2620,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
               <button
                 type="button"
-                onClick={() => setSelectedFile(null)}
+                onClick={() => {
+                  setSelectedFile(null);
+                  setFilePreviewUrl(null);
+                  setFileSnippet('');
+                }}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-slate-800 transition-colors cursor-pointer"
                 title="Remove attachment"
               >
@@ -2489,13 +2634,30 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </div>
         )}
 
-        {/* Hidden File Input for Attachments */}
+        {/* Hidden File Inputs for Attachments, Camera, and Gallery */}
         <input
           ref={fileInputRef}
           type="file"
           className="hidden"
           onChange={handleFileChange}
           accept="*/*"
+        />
+
+        <input
+          ref={cameraInputRef}
+          type="file"
+          className="hidden"
+          accept="image/*"
+          capture="environment"
+          onChange={handleCameraCapture}
+        />
+
+        <input
+          ref={galleryInputRef}
+          type="file"
+          className="hidden"
+          accept="image/*"
+          onChange={handleFileChange}
         />
 
         {/* Input Dock & Big Mic Trigger */}
@@ -2521,20 +2683,145 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
-          {/* Attachment Button */}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 ${
-              selectedFile
-                ? 'bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/30 shadow-indigo-600/30'
-                : 'bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-indigo-300 border-slate-800 hover:border-indigo-500/40'
-            }`}
-            title="Attach a file to upload into Google Drive"
-            aria-label="Attach file for Google Drive"
-          >
-            <Paperclip className="w-5 h-5" />
-          </button>
+          {/* Action Hub / Plus (+) Button & Options Menu */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowPlusMenu((prev) => !prev)}
+              className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 ${
+                showPlusMenu
+                  ? 'bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/40'
+                  : selectedFile
+                  ? 'bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/30'
+                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-800 hover:border-indigo-500/40'
+              }`}
+              title="Add attachment, open camera, or analyze media"
+              aria-label="Add options: camera, files, documents"
+            >
+              <Plus className={`w-5 h-5 transition-transform duration-200 ${showPlusMenu ? 'rotate-45' : ''}`} />
+            </button>
+
+            {/* Popup Menu for Plus (+) Options */}
+            {showPlusMenu && (
+              <div
+                ref={plusMenuRef}
+                className="absolute bottom-full left-0 mb-3 w-72 sm:w-80 bg-slate-900/95 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-2 shadow-2xl shadow-black/80 z-50 animate-fade-in"
+              >
+                <div className="px-3 py-2 border-b border-slate-800/80 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Auro Multimodal Tools</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowPlusMenu(false)}
+                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                <div className="p-1 space-y-1">
+                  {/* Option 1: Open Camera to take an image */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPlusMenu(false);
+                      cameraInputRef.current?.click();
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-indigo-600/20 hover:border-indigo-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center shrink-0 text-indigo-400 group-hover:scale-105 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white group-hover:text-indigo-200 flex items-center gap-1.5">
+                        <span>Open Camera</span>
+                        <span className="text-[10px] font-normal px-1.5 py-0.5 bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">Live Snap</span>
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate">Take a photo to analyze in real time with Auro</p>
+                    </div>
+                  </button>
+
+                  {/* Option 2: Attach File / Document */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPlusMenu(false);
+                      fileInputRef.current?.click();
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-emerald-600/20 hover:border-emerald-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 group-hover:scale-105 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-sm">
+                      <Paperclip className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white group-hover:text-emerald-200">Attach File / Document</p>
+                      <p className="text-[11px] text-slate-400 truncate">PDF, Word, Excel, text notes, or reports</p>
+                    </div>
+                  </button>
+
+                  {/* Option 3: Photo Gallery */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPlusMenu(false);
+                      galleryInputRef.current?.click();
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-purple-600/20 hover:border-purple-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center shrink-0 text-purple-400 group-hover:scale-105 group-hover:bg-purple-600 group-hover:text-white transition-all shadow-sm">
+                      <ImageIcon className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white group-hover:text-purple-200">Photo Library</p>
+                      <p className="text-[11px] text-slate-400 truncate">Upload photos and screenshots from gallery</p>
+                    </div>
+                  </button>
+
+                  {/* Option 4: Auro Vision Assist */}
+                  {onOpenVision && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPlusMenu(false);
+                        onOpenVision();
+                      }}
+                      className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-sky-600/20 hover:border-sky-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-sky-500/20 border border-sky-500/40 flex items-center justify-center shrink-0 text-sky-400 group-hover:scale-105 group-hover:bg-sky-600 group-hover:text-white transition-all shadow-sm">
+                        <Eye className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-white group-hover:text-sky-200">Auro Computer Vision</p>
+                        <p className="text-[11px] text-slate-400 truncate">Live camera guidance for objects & text</p>
+                      </div>
+                    </button>
+                  )}
+
+                  {/* Option 5: Document Scanner */}
+                  {onNavigateTab && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowPlusMenu(false);
+                        onNavigateTab('scanner');
+                      }}
+                      className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-amber-600/20 hover:border-amber-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400 group-hover:scale-105 group-hover:bg-amber-600 group-hover:text-white transition-all shadow-sm">
+                        <Scan className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-bold text-white group-hover:text-amber-200">Scan Physical Document</p>
+                        <p className="text-[11px] text-slate-400 truncate">Auto edge crop for receipts & IDs</p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           <form onSubmit={handleManualSend} className="flex-1 flex items-center gap-2">
             <input

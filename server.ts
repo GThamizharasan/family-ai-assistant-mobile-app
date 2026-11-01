@@ -464,43 +464,90 @@ app.all('/api/tts', async (req, res) => {
   }
 });
 
-// High-Fidelity Audio Transcription via Gemini (Mobile Web & MediaRecorder Fallback)
+// High-Fidelity Universal Audio Transcription via Gemini (Multilingual Speech-To-Text)
 app.post('/api/ai/transcribe', async (req, res) => {
   try {
-    const { audioBase64, mimeType } = req.body || {};
+    const { audioBase64, mimeType = 'audio/webm', language = 'auto' } = req.body || {};
+    const customKey = (req.headers['x-gemini-api-key'] as string) || req.body?.geminiApiKey;
     if (!audioBase64) {
-      return res.status(400).json({ error: 'audioBase64 is required' });
+      return res.status(400).json({ error: 'Missing audioBase64 in request' });
     }
-    const client = refreshAiClient();
+
+    const client = refreshAiClient(customKey);
     if (!client) {
-      return res.status(503).json({ error: 'Gemini client not initialized' });
+      return res.status(401).json({
+        success: false,
+        error: 'Gemini API key is not configured or unauthenticated. Please configure your API key in Settings.',
+        requiresKey: true,
+      });
     }
+
     const cleanBase64 = String(audioBase64).replace(/^data:[^;]+;base64,/, '');
     const audioMime = mimeType || 'audio/webm';
-    const response = await client.models.generateContent({
-      model: process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash',
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    const candidateModels = [
+      process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
+      'gemini-2.5-flash',
+      'gemini-3.1-flash-lite',
+    ];
+
+    let transcribedText = '';
+    let lastError: any = null;
+
+    const langInstruction =
+      language && language !== 'auto'
+        ? `Accurately transcribe in language '${language}' (support authentic script: Tamil, English, Hindi, Telugu, Kannada, Malayalam, etc.).`
+        : 'Accurately transcribe in the spoken language (support Tamil, English, Tanglish, Hindi, and regional speech).';
+
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: [
             {
-              inlineData: {
-                data: cleanBase64,
-                mimeType: audioMime,
-              },
-            },
-            {
-              text: 'Transcribe this spoken audio exactly as spoken by the user. Accurately transcribe Tamil, English, Tanglish, and Hindi. Return ONLY the transcribed text, without any additional commentary, notes, or quotes.',
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: audioMime,
+                    data: cleanBase64,
+                  },
+                },
+                {
+                  text: `Transcribe this spoken audio exactly as spoken by the user. ${langInstruction} Return ONLY the plain transcribed text, without any markdown formatting quotes, conversational commentary, or prefixes.`,
+                },
+              ],
             },
           ],
-        },
-      ],
+        });
+        transcribedText = response?.text?.trim() || '';
+        if (transcribedText) break;
+      } catch (err: any) {
+        lastError = err;
+        if (isGeminiAuthError(err)) {
+          return res.status(401).json({
+            success: false,
+            error: 'Gemini API authentication failed. Please verify or configure your Gemini API key in Settings.',
+            requiresKey: true,
+          });
+        }
+        console.warn(`[Transcribe] Model ${model} failed, trying next:`, err.message);
+      }
+    }
+
+    if (!transcribedText && lastError) {
+      return res.status(500).json({
+        success: false,
+        error: lastError.message || 'Audio transcription could not be completed.',
+      });
+    }
+
+    return res.json({
+      success: true,
+      text: transcribedText,
     });
-    const text = response?.text?.trim() || '';
-    return res.json({ text });
   } catch (err: any) {
     console.warn('Audio transcribe API error:', err);
-    return res.status(500).json({ error: err.message || 'Transcription failed' });
+    return res.status(500).json({ success: false, error: err.message || 'Transcription failed' });
   }
 });
 
@@ -586,6 +633,11 @@ ${
 - When the user attaches a file or asks you to upload/save an attachment to their Google Drive (in English or Tamil e.g., "upload this attachment to my drive", "save this to my google drive", "கூகுள் டிரைவில் சேமி", "என் டிரைவில் அப்லோட் பண்ணு"):
   * If Real Google Drive Upload Status is "SUCCESSFULLY UPLOADED": Confidently confirm that their file has been uploaded directly to their Google Drive and is safely stored in drive.google.com! If they ask about the content, provide a crisp summary of its key points.
   * If Real Google Drive Upload Status is "NOT UPLOADED": Explain honestly and warmly that the file couldn't be placed into their Google Drive because their Google account needs to be connected with Drive write permissions, and ask them to tap "Connect & Upload" or authorize Google Drive. NEVER falsely claim the file is in Google Drive if it was not uploaded!
+
+REAL-TIME MULTIMODAL FILE & DOCUMENT ANALYSIS:
+- You have direct, multimodal vision and document intelligence to inspect and analyze the attached file in real-time (images, receipts, invoices, medical reports, PDFs, text, code, spreadsheets, and charts).
+- In "reply": Give a warm, concise, spoken conversational summary directly explaining what the file contains and answering what the user asked. Keep it engaging, natural, and conversational (2 to 3 sentences) so the voice assistant can speak it aloud seamlessly.
+- In "actionSuggestion": List the key data points, figures, takeaways, or recommended next actions found in the document or image.
 
 GOOGLE KEEP NOTES ACCESS (LIVE & SYNCED STORE):
 You have direct, continuous access to the user's connected Google Keep notes for account "${userEmail}":
@@ -685,9 +737,32 @@ Return a valid JSON object matching:
         });
       }
     }
+    const userParts: any[] = [];
+
+    // Multimodal inlineData for file attachments (images, PDFs, audio, documents)
+    if (attachment && attachment.contentBase64) {
+      const cleanBase64 = String(attachment.contentBase64).replace(/^data:[^;]+;base64,/, '').trim();
+      if (cleanBase64) {
+        userParts.push({
+          inlineData: {
+            mimeType: attachment.mimeType || 'application/octet-stream',
+            data: cleanBase64,
+          },
+        });
+      }
+    }
+
+    let userPromptText = (message || '').trim() || 'Hello Aura';
+    if (attachment && attachment.name) {
+      const textPreview = attachment.textContent ? `\n[Text Snippet from Document]:\n${attachment.textContent.slice(0, 3000)}\n` : '';
+      userPromptText = `[User attached file: "${attachment.name}" (${attachment.mimeType || 'file'}, ${attachment.size || ''})]${textPreview}\n${userPromptText}\n\n[Instruction]: Analyze this attached file in real time with high accuracy. Directly answer the user's question, highlight critical numbers/facts, and speak the reply naturally so it can be read out loud.`;
+    }
+
+    userParts.push({ text: userPromptText });
+
     contents.push({
       role: 'user',
-      parts: [{ text: message || 'Hello Aura' }],
+      parts: userParts,
     });
 
     let rawText = '{}';
@@ -4415,81 +4490,6 @@ Output ONLY valid JSON matching this schema:
   }
 });
 
-// Universal Audio Transcription endpoint using Gemini AI Speech-To-Text
-app.post('/api/ai/transcribe', async (req, res) => {
-  try {
-    const { audioBase64, mimeType = 'audio/webm', language = 'en' } = req.body;
-    const customKey = (req.headers['x-gemini-api-key'] as string) || req.body.geminiApiKey;
-    if (!audioBase64) {
-      return res.status(400).json({ error: 'Missing audioBase64 in request' });
-    }
-
-    const client = refreshAiClient(customKey);
-    if (!client) {
-      return res.status(401).json({
-        success: false,
-        error: 'Gemini API key is not configured or unauthenticated. Please configure your API key in Settings.',
-        requiresKey: true,
-      });
-    }
-
-    const cleanBase64 = audioBase64.replace(/^data:[^;]+;base64,/, '');
-    const candidateModels = [
-      'gemini-3.5-transcribe',
-      'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
-    ];
-
-    let transcribedText = '';
-    let lastError: any = null;
-    for (const model of candidateModels) {
-      try {
-        const response = await client.models.generateContent({
-          model,
-          contents: {
-            parts: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: cleanBase64,
-                },
-              },
-              {
-                text: `Transcribe this spoken audio accurately word-for-word in its original spoken language (${language}). Return ONLY the plain transcribed text without markdown quotes, commentary, or punctuation labels.`,
-              },
-            ],
-          },
-        });
-        transcribedText = response.text?.trim() || '';
-        if (transcribedText) break;
-      } catch (err: any) {
-        lastError = err;
-        if (isGeminiAuthError(err)) {
-          return res.status(401).json({
-            success: false,
-            error: 'Gemini API authentication failed. Please verify or configure your Gemini API key in Settings.',
-            requiresKey: true,
-          });
-        }
-        console.warn(`[Transcribe] Model ${model} failed, trying next:`, err.message);
-      }
-    }
-
-    if (!transcribedText && lastError) {
-      return res.status(500).json({
-        success: false,
-        error: lastError.message || 'Audio transcription could not be completed.',
-      });
-    }
-
-    res.json({
-      success: true,
-      text: transcribedText,
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || 'Transcription failed' });
-  }
-});
 
 // =========================================================================
 // REAL-TIME LANGUAGE TRANSLATOR ENDPOINTS
@@ -4511,16 +4511,11 @@ app.post('/api/translate', async (req, res) => {
 
     const cleanInput = text.trim();
 
-    // 1. Try Gemini models cascade prioritized by available quota (Lite models have generous limits)
+    // 1. Prioritize fast, high-accuracy conversational translation models
     const candidateModels = [
+      process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
+      'gemini-2.5-flash',
       'gemini-3.1-flash-lite',
-      'gemini-3.5-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-3.1-pro-preview',
     ];
 
     const prompt = `You are a world-class polyglot translator and cultural linguist.

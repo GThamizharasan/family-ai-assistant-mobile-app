@@ -219,8 +219,9 @@ export async function fetchSttMemos(
   googleAccessToken?: string | null,
   userEmail = 'chinna.tamil2000@gmail.com'
 ): Promise<SttMemo[]> {
+  const emailToUse = (userEmail && userEmail.trim()) || 'chinna.tamil2000@gmail.com';
   try {
-    const res = await fetch(getApiUrl(`/api/stt/memos?userEmail=${encodeURIComponent(userEmail)}`));
+    const res = await fetch(getApiUrl(`/api/stt/memos?userEmail=${encodeURIComponent(emailToUse)}`));
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.memos)) {
@@ -368,6 +369,15 @@ export async function saveSttMemo(
     audioBlob = audioBlobParam;
   }
 
+  // Preserve userEmail if passed in 3rd parameter
+  if (
+    typeof googleAccessTokenOrEmail === 'string' &&
+    googleAccessTokenOrEmail.includes('@') &&
+    !updatedMemo.userEmail
+  ) {
+    updatedMemo.userEmail = googleAccessTokenOrEmail.trim().toLowerCase();
+  }
+
   if (audioBlob && !updatedMemo.audioContentBase64) {
     try {
       const arrayBuffer = await audioBlob.arrayBuffer();
@@ -395,8 +405,8 @@ export async function saveSttMemo(
     }
   }
 
-  // 2. Upload to Google Drive if connected
-  if (googleAccessToken) {
+  // 2. Upload to Google Drive if connected and not already uploaded
+  if (googleAccessToken && !updatedMemo.driveFileId) {
     try {
       const driveInfo = await uploadSttMemoToDrive(googleAccessToken, updatedMemo, audioBlob);
       updatedMemo.driveFileId = driveInfo.driveFileId;

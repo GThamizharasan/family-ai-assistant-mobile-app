@@ -742,7 +742,7 @@ export class VoiceAssistantEngine {
         try {
           this.onTranscriptCallback?.('Transcribing your voice with Gemini...', false);
           const base64 = await blobToBase64(recordedBlob);
-          const result = await transcribeAudioApi(base64, recordedBlob.type);
+          const result = await transcribeAudioApi(base64, recordedBlob.type, this.currentLanguage);
           if (result && result.text && result.text.trim()) {
             this.onTranscriptCallback?.(result.text.trim(), true);
           } else {
