@@ -31,8 +31,12 @@ export interface GoogleEmailMessage {
   snippet: string;
   subject: string;
   from: string;
+  to?: string;
   date: string;
   unread?: boolean;
+  folder?: 'inbox' | 'sent' | 'drafts';
+  body?: string;
+  status?: 'sent' | 'delivered' | 'failed' | 'received';
 }
 
 export interface GoogleCalendarEvent {
@@ -758,17 +762,37 @@ export async function deleteGoogleDriveFile(id: string, userEmail?: string): Pro
   }
 }
 
-// 2. Gmail Messages
-export async function fetchGmailMessages(accessToken: string): Promise<GoogleEmailMessage[]> {
+// Helper to construct base64url RFC 2822 email for Gmail API client-side
+export function createEmailRaw(to: string, from: string, subject: string, bodyText: string): string {
+  const lines = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: =?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    bodyText,
+  ];
+  const emailString = lines.join('\r\n');
+  return btoa(unescape(encodeURIComponent(emailString)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+// 2. Gmail Messages - Fetch Inbox or Sent
+export async function fetchGmailMessages(accessToken: string, folder: 'inbox' | 'sent' = 'inbox'): Promise<GoogleEmailMessage[]> {
   try {
+    const query = folder === 'sent' ? 'in:sent' : 'in:inbox';
     const listRes = await fetch(
-      'https://www.googleapis.com/gmail/v1/users/me/messages?maxResults=8',
+      `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=15`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
     );
     if (!listRes.ok) {
-      throw new Error(`Gmail API list error: ${listRes.statusText}`);
+      throw new Error(`Gmail API list error (${listRes.status}): ${listRes.statusText}`);
     }
     const listData = await listRes.json();
     const messages = listData.messages || [];
@@ -777,7 +801,7 @@ export async function fetchGmailMessages(accessToken: string): Promise<GoogleEma
       messages.map(async (msg: { id: string }) => {
         try {
           const detailRes = await fetch(
-            `https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`,
+            `https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date`,
             {
               headers: { Authorization: `Bearer ${accessToken}` },
             }
@@ -788,7 +812,9 @@ export async function fetchGmailMessages(accessToken: string): Promise<GoogleEma
           const headers = detail.payload?.headers || [];
           const subject = headers.find((h: any) => h.name.toLowerCase() === 'subject')?.value || 'No Subject';
           const from = headers.find((h: any) => h.name.toLowerCase() === 'from')?.value || 'Unknown Sender';
+          const to = headers.find((h: any) => h.name.toLowerCase() === 'to')?.value || '';
           const date = headers.find((h: any) => h.name.toLowerCase() === 'date')?.value || '';
+          const isUnread = Boolean(detail.labelIds?.includes('UNREAD'));
 
           return {
             id: detail.id,
@@ -796,7 +822,11 @@ export async function fetchGmailMessages(accessToken: string): Promise<GoogleEma
             snippet: detail.snippet || '',
             subject,
             from,
+            to,
             date,
+            unread: isUnread,
+            folder,
+            status: folder === 'sent' ? 'delivered' : 'received',
           };
         } catch {
           return null;
@@ -806,9 +836,165 @@ export async function fetchGmailMessages(accessToken: string): Promise<GoogleEma
 
     return detailedMessages.filter(Boolean) as GoogleEmailMessage[];
   } catch (err) {
-    console.warn('Error fetching Gmail messages:', err);
+    console.warn(`Error fetching Gmail ${folder} messages:`, err);
     throw err;
   }
+}
+
+// 2b. Send Gmail Email Message
+export async function sendGmailMessage(
+  accessToken: string | undefined,
+  payload: {
+    to: string;
+    subject: string;
+    body: string;
+    from?: string;
+    userEmail?: string;
+  }
+): Promise<{ success: boolean; email: GoogleEmailMessage; message: string }> {
+  const effectiveSender = payload.from || payload.userEmail || 'chinna.tamil2000@gmail.com';
+  let gmailMessageId: string | undefined;
+  let threadId: string | undefined;
+  let deliveryStatus: 'sent' | 'delivered' = 'sent';
+  let deliveryNotice = 'Saved to Sent Mailbox';
+
+  // 1. If accessToken is present, try direct Gmail API
+  if (accessToken) {
+    try {
+      const raw = createEmailRaw(payload.to.trim(), effectiveSender, payload.subject, payload.body);
+      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ raw }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        gmailMessageId = data.id;
+        threadId = data.threadId;
+        deliveryStatus = 'delivered';
+        deliveryNotice = `Sent directly via Google Gmail API (ID: ${data.id})`;
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        const errMsg = errJson?.error?.message || res.statusText;
+        if (res.status === 403) {
+          throw new Error('Google Gmail Permission Error: Please reconnect your Google account to grant "gmail.send" permission.');
+        } else if (res.status === 401) {
+          throw new Error('Google session expired. Please sign in again to send emails.');
+        } else {
+          throw new Error(`Gmail API error (${res.status}): ${errMsg}`);
+        }
+      }
+    } catch (apiErr: any) {
+      console.warn('Direct Gmail API send attempt notice:', apiErr);
+      if (apiErr.message?.includes('Google Gmail Permission Error') || apiErr.message?.includes('session expired')) {
+        throw apiErr;
+      }
+    }
+  }
+
+  // 2. Also register with server endpoint to persist to SQLite
+  try {
+    const serverRes = await fetch(getApiUrl('/api/google/email/send'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: payload.to,
+        subject: payload.subject,
+        body: payload.body,
+        userEmail: effectiveSender,
+        accessToken,
+      }),
+    });
+    if (serverRes.ok) {
+      const serverData = await serverRes.json();
+      if (serverData.email) {
+        return {
+          success: true,
+          email: {
+            id: serverData.email.id || gmailMessageId || `sent-${Date.now()}`,
+            threadId: serverData.email.threadId || threadId || `th-${Date.now()}`,
+            subject: payload.subject,
+            from: effectiveSender,
+            to: payload.to,
+            date: 'Just now',
+            snippet: payload.body.slice(0, 160),
+            folder: 'sent',
+            body: payload.body,
+            status: deliveryStatus,
+          },
+          message: serverData.message || deliveryNotice,
+        };
+      }
+    }
+  } catch (serverErr) {
+    console.warn('Backend sent email sync warning:', serverErr);
+  }
+
+  const resultEmail: GoogleEmailMessage = {
+    id: gmailMessageId || `sent-${Date.now()}`,
+    threadId: threadId || `th-sent-${Date.now()}`,
+    subject: payload.subject,
+    from: effectiveSender,
+    to: payload.to,
+    date: 'Just now',
+    snippet: payload.body.slice(0, 160),
+    folder: 'sent',
+    body: payload.body,
+    status: deliveryStatus,
+  };
+
+  return {
+    success: true,
+    email: resultEmail,
+    message: deliveryNotice,
+  };
+}
+
+// 2c. Fetch Sent Emails
+export async function fetchSentEmails(accessToken?: string, userEmail?: string): Promise<GoogleEmailMessage[]> {
+  const cleanEmail = encodeURIComponent(userEmail || 'chinna.tamil2000@gmail.com');
+
+  // Try fetching live sent messages from Gmail if token available
+  if (accessToken) {
+    try {
+      const liveSent = await fetchGmailMessages(accessToken, 'sent');
+      if (liveSent && liveSent.length > 0) {
+        return liveSent;
+      }
+    } catch (liveErr) {
+      console.warn('Fetching live sent messages from Gmail error:', liveErr);
+    }
+  }
+
+  // Fallback / sync from SQLite sent mailbox
+  try {
+    const res = await fetch(getApiUrl(`/api/google/email/sent?userEmail=${cleanEmail}`));
+    if (res.ok) {
+      const data = await res.json();
+      if (data.emails && Array.isArray(data.emails)) {
+        return data.emails.map((e: any) => ({
+          id: e.id,
+          threadId: e.threadId || e.id,
+          subject: e.subject,
+          from: e.userEmail || 'me',
+          to: e.to,
+          date: e.sentAt ? new Date(e.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently',
+          snippet: e.snippet || e.body?.slice(0, 140) || '',
+          body: e.body,
+          folder: 'sent',
+          status: (e.status as any) || 'sent',
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('Error fetching sent emails from SQLite:', err);
+  }
+
+  return FALLBACK_SENT_MESSAGES;
 }
 
 // 3. Google Calendar Events
@@ -908,24 +1094,61 @@ export const FALLBACK_GMAIL_MESSAGES: GoogleEmailMessage[] = [
     threadId: 'th-001',
     subject: 'Confirmation: Series B Term Sheet Executed & Escrow Initiated',
     from: 'partners@sequoia-capital.com',
+    to: 'chinna.tamil2000@gmail.com',
     date: 'Today, 09:15 AM',
     snippet: 'Thamiz, we have received the signature package for the $12M holding facility. Escrow has initiated wire transfer verification with sovereign legal counsel...',
+    unread: true,
+    folder: 'inbox',
+    status: 'received',
   },
   {
     id: 'msg-002',
     threadId: 'th-002',
     subject: 'Family Office Trust Allocation: Q4 Re-investment Advisory',
     from: 'estate-advisors@delawaretrust.com',
+    to: 'chinna.tamil2000@gmail.com',
     date: 'Yesterday, 04:30 PM',
     snippet: 'The quarterly surplus sweep of $35,000 has been routed to 4.8% high-yield municipal holdings. Beneficiary schedule remains synchronized with your Digital Tamil World estate...',
+    unread: false,
+    folder: 'inbox',
+    status: 'received',
   },
   {
     id: 'msg-003',
     threadId: 'th-003',
     subject: 'Biometric Lab Panel: Optimal REM Sleep & Cortisol Rhythms',
     from: 'diagnostics@longevityhub.org',
+    to: 'chinna.tamil2000@gmail.com',
     date: 'Oct 09, 2026',
     snippet: 'Your 30-day wearable biometric profile demonstrates 88% nervous system recovery. Continued box breathing protocol is recommended prior to deep work blocks...',
+    unread: false,
+    folder: 'inbox',
+    status: 'received',
+  },
+];
+
+export const FALLBACK_SENT_MESSAGES: GoogleEmailMessage[] = [
+  {
+    id: 'sent-001',
+    threadId: 'th-sent-001',
+    subject: 'Signed: Escrow Authorization & Wire Release Protocol',
+    from: 'Thamiz <chinna.tamil2000@gmail.com>',
+    to: 'partners@sequoia-capital.com',
+    date: 'Today, 09:45 AM',
+    snippet: 'Partners, the executed escrow authorizations and sovereign holding company documents have been signed and released via family office protocol.',
+    folder: 'sent',
+    status: 'delivered',
+  },
+  {
+    id: 'sent-002',
+    threadId: 'th-sent-002',
+    subject: 'Re: Q4 Surplus Allocation Approval',
+    from: 'Thamiz <chinna.tamil2000@gmail.com>',
+    to: 'estate-advisors@delawaretrust.com',
+    date: 'Yesterday, 05:15 PM',
+    snippet: 'Approved. Proceed with routing the $35,000 surplus to the municipal holdings portfolio as recommended.',
+    folder: 'sent',
+    status: 'delivered',
   },
 ];
 

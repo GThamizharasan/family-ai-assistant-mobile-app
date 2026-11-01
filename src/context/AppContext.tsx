@@ -40,6 +40,7 @@ import {
   GoogleStorageQuota,
   GoogleKeepNote,
   FALLBACK_GMAIL_MESSAGES,
+  FALLBACK_SENT_MESSAGES,
   FALLBACK_DRIVE_FILES,
   FALLBACK_KEEP_NOTES,
   DEFAULT_2TB_QUOTA,
@@ -50,6 +51,8 @@ import {
   type UploadDriveOptions,
   deleteGoogleDriveFile,
   fetchGmailMessages,
+  fetchSentEmails,
+  sendGmailMessage,
   fetchGoogleDriveStorageQuota,
   fetchGoogleKeepNotes,
   createGoogleKeepNote,
@@ -161,6 +164,9 @@ interface AppContextType {
   isGoogleConnected: boolean;
   isSyncingGoogle: boolean;
   liveEmails: GoogleEmailMessage[];
+  liveSentEmails: GoogleEmailMessage[];
+  sendGoogleEmail: (to: string, subject: string, body: string) => Promise<{ success: boolean; message: string; email: GoogleEmailMessage }>;
+  refreshGoogleEmails: () => Promise<void>;
   liveDriveFiles: GoogleDriveFile[];
   liveStorageQuota: GoogleStorageQuota;
   uploadGoogleDriveFile: (file: File, options?: UploadDriveOptions) => Promise<GoogleDriveFile>;
@@ -693,6 +699,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return null;
   });
   const [liveEmails, setLiveEmails] = useState<GoogleEmailMessage[]>(FALLBACK_GMAIL_MESSAGES);
+  const [liveSentEmails, setLiveSentEmails] = useState<GoogleEmailMessage[]>(FALLBACK_SENT_MESSAGES);
   const [liveDriveFiles, setLiveDriveFiles] = useState<GoogleDriveFile[]>(FALLBACK_DRIVE_FILES);
   const [liveStorageQuota, setLiveStorageQuota] = useState<GoogleStorageQuota>(DEFAULT_2TB_QUOTA);
   const [isSyncingGoogle, setIsSyncingGoogle] = useState<boolean>(false);
@@ -703,8 +710,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     setIsSyncingGoogle(true);
     try {
-      const [msgs, files, quota, keepNotes, storageDetails] = await Promise.allSettled([
-        fetchGmailMessages(token),
+      const [msgs, sentMsgs, files, quota, keepNotes, storageDetails] = await Promise.allSettled([
+        fetchGmailMessages(token, 'inbox'),
+        fetchSentEmails(token, user?.email),
         fetchGoogleDriveFiles(token),
         fetchGoogleDriveStorageQuota(token, user?.email),
         fetchGoogleKeepNotes(token, user?.email),
@@ -713,6 +721,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (msgs.status === 'fulfilled' && msgs.value && msgs.value.length > 0) {
         setLiveEmails(msgs.value);
+      }
+      if (sentMsgs.status === 'fulfilled' && sentMsgs.value && sentMsgs.value.length > 0) {
+        setLiveSentEmails(sentMsgs.value);
       }
       if (files.status === 'fulfilled' && files.value && files.value.length > 0) {
         setLiveDriveFiles(files.value);
@@ -909,10 +920,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  // Auto-sync Google Keep and Phone Storage on mount and when user account updates
+  const sendGoogleEmail = async (
+    to: string,
+    subject: string,
+    body: string
+  ): Promise<{ success: boolean; message: string; email: GoogleEmailMessage }> => {
+    const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+    const result = await sendGmailMessage(activeToken || undefined, {
+      to,
+      subject,
+      body,
+      from: user?.email,
+      userEmail: user?.email,
+    });
+
+    if (result.success && result.email) {
+      setLiveSentEmails((prev) => [result.email, ...prev]);
+    }
+    return result;
+  };
+
+  const refreshGoogleEmails = async () => {
+    const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+    try {
+      const [inboxRes, sentRes] = await Promise.allSettled([
+        activeToken ? fetchGmailMessages(activeToken, 'inbox') : Promise.resolve(FALLBACK_GMAIL_MESSAGES),
+        fetchSentEmails(activeToken || undefined, user?.email),
+      ]);
+      if (inboxRes.status === 'fulfilled' && inboxRes.value && inboxRes.value.length > 0) {
+        setLiveEmails(inboxRes.value);
+      }
+      if (sentRes.status === 'fulfilled' && sentRes.value && sentRes.value.length > 0) {
+        setLiveSentEmails(sentRes.value);
+      }
+    } catch (err) {
+      console.warn('Failed to refresh Google emails:', err);
+    }
+  };
+
+  // Auto-sync Google Keep, Phone Storage, and Sent Emails on mount and when user account updates
   useEffect(() => {
     syncGoogleKeepNotes();
     refreshInternalPhoneStorage();
+    fetchSentEmails(undefined, user?.email).then((res) => {
+      if (res && res.length > 0) setLiveSentEmails(res);
+    }).catch(() => {});
   }, [user?.email]);
 
   const [role, setRoleState] = useState<UserRole>('primary');
@@ -2694,6 +2746,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         isGoogleConnected: Boolean(googleAccessToken),
         isSyncingGoogle,
         liveEmails,
+        liveSentEmails,
+        sendGoogleEmail,
+        refreshGoogleEmails,
         liveDriveFiles,
         liveStorageQuota,
         uploadGoogleDriveFile,

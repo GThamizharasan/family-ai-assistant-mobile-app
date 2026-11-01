@@ -491,6 +491,19 @@ export async function initSqliteDb(): Promise<Database> {
       modified_time TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS google_sent_emails (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      recipient_to TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      snippet TEXT,
+      thread_id TEXT,
+      gmail_message_id TEXT,
+      status TEXT DEFAULT 'sent',
+      sent_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ai_studio_creations (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -4476,6 +4489,105 @@ export function toggleScannedDocumentFavoriteInSqlite(id: string, isFavorite: bo
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface GoogleSentEmailRecord {
+  id: string;
+  userEmail: string;
+  to: string;
+  subject: string;
+  body: string;
+  snippet: string;
+  threadId?: string;
+  gmailMessageId?: string;
+  status: string;
+  sentAt: string;
+}
+
+export function saveGoogleSentEmailToSqlite(data: {
+  id?: string;
+  userEmail: string;
+  to: string;
+  subject: string;
+  body: string;
+  snippet?: string;
+  threadId?: string;
+  gmailMessageId?: string;
+  status?: string;
+}): GoogleSentEmailRecord {
+  const id = data.id || `sent-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const sentAt = new Date().toISOString();
+  const snippet = data.snippet || data.body.slice(0, 160);
+  const status = data.status || 'sent';
+
+  if (db) {
+    try {
+      db.run(
+        `INSERT INTO google_sent_emails (id, user_email, recipient_to, subject, body, snippet, thread_id, gmail_message_id, status, sent_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          data.userEmail.toLowerCase(),
+          data.to,
+          data.subject,
+          data.body,
+          snippet,
+          data.threadId || null,
+          data.gmailMessageId || null,
+          status,
+          sentAt,
+        ]
+      );
+      scheduleSave();
+    } catch (err) {
+      console.warn('Error saving sent email to SQLite:', err);
+    }
+  }
+
+  return {
+    id,
+    userEmail: data.userEmail,
+    to: data.to,
+    subject: data.subject,
+    body: data.body,
+    snippet,
+    threadId: data.threadId,
+    gmailMessageId: data.gmailMessageId,
+    status,
+    sentAt,
+  };
+}
+
+export function getGoogleSentEmailsFromSqlite(userEmail: string): GoogleSentEmailRecord[] {
+  if (!db) return [];
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    const stmt = db.prepare(
+      `SELECT * FROM google_sent_emails WHERE user_email = ? ORDER BY sent_at DESC LIMIT 50`
+    );
+    stmt.bind([cleanEmail]);
+    const results: GoogleSentEmailRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        to: String(row.recipient_to),
+        subject: String(row.subject),
+        body: String(row.body),
+        snippet: String(row.snippet || ''),
+        threadId: row.thread_id ? String(row.thread_id) : undefined,
+        gmailMessageId: row.gmail_message_id ? String(row.gmail_message_id) : undefined,
+        status: String(row.status || 'sent'),
+        sentAt: String(row.sent_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Error reading sent emails from SQLite:', err);
+    return [];
   }
 }
 

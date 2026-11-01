@@ -19,6 +19,7 @@ import {
   FileText,
   ChevronRight,
   Send,
+  Inbox,
   Lock,
   Layers,
   ArrowRight,
@@ -52,6 +53,7 @@ import {
   fetchGoogleDriveStorageQuota,
   FALLBACK_DRIVE_FILES,
   FALLBACK_GMAIL_MESSAGES,
+  FALLBACK_SENT_MESSAGES,
   FALLBACK_CALENDAR_EVENTS,
 } from '../../services/googleWorkspace';
 import { WORKSPACE_SCOPES } from '../../services/googleAuth';
@@ -81,6 +83,9 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
     setRequireGoogleAuthOnReload,
     addTask,
     liveEmails,
+    liveSentEmails,
+    sendGoogleEmail,
+    refreshGoogleEmails,
     liveDriveFiles,
     liveStorageQuota,
     uploadGoogleDriveFile,
@@ -123,9 +128,17 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
   const [composeBody, setComposeBody] = useState('');
   const [emailActionSuccess, setEmailActionSuccess] = useState<string | null>(null);
 
+  // Email Inbox vs Sent Section state
+  const [emailFolder, setEmailFolder] = useState<'inbox' | 'sent'>('inbox');
+  const [emailSearchQuery, setEmailSearchQuery] = useState('');
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [sendEmailError, setSendEmailError] = useState<string | null>(null);
+  const [isRefreshingEmails, setIsRefreshingEmails] = useState(false);
+
   // Live or fallback data states
   const [driveFiles, setDriveFiles] = useState<GoogleDriveFile[]>(liveDriveFiles || FALLBACK_DRIVE_FILES);
   const [emails, setEmails] = useState<GoogleEmailMessage[]>(liveEmails || FALLBACK_GMAIL_MESSAGES);
+  const [sentEmails, setSentEmails] = useState<GoogleEmailMessage[]>(liveSentEmails || FALLBACK_SENT_MESSAGES);
   const [calendarEvents, setCalendarEvents] = useState<GoogleCalendarEvent[]>(FALLBACK_CALENDAR_EVENTS);
   const [quotaData, setQuotaData] = useState<GoogleStorageQuota>(liveStorageQuota || DEFAULT_2TB_QUOTA);
 
@@ -135,6 +148,12 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
       setEmails(liveEmails);
     }
   }, [liveEmails]);
+
+  useEffect(() => {
+    if (liveSentEmails && liveSentEmails.length > 0) {
+      setSentEmails(liveSentEmails);
+    }
+  }, [liveSentEmails]);
 
   useEffect(() => {
     if (liveDriveFiles && liveDriveFiles.length > 0) {
@@ -189,26 +208,47 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
     setShowPlanSelector(false);
   };
 
-  // Email Action Handlers
-  const handleSendEmail = (e: React.FormEvent) => {
+  // Email Action Handlers - Real Gmail API & Sovereign Mailbox Delivery
+  const handleSendEmail = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!composeSubject.trim() || !composeBody.trim()) return;
+    if (!composeTo.trim()) {
+      setSendEmailError('Please enter a recipient email address.');
+      return;
+    }
+    if (!composeSubject.trim() && !composeBody.trim()) {
+      setSendEmailError('Please enter a subject or message.');
+      return;
+    }
 
-    const newMsg: GoogleEmailMessage = {
-      id: `msg-${Date.now()}`,
-      threadId: `th-${Date.now()}`,
-      subject: composeSubject,
-      from: `Thamiz <${user.email}>`,
-      date: 'Just now',
-      snippet: composeBody.slice(0, 120),
-    };
+    setIsSendingEmail(true);
+    setSendEmailError(null);
+    try {
+      const res = await sendGoogleEmail(composeTo.trim(), composeSubject.trim() || 'No Subject', composeBody.trim());
+      setIsSendingEmail(false);
+      setIsComposeOpen(false);
+      setComposeSubject('');
+      setComposeBody('');
+      setEmailFolder('sent'); // Automatically switch to the Sent section so the user can verify their sent email
+      setEmailActionSuccess(res.message || `Email sent successfully to ${composeTo}!`);
+      setTimeout(() => setEmailActionSuccess(null), 5000);
+    } catch (err: any) {
+      console.error('Error sending email via Gmail:', err);
+      setIsSendingEmail(false);
+      setSendEmailError(err.message || 'Failed to send email. Please check your Google login permissions.');
+    }
+  };
 
-    setEmails((prev) => [newMsg, ...prev]);
-    setIsComposeOpen(false);
-    setComposeSubject('');
-    setComposeBody('');
-    setEmailActionSuccess(`Email successfully sent to ${composeTo} via sovereign Gmail!`);
-    setTimeout(() => setEmailActionSuccess(null), 4000);
+  const handleManualRefreshEmails = async () => {
+    setIsRefreshingEmails(true);
+    try {
+      await refreshGoogleEmails();
+      setEmailActionSuccess('Gmail Inbox & Sent mailbox refreshed successfully.');
+      setTimeout(() => setEmailActionSuccess(null), 3500);
+    } catch (err: any) {
+      console.warn('Failed to refresh emails:', err);
+    } finally {
+      setIsRefreshingEmails(false);
+    }
   };
 
   const handleConvertEmailToTask = (msg: GoogleEmailMessage) => {
@@ -1273,44 +1313,88 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
         </div>
       )}
 
-      {/* TAB 2: GMAIL HUB */}
+      {/* TAB 2: GMAIL HUB - INBOX & SENT SECTIONS */}
       {activeTab === 'gmail' && (
-        <div className="space-y-4">
-          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 flex items-center justify-between">
+        <div className="space-y-4 animate-fade-in">
+          {/* Header & Status Bar */}
+          <div className="p-4 sm:p-5 rounded-3xl bg-slate-900/90 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-2xl bg-rose-500/10 text-rose-400">
-                <Mail className="w-5 h-5" />
+              <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-400 border border-rose-500/20 shrink-0">
+                <Mail className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Gmail Integration</h3>
-                <p className="text-xs text-slate-400">
-                  {emails.length} prioritized executive communications synced
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">Gmail Integration</h3>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    isGoogleConnected
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                  }`}>
+                    {isGoogleConnected ? 'Live Gmail Connected' : 'Sovereign Mailbox'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  {user.email} • {emails.length} Inbox • {sentEmails.length} Sent
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <button
-                onClick={() => setIsComposeOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors"
+                type="button"
+                onClick={handleManualRefreshEmails}
+                disabled={isRefreshingEmails}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-semibold text-slate-300 border border-slate-700/80 transition-all cursor-pointer"
+                title="Refresh messages from Gmail"
               >
-                <Plus className="w-3.5 h-3.5 text-rose-400" />
+                <RefreshCw className={`w-3.5 h-3.5 text-slate-300 ${isRefreshingEmails ? 'animate-spin' : ''}`} />
+                <span>{isRefreshingEmails ? 'Syncing...' : 'Refresh'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSendEmailError(null);
+                  setIsComposeOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-bold text-white transition-all shadow-md shadow-rose-600/30 cursor-pointer active:scale-95"
+              >
+                <Plus className="w-3.5 h-3.5" />
                 <span>Compose</span>
               </button>
+
               <button
+                type="button"
                 onClick={handleGenerateEmailDigest}
                 disabled={isDigestLoading}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-xs font-semibold text-white transition-colors shadow-md shadow-rose-600/20"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 disabled:opacity-50 text-xs font-bold text-white transition-all shadow-md shadow-indigo-600/20 cursor-pointer"
               >
                 <Sparkles className={`w-3.5 h-3.5 ${isDigestLoading ? 'animate-spin' : ''}`} />
-                <span>{isDigestLoading ? 'Analyzing...' : 'Generate AI Digest'}</span>
+                <span>{isDigestLoading ? 'Analyzing...' : 'AI Digest'}</span>
               </button>
             </div>
           </div>
 
+          {/* Action Success Banner */}
+          {emailActionSuccess && (
+            <div className="p-3 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs flex items-center justify-between animate-fade-in">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{emailActionSuccess}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailActionSuccess(null)}
+                className="text-emerald-400 hover:text-white p-1"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
           {/* AI Executive Digest Result Box */}
           {emailDigest && (
-            <div className="p-4 rounded-3xl bg-rose-950/20 border border-rose-500/30 space-y-2.5">
+            <div className="p-4 rounded-3xl bg-rose-950/20 border border-rose-500/30 space-y-2.5 animate-fade-in">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-rose-400" />
@@ -1339,34 +1423,208 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
             </div>
           )}
 
-          {/* Email Messages List */}
-          <div className="space-y-2">
-            {emails.map((msg) => (
-              <div
-                key={msg.id}
-                onClick={() => setSelectedEmail(msg)}
-                className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-rose-500/50 hover:bg-slate-900 cursor-pointer transition-all space-y-1.5 text-xs group"
+          {/* Segmented Switcher: INBOX vs SENT */}
+          <div className="flex items-center justify-between gap-3 bg-slate-900/90 p-1.5 rounded-2xl border border-slate-800">
+            <div className="flex items-center gap-2 flex-1">
+              <button
+                type="button"
+                onClick={() => setEmailFolder('inbox')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  emailFolder === 'inbox'
+                    ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-white text-xs truncate max-w-[70%] group-hover:text-rose-300 transition-colors">
-                    {msg.subject}
-                  </span>
-                  <span className="text-[10px] text-slate-400 font-mono shrink-0">{msg.date}</span>
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
-                  <span>From: <strong className="text-slate-300">{msg.from}</strong></span>
-                </div>
-                <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed">{msg.snippet}</p>
-                <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500">
-                  <span className="text-rose-400/80 group-hover:text-rose-400 transition-colors flex items-center gap-1 font-medium">
-                    <span>Click to read full email & actions</span>
-                    <ArrowRight className="w-3 h-3" />
-                  </span>
-                  <span className="font-mono text-[10px]">ID: {msg.id}</span>
-                </div>
-              </div>
-            ))}
+                <Inbox className="w-4 h-4" />
+                <span>Inbox</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-black/25 text-white">
+                  {emails.length}
+                </span>
+                {emails.some((e) => e.unread) && (
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Unread emails" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEmailFolder('sent')}
+                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  emailFolder === 'sent'
+                    ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                }`}
+              >
+                <Send className="w-4 h-4" />
+                <span>Sent Mail</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-black/25 text-white">
+                  {sentEmails.length}
+                </span>
+              </button>
+            </div>
           </div>
+
+          {/* Quick Search & Filter */}
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-500" />
+            <input
+              type="text"
+              value={emailSearchQuery}
+              onChange={(e) => setEmailSearchQuery(e.target.value)}
+              placeholder={`Search ${emailFolder === 'inbox' ? 'Inbox' : 'Sent Mail'} by subject, sender, recipient, or body...`}
+              className="w-full bg-slate-900 border border-slate-800/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition-colors font-sans"
+            />
+            {emailSearchQuery && (
+              <button
+                type="button"
+                onClick={() => setEmailSearchQuery('')}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* Section 1: INBOX LIST */}
+          {emailFolder === 'inbox' && (
+            <div className="space-y-2">
+              {(() => {
+                const filtered = emails.filter((msg) => {
+                  if (!emailSearchQuery.trim()) return true;
+                  const q = emailSearchQuery.toLowerCase();
+                  return (
+                    msg.subject.toLowerCase().includes(q) ||
+                    msg.from.toLowerCase().includes(q) ||
+                    msg.snippet.toLowerCase().includes(q)
+                  );
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center bg-slate-900/40 rounded-2xl border border-slate-800/80 space-y-2">
+                      <Inbox className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-xs text-slate-400">No inbox messages found.</p>
+                      {emailSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setEmailSearchQuery('')}
+                          className="text-[11px] text-rose-400 hover:underline cursor-pointer"
+                        >
+                          Clear search filter
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
+                return filtered.map((msg) => (
+                  <div
+                    key={msg.id}
+                    onClick={() => setSelectedEmail(msg)}
+                    className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-rose-500/50 hover:bg-slate-900 cursor-pointer transition-all space-y-2 text-xs group"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {msg.unread && (
+                          <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0 shadow-sm shadow-rose-500" title="Unread" />
+                        )}
+                        <span className="font-bold text-white text-xs truncate group-hover:text-rose-300 transition-colors">
+                          {msg.subject}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0">{msg.date}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                      <span className="truncate">From: <strong className="text-slate-200">{msg.from}</strong></span>
+                      <span className="text-[10px] text-slate-500">ID: {msg.id.slice(-8)}</span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed">{msg.snippet}</p>
+
+                    <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-800/50">
+                      <span className="text-rose-400/80 group-hover:text-rose-400 transition-colors flex items-center gap-1 font-medium">
+                        <span>Read full message & reply</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </span>
+                      <span className="text-[10px] text-slate-500">📥 Inbox</span>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
+
+          {/* Section 2: SENT MAIL LIST */}
+          {emailFolder === 'sent' && (
+            <div className="space-y-2">
+              {(() => {
+                const filtered = sentEmails.filter((msg) => {
+                  if (!emailSearchQuery.trim()) return true;
+                  const q = emailSearchQuery.toLowerCase();
+                  return (
+                    msg.subject.toLowerCase().includes(q) ||
+                    (msg.to && msg.to.toLowerCase().includes(q)) ||
+                    msg.snippet.toLowerCase().includes(q)
+                  );
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 text-center bg-slate-900/40 rounded-2xl border border-slate-800/80 space-y-3">
+                      <Send className="w-8 h-8 text-slate-600 mx-auto" />
+                      <p className="text-xs text-slate-400">No sent emails in this mailbox yet.</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSendEmailError(null);
+                          setIsComposeOpen(true);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white shadow transition-all cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Compose First Email</span>
+                      </button>
+                    </div>
+                  );
+                }
+
+                return filtered.map((msg) => (
+                  <div
+                    key={msg.id}
+                    onClick={() => setSelectedEmail(msg)}
+                    className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-emerald-500/50 hover:bg-slate-900 cursor-pointer transition-all space-y-2 text-xs group"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Sent" />
+                        <span className="font-bold text-white text-xs truncate group-hover:text-emerald-300 transition-colors">
+                          {msg.subject}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono shrink-0">{msg.date}</span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                      <span className="truncate">To: <strong className="text-emerald-300">{msg.to || 'Recipient'}</strong></span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                        ✓ {msg.status === 'delivered' ? 'Delivered via Gmail' : 'Sent'}
+                      </span>
+                    </div>
+
+                    <p className="text-[11px] text-slate-300 line-clamp-2 leading-relaxed">{msg.snippet}</p>
+
+                    <div className="pt-1 flex items-center justify-between text-[11px] text-slate-500 border-t border-slate-800/50">
+                      <span className="text-emerald-400/80 group-hover:text-emerald-400 transition-colors flex items-center gap-1 font-medium">
+                        <span>View sent message details</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </span>
+                      <span className="text-[10px] text-slate-500">📤 Sent Mail</span>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -2626,13 +2884,16 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                   <Mail className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="text-xs font-bold text-white block">Gmail Sovereign Message</span>
+                  <span className="text-xs font-bold text-white block">
+                    {selectedEmail.folder === 'sent' || selectedEmail.to ? 'Sent Gmail Message' : 'Gmail Inbox Message'}
+                  </span>
                   <span className="text-[10px] text-slate-400 font-mono">Account: {user.email}</span>
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setSelectedEmail(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2646,50 +2907,85 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
 
               <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 rounded-2xl border border-slate-800">
                 <div>
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-mono">From</span>
-                  <span className="text-xs text-rose-300 font-medium font-mono">{selectedEmail.from}</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-mono">
+                    {selectedEmail.folder === 'sent' || selectedEmail.to ? 'To (Recipient)' : 'From (Sender)'}
+                  </span>
+                  <span className="text-xs text-rose-300 font-medium font-mono truncate block">
+                    {selectedEmail.folder === 'sent' || selectedEmail.to ? (selectedEmail.to || 'Recipient') : selectedEmail.from}
+                  </span>
                 </div>
                 <div>
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-mono">Date</span>
-                  <span className="text-xs text-slate-300 font-mono">{selectedEmail.date}</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-mono">
+                    {selectedEmail.folder === 'sent' || selectedEmail.to ? 'Delivery Status' : 'Date'}
+                  </span>
+                  <span className="text-xs text-slate-300 font-mono block">
+                    {selectedEmail.folder === 'sent' || selectedEmail.to
+                      ? (selectedEmail.status === 'delivered' ? '✓ Delivered via Gmail' : '✓ Sent')
+                      : selectedEmail.date}
+                  </span>
                 </div>
               </div>
 
+              {selectedEmail.to && selectedEmail.folder !== 'sent' && (
+                <div className="text-[11px] text-slate-400 font-mono px-1">
+                  <span>To: {selectedEmail.to}</span>
+                </div>
+              )}
+
               <div className="bg-slate-950/90 border border-slate-800/80 rounded-2xl p-4 space-y-2">
-                <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Message Body</span>
+                <span className="text-[10px] text-slate-400 font-mono uppercase tracking-wider block">Message Content</span>
                 <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-line">
-                  {selectedEmail.snippet}
-                  {"\n\n"}
-                  This communication has been validated against your primary Google Workspace identity ({user.email}). All financial covenants and family office allocations reference your sovereign master vault parameters.
+                  {selectedEmail.body || selectedEmail.snippet}
                 </p>
               </div>
             </div>
 
             <div className="pt-2 flex flex-wrap gap-2">
-              <button
-                onClick={() => handleConvertEmailToTask(selectedEmail)}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-              >
-                <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Add as Task</span>
-              </button>
+              {selectedEmail.folder !== 'sent' && !selectedEmail.to ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleConvertEmailToTask(selectedEmail)}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Add as Task</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setComposeTo(selectedEmail.from);
+                      setComposeSubject(`Re: ${selectedEmail.subject}`);
+                      setSelectedEmail(null);
+                      setIsComposeOpen(true);
+                    }}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/30 transition-colors cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Reply</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComposeTo(selectedEmail.to || '');
+                    setComposeSubject(`Follow up: ${selectedEmail.subject}`);
+                    setSelectedEmail(null);
+                    setIsComposeOpen(true);
+                  }}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/30 transition-colors cursor-pointer"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send Follow-up</span>
+                </button>
+              )}
 
               <button
-                onClick={() => {
-                  setComposeTo(selectedEmail.from);
-                  setComposeSubject(`Re: ${selectedEmail.subject}`);
-                  setSelectedEmail(null);
-                  setIsComposeOpen(true);
-                }}
-                className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 shadow-md shadow-rose-600/30 transition-colors"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Reply</span>
-              </button>
-
-              <button
+                type="button"
                 onClick={() => setSelectedEmail(null)}
-                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-colors"
+                className="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300 transition-colors cursor-pointer"
               >
                 Close
               </button>
@@ -2713,12 +3009,23 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setIsComposeOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {sendEmailError && (
+              <div className="p-3 rounded-xl bg-rose-950/50 border border-rose-500/50 text-rose-300 text-xs flex items-start gap-2 animate-fade-in">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-semibold">Unable to Send Email</p>
+                  <p className="text-[11px] text-rose-200/90 mt-0.5">{sendEmailError}</p>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSendEmail} className="space-y-3 text-xs">
               <div>
@@ -2727,21 +3034,21 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                   <button
                     type="button"
                     onClick={() => setComposeTo('selvapriya.family@gmail.com')}
-                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono"
+                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono cursor-pointer"
                   >
                     Selvapriya (Spouse)
                   </button>
                   <button
                     type="button"
                     onClick={() => setComposeTo('maaran.k@gmail.com')}
-                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono"
+                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono cursor-pointer"
                   >
                     Maaran (Son)
                   </button>
                   <button
                     type="button"
                     onClick={() => setComposeTo('partners@sequoia-capital.com')}
-                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono"
+                    className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-mono cursor-pointer"
                   >
                     Sequoia Capital
                   </button>
@@ -2751,7 +3058,7 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                   value={composeTo}
                   onChange={(e) => setComposeTo(e.target.value)}
                   placeholder="recipient@domain.com"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-rose-500 font-mono"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-rose-500 font-mono text-xs"
                   required
                 />
               </div>
@@ -2763,7 +3070,7 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                   value={composeSubject}
                   onChange={(e) => setComposeSubject(e.target.value)}
                   placeholder="e.g. Sovereign Holding Trust Distribution Notice"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-rose-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-rose-500 text-xs"
                   required
                 />
               </div>
@@ -2773,9 +3080,9 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
                 <textarea
                   value={composeBody}
                   onChange={(e) => setComposeBody(e.target.value)}
-                  placeholder="Draft your message..."
+                  placeholder="Draft your message here..."
                   rows={5}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-rose-500 resize-none leading-relaxed"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white focus:outline-none focus:border-rose-500 resize-none leading-relaxed text-xs"
                   required
                 />
               </div>
@@ -2783,17 +3090,28 @@ export const GoogleOneTab: React.FC<GoogleOneTabProps> = ({ initialSubTab, onSel
               <div className="pt-2 flex gap-2">
                 <button
                   type="button"
+                  disabled={isSendingEmail}
                   onClick={() => setIsComposeOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-300"
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-xs font-semibold text-slate-300 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white shadow-md shadow-rose-600/30 flex items-center justify-center gap-1.5 transition-colors"
+                  disabled={isSendingEmail}
+                  className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-xs font-semibold text-white shadow-md shadow-rose-600/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
                 >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Send via Gmail</span>
+                  {isSendingEmail ? (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending via Gmail API...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Send via Gmail</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>

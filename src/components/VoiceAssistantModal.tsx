@@ -84,6 +84,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     updateGcpBudgetLimit,
     toggleGcpControlGuardrail,
     liveEmails,
+    liveSentEmails,
+    sendGoogleEmail,
+    refreshGoogleEmails,
     liveDriveFiles,
     liveStorageQuota,
     uploadGoogleDriveFile,
@@ -1405,8 +1408,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.includes('messages from google') ||
       lower.includes('mail');
 
+    const isSentMailCheck =
+      isMailQuery &&
+      (lower.includes('sent') || lower.includes('outgoing') || lower.includes('outbox'));
+
     const isDirectMailCheck =
       isMailQuery &&
+      !isSentMailCheck &&
       (lower.includes('check') ||
         lower.includes('read') ||
         lower.includes('look through') ||
@@ -1426,6 +1434,35 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.includes('search') ||
       lower.includes('find') ||
       lower.includes('tell me about');
+
+    if (isSentMailCheck && !isSpecificEmailQuery) {
+      setIsThinking(false);
+      const sentList = liveSentEmails || [];
+      if (sentList.length === 0) {
+        const noSentMsg = `You haven't sent any emails yet from your connected Gmail account (${user.email || 'chinna.tamil2000@gmail.com'}). You can compose one now or ask me to draft one.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: noSentMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & clear',
+          actionSuggestion: 'Compose an email',
+        });
+        speakWithAuro(noSentMsg);
+        return;
+      }
+
+      const topSent = sentList[0];
+      const sentSummary = `You have ${sentList.length} sent email${sentList.length === 1 ? '' : 's'} recorded in your Gmail mailbox. The latest was sent to ${topSent.to || 'recipient'} regarding "${topSent.subject}": "${topSent.snippet}". Would you like me to open your Gmail tab or send a follow-up?`;
+      addVoiceMessage({
+        role: 'assistant',
+        content: sentSummary,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Open Gmail Sent Mail',
+      });
+      speakWithAuro(sentSummary);
+      return;
+    }
 
     if (isDirectMailCheck && !isSpecificEmailQuery) {
       setIsThinking(false);
@@ -1504,6 +1541,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           snippet: e.snippet,
           date: e.date,
           unread: e.unread,
+        })),
+        recentSentEmailsSummary: (liveSentEmails || []).slice(0, 6).map((e) => ({
+          to: e.to,
+          subject: e.subject,
+          snippet: e.snippet,
+          date: e.date,
+          status: e.status,
         })),
         recentDriveFilesSummary: (liveDriveFiles || []).slice(0, 5).map((f) => ({
           name: f.name,

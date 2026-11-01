@@ -39,6 +39,8 @@ import {
   saveGoogleKeepNoteToSqlite,
   getGoogleKeepNotesFromSqlite,
   deleteGoogleKeepNoteFromSqlite,
+  saveGoogleSentEmailToSqlite,
+  getGoogleSentEmailsFromSqlite,
   saveGoogleDriveFileToSqlite,
   saveGoogleDriveFilesBulkToSqlite,
   updateGoogleDriveFileFolderInSqlite,
@@ -707,9 +709,10 @@ User Profile Context:
 - Memory Context: ${JSON.stringify(context || {})}
 - Connected Google Workspace & Gmail Data:
   * Recent Gmail Inbox Emails: ${JSON.stringify(context?.recentEmailsSummary || [])}
+  * Recent Sent Gmail Messages: ${JSON.stringify(context?.recentSentEmailsSummary || [])}
   * Recent Google Drive Files: ${JSON.stringify(context?.recentDriveFilesSummary || [])}
   * Google Storage Quota: ${JSON.stringify(context?.googleStorageQuota || {})}
-CRITICAL GMAIL & GOOGLE WORKSPACE CAPABILITY: You have direct, real-time visibility into the user's connected Gmail inbox, Google Drive files, and Google One storage quota. When asked about emails, unread messages, senders, Drive documents, or cloud storage usage, answer with precision from the Connected Google Workspace & Gmail Data above. Never say you cannot check Gmail or Google Drive.
+CRITICAL GMAIL & GOOGLE WORKSPACE CAPABILITY: You have direct, real-time visibility into the user's connected Gmail inbox, sent emails, Google Drive files, and Google One storage quota. When asked about emails, unread messages, sent messages, senders, recipients, Drive documents, or cloud storage usage, answer with precision from the Connected Google Workspace & Gmail Data above. Never say you cannot check Gmail or Google Drive.
 
 SOVEREIGN FEATURE & SCREEN NAVIGATION CAPABILITY:
 You have direct sovereign control to open and switch screens for the user. When the user asks to open or navigate to any feature or screen in the app (e.g. "open voice memo", "open apple music", "open apple books", "open document scanner", "open finance hub", "open family tracker", "open whatsapp", etc. in English, Tamil, or any language):
@@ -3354,6 +3357,127 @@ app.delete('/api/google/keep/:id', (req, res) => {
     const userEmail = req.query.userEmail as string | undefined;
     const ok = deleteGoogleKeepNoteFromSqlite(id, userEmail);
     res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Helper to construct base64url RFC 2822 email for Gmail API
+function buildGmailRawMessage(to: string, from: string, subject: string, bodyText: string): string {
+  const lines = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: =?utf-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    'Content-Type: text/plain; charset=UTF-8',
+    'Content-Transfer-Encoding: 7bit',
+    '',
+    bodyText,
+  ];
+  const emailData = lines.join('\r\n');
+  return Buffer.from(emailData, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+// Google Gmail Send & Sent Mailbox SQLite REST Endpoints
+app.post('/api/google/email/send', async (req, res) => {
+  try {
+    const { to, subject, body, userEmail, accessToken } = req.body;
+    if (!to || !to.trim()) {
+      return res.status(400).json({ success: false, error: 'Recipient email address (to) is required' });
+    }
+    if (!subject && !body) {
+      return res.status(400).json({ success: false, error: 'Subject or body is required' });
+    }
+
+    const effectiveSender = userEmail || 'chinna.tamil2000@gmail.com';
+    const effectiveToken = accessToken || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+
+    let gmailMessageId: string | undefined;
+    let threadId: string | undefined;
+    let deliveryStatus = 'sent';
+    let deliveryNotice = 'Saved to Sovereign Sent Mailbox';
+
+    // If active OAuth token is present, attempt live delivery via official Google Gmail API
+    if (effectiveToken) {
+      try {
+        const raw = buildGmailRawMessage(to.trim(), effectiveSender, subject || 'No Subject', body || '');
+        const gmailRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${effectiveToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ raw }),
+        });
+
+        if (gmailRes.ok) {
+          const gmailData: any = await gmailRes.json();
+          gmailMessageId = gmailData.id;
+          threadId = gmailData.threadId;
+          deliveryStatus = 'delivered';
+          deliveryNotice = `Sent directly via Google Gmail API (ID: ${gmailData.id})`;
+        } else {
+          const errText = await gmailRes.text();
+          console.warn(`[Gmail API Send] Failed with status ${gmailRes.status}:`, errText);
+          if (gmailRes.status === 403) {
+            return res.status(403).json({
+              success: false,
+              error: 'Gmail Permission Error: Your Google login does not have Send permission (https://www.googleapis.com/auth/gmail.send). Please reconnect your Google account.',
+            });
+          }
+          if (gmailRes.status === 401) {
+            return res.status(401).json({
+              success: false,
+              error: 'Gmail Session Expired: Your Google access token has expired. Please re-authenticate.',
+            });
+          }
+          return res.status(gmailRes.status).json({
+            success: false,
+            error: `Gmail API delivery failed (${gmailRes.status}): ${errText}`,
+          });
+        }
+      } catch (sendErr: any) {
+        console.error('[Gmail API Send Network Error]:', sendErr);
+        return res.status(502).json({
+          success: false,
+          error: `Network error connecting to Gmail API: ${sendErr?.message || sendErr}`,
+        });
+      }
+    }
+
+    // Persist to SQLite sent mailbox
+    const saved = saveGoogleSentEmailToSqlite({
+      userEmail: effectiveSender,
+      to: to.trim(),
+      subject: subject || 'No Subject',
+      body: body || '',
+      gmailMessageId,
+      threadId,
+      status: deliveryStatus,
+    });
+
+    res.json({
+      success: true,
+      message: deliveryNotice,
+      email: saved,
+      gmailMessageId,
+      threadId,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/google/email/send:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/google/email/sent', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const emails = getGoogleSentEmailsFromSqlite(userEmail);
+    res.json({ success: true, count: emails.length, emails });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
