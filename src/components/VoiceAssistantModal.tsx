@@ -35,13 +35,16 @@ import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../types';
 import { speechEngine, isIOSChrome, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
-
+import { TabKey } from './BottomNav';
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenVision?: () => void;
   onGoHome?: () => void;
+  onNavigateTab?: (tab: TabKey, subTab?: string) => void;
+  onOpenMusicPlayer?: () => void;
+  onOpenOfflineSync?: () => void;
 }
 
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
@@ -49,6 +52,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   onClose,
   onOpenVision,
   onGoHome,
+  onNavigateTab,
+  onOpenMusicPlayer,
+  onOpenOfflineSync,
 }) => {
   const {
     user,
@@ -136,6 +142,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const isOpenRef = useRef(isOpen);
   const isSpeakingRef = useRef(isSpeaking);
   const isThinkingRef = useRef(isThinking);
+  const isNavigatingRef = useRef(false);
 
   useEffect(() => {
     isHandsFreeRef.current = isHandsFree;
@@ -274,7 +281,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     } else {
       speechEngine.setContinuousMode(false);
       speechEngine.stopListening(true);
-      speechEngine.stopSpeaking();
+      if (!isNavigatingRef.current) {
+        speechEngine.stopSpeaking();
+      }
+      isNavigatingRef.current = false;
       setMicStatusMessage(null);
       setShowMicHelp(false);
     }
@@ -426,6 +436,37 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   };
 
+  // Helper to execute instant voice navigation to any sovereign app feature
+  const executeVoiceNavigation = (
+    tab: TabKey,
+    subTab?: string,
+    speechReply?: string,
+    tamilReply?: string
+  ) => {
+    setIsThinking(false);
+    isNavigatingRef.current = true;
+    const isTamil = voiceLanguage.startsWith('ta');
+    const spoken = isTamil
+      ? (tamilReply || speechReply || 'திரையைத் திறக்கிறேன்.')
+      : (speechReply || 'Opening screen now.');
+
+    addVoiceMessage({
+      role: 'assistant',
+      content: spoken,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      emotion: 'attentive & organized',
+      actionSuggestion: `Navigate to ${tab}`,
+    });
+
+    speakWithAuro(spoken);
+
+    if (onNavigateTab) {
+      onNavigateTab(tab, subTab);
+    } else {
+      onClose();
+    }
+  };
+
   const handleUserSpeech = async (spokenText: string) => {
     if (!spokenText || !spokenText.trim()) return;
     speechEngine.unlockAudio();
@@ -439,8 +480,502 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     };
     addVoiceMessage(userMsg);
 
+    const lower = spokenText.toLowerCase().trim();
+
+    // =========================================================================
+    // AURO VOICE INTENT: FEATURE & SCREEN NAVIGATION
+    // =========================================================================
+
+    // 1. Voice Memo / Voice Memos
+    if (
+      lower.includes('voice memo') ||
+      lower.includes('voice memos') ||
+      lower.includes('audio memo') ||
+      lower.includes('audio memos') ||
+      lower.includes('record memo') ||
+      lower.includes('record audio') ||
+      lower.includes('voice note') ||
+      lower.includes('voice recording') ||
+      lower.includes('open memo') ||
+      lower.includes('open memos') ||
+      lower === 'memos' ||
+      lower === 'memo' ||
+      lower.includes('வாய்ஸ் மெமோ') ||
+      lower.includes('மெமோ')
+    ) {
+      executeVoiceNavigation(
+        'memos',
+        undefined,
+        'Opening Voice Memos on your sovereign screen now.',
+        'வாய்ஸ் மெமோவை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 2. Apple Music / Music Library
+    if (
+      lower.includes('apple music') ||
+      lower.includes('music library') ||
+      lower.includes('open music') ||
+      lower.includes('play music') ||
+      lower.includes('open songs') ||
+      lower.includes('song library') ||
+      lower.includes('songs library') ||
+      lower === 'music' ||
+      lower === 'apple music' ||
+      lower.includes('ஆப்பிள் மியூசிக்') ||
+      lower.includes('மியூசிக்') ||
+      lower.includes('பாடல்கள்')
+    ) {
+      if (lower.includes('full player') || (lower.includes('music player') && onOpenMusicPlayer)) {
+        setIsThinking(false);
+        isNavigatingRef.current = true;
+        const rep = voiceLanguage.startsWith('ta') ? 'ஆப்பிள் மியூசிக் பிளேயரை திறக்கிறேன்.' : 'Opening Apple Music Player on your screen now.';
+        speakWithAuro(rep);
+        onOpenMusicPlayer?.();
+        onClose();
+        return;
+      }
+      executeVoiceNavigation(
+        'music',
+        undefined,
+        'Opening Apple Music on your sovereign screen now.',
+        'ஆப்பிள் மியூசிக் லைப்ரரியை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 3. Apple Book / iBooks
+    if (
+      lower.includes('apple book') ||
+      lower.includes('apple books') ||
+      lower.includes('ibooks') ||
+      lower.includes('open book') ||
+      lower.includes('open books') ||
+      lower.includes('book library') ||
+      lower.includes('books library') ||
+      lower.includes('reading library') ||
+      lower === 'books' ||
+      lower === 'book' ||
+      lower === 'ibook' ||
+      lower.includes('ஆப்பிள் புக்') ||
+      lower.includes('புத்தகம்') ||
+      lower.includes('நூலகம்')
+    ) {
+      executeVoiceNavigation(
+        'ibooks',
+        undefined,
+        'Opening Apple Books library on your sovereign screen now.',
+        'ஆப்பிள் புக்ஸ் லைப்ரரியை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 4. Adobe Document Scanner (with A4 Edge Detection)
+    if (
+      lower.includes('document scanner') ||
+      lower.includes('adobe scanner') ||
+      lower.includes('adobe document scanner') ||
+      lower.includes('scan document') ||
+      lower.includes('scan a document') ||
+      lower.includes('open scanner') ||
+      lower.includes('scan pdf') ||
+      lower.includes('camera scanner') ||
+      lower.includes('scan receipt') ||
+      lower.includes('scanner') ||
+      lower.includes('டாக்குமெண்ட் ஸ்கேனர்') ||
+      lower.includes('ஸ்கேனர்') ||
+      lower.includes('ஸ்கேன் பண்ணு')
+    ) {
+      executeVoiceNavigation(
+        'scanner',
+        undefined,
+        'Opening Adobe Document Scanner with A4 edge detection on your screen now.',
+        'அடோப் டாக்குமெண்ட் ஸ்கேனரை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 5. WhatsApp
+    if (
+      (lower.startsWith('open whatsapp') || lower === 'whatsapp' || lower === 'open messages' || lower.includes('வாட்ஸ்அப் திற')) &&
+      !lower.startsWith('reply') && !lower.startsWith('send whatsapp')
+    ) {
+      executeVoiceNavigation(
+        'whatsapp',
+        undefined,
+        'Opening WhatsApp on your sovereign screen now.',
+        'வாட்ஸ்அப் உரையாடல்களை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 6. Family GPS Tracker
+    if (
+      lower.includes('family tracker') ||
+      lower.includes('family gps') ||
+      lower.includes('track family') ||
+      lower.includes('where is my family') ||
+      lower.includes('family location') ||
+      lower.includes('open family') ||
+      lower.includes('குடும்ப வரைபடம்')
+    ) {
+      executeVoiceNavigation(
+        'family',
+        undefined,
+        'Opening Family Circle GPS Tracker on your screen now.',
+        'குடும்ப இருப்பிட வரைபடத்தை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 7. Phone / Keypad
+    if (
+      lower === 'open phone' ||
+      lower === 'open dialer' ||
+      lower === 'keypad' ||
+      lower === 'phone' ||
+      lower.includes('phone dialer')
+    ) {
+      executeVoiceNavigation(
+        'phone',
+        undefined,
+        'Opening Phone Dialer on your screen now.',
+        'ஃபோன் டயலரை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 8. Google Drive / Gmail / Google One
+    if (lower.startsWith('open gmail') || lower === 'gmail' || lower.includes('go to gmail') || lower.includes('ஜிமெயில்')) {
+      executeVoiceNavigation(
+        'google',
+        'gmail',
+        'Opening your Gmail on screen now.',
+        'ஜிமெயில் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+    if (lower.startsWith('open google drive') || lower.startsWith('open drive') || lower === 'google drive' || lower === 'drive' || lower.includes('டிரைவ் திற')) {
+      executeVoiceNavigation(
+        'google',
+        'drive',
+        'Opening Google Drive on screen now.',
+        'கூகுள் டிரைவ் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+    if (lower.startsWith('open calendar') || lower === 'calendar' || lower.includes('காலண்டர்')) {
+      executeVoiceNavigation(
+        'google',
+        'calendar',
+        'Opening Google Calendar on screen now.',
+        'காலண்டர் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+    if (lower.startsWith('open google one') || lower === 'google one') {
+      executeVoiceNavigation(
+        'google',
+        'googleone',
+        'Opening Google One Storage on screen now.',
+        'கூகுள் ஒன் சேமிப்பக திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 9. Memory Vault (Zero-Knowledge)
+    if (
+      lower.includes('memory vault') ||
+      lower.includes('open vault') ||
+      lower === 'vault' ||
+      lower.includes('zero knowledge vault') ||
+      lower.includes('நினைவகம்')
+    ) {
+      executeVoiceNavigation(
+        'vault',
+        undefined,
+        'Opening Zero-Knowledge Memory Vault on your screen now.',
+        'ஜீரோ-நாலெட்ஜ் மெமரி வால்ட் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 10. Finance Hub
+    if (
+      lower.includes('finance hub') ||
+      lower.includes('open finance') ||
+      lower === 'finance' ||
+      lower.includes('financial hub') ||
+      lower.includes('நிதி மையம்')
+    ) {
+      executeVoiceNavigation(
+        'finance',
+        undefined,
+        'Opening Sovereign Finance Hub on your screen now.',
+        'நிதி மேலாண்மை திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 11. The Billionaire Blueprint
+    if (
+      lower.includes('billionaire blueprint') ||
+      lower.includes('billionaire') ||
+      lower.includes('wealth blueprint') ||
+      lower.includes('செல்வ மேலாண்மை')
+    ) {
+      executeVoiceNavigation(
+        'billionaire',
+        undefined,
+        'Opening The Billionaire Blueprint wealth engine now.',
+        'பில்லியனர் ப்ளூபிரிண்ட் செல்வ இயந்திரத்தை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 12. Health & Wellness
+    if (
+      lower.includes('open wellness') ||
+      lower.includes('health hub') ||
+      lower.includes('open health') ||
+      lower === 'wellness' ||
+      lower === 'health' ||
+      lower.includes('உடல் நலம்')
+    ) {
+      executeVoiceNavigation(
+        'wellness',
+        undefined,
+        'Opening Health & Longevity Wellness Hub on your screen now.',
+        'ஆரோக்கிய நலவாழ்வு திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 13. Mood Journal
+    if (
+      lower.includes('mood journal') ||
+      lower.includes('open mood') ||
+      lower.includes('open journal') ||
+      lower === 'mood' ||
+      lower.includes('மனநிலை நாட்குறிப்பு')
+    ) {
+      executeVoiceNavigation(
+        'mood',
+        undefined,
+        'Opening Mood Journal on your screen now.',
+        'மனநிலை நாட்குறிப்பு திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 14. Writing Coach
+    if (
+      lower.includes('writing coach') ||
+      lower.includes('open writing') ||
+      lower === 'writing' ||
+      lower.includes('எழுத்துப் பயிற்சி')
+    ) {
+      executeVoiceNavigation(
+        'writing',
+        undefined,
+        'Opening Executive Writing Coach on your screen now.',
+        'எழுத்துப் பயிற்சி திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 15. Productivity & Tasks
+    if (
+      lower.includes('open productivity') ||
+      lower.includes('open tasks') ||
+      lower === 'productivity' ||
+      lower === 'tasks' ||
+      lower.includes('todo list') ||
+      lower.includes('பணிகள்')
+    ) {
+      executeVoiceNavigation(
+        'productivity',
+        undefined,
+        'Opening Productivity & Tasks on your screen now.',
+        'பணிகள் மற்றும் உற்பத்தித்திறன் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 16. Smart Devices / RTSP Cameras
+    if (
+      lower.includes('smart devices') ||
+      lower.includes('open devices') ||
+      lower.includes('security cameras') ||
+      lower.includes('rtsp') ||
+      lower.includes('open cameras') ||
+      lower.includes('ஸ்மார்ட் சாதனங்கள்')
+    ) {
+      executeVoiceNavigation(
+        'devices',
+        undefined,
+        'Opening Smart Devices and Security Cameras on your screen now.',
+        'ஸ்மார்ட் சாதனங்கள் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 17. Text to Speech Studio
+    if (
+      lower.includes('text to speech') ||
+      lower.includes('open tts') ||
+      lower === 'tts' ||
+      lower.includes('எழுத்தை ஒலியாக்கு')
+    ) {
+      executeVoiceNavigation(
+        'tts',
+        undefined,
+        'Opening Text-to-Speech Studio on your screen now.',
+        'டெக்ஸ்ட் டு ஸ்பீச் ஸ்டுடியோவை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 18. Realtime Translator
+    if (
+      lower.includes('open translator') ||
+      lower.includes('open translation') ||
+      lower === 'translator' ||
+      lower === 'translate' ||
+      lower.includes('மொழிபெயர்ப்பு')
+    ) {
+      executeVoiceNavigation(
+        'translate',
+        undefined,
+        'Opening Realtime Sovereign Translator on your screen now.',
+        'நேரலை மொழிபெயர்ப்பு திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 19. World Clock & Alarms
+    if (
+      lower.includes('open clock') ||
+      lower.includes('open alarms') ||
+      lower === 'clock' ||
+      lower === 'alarms' ||
+      lower.includes('கடிகாரம்')
+    ) {
+      executeVoiceNavigation(
+        'clock',
+        undefined,
+        'Opening World Clock & Alarms on your screen now.',
+        'கடிகாரம் மற்றும் அலாரங்கள் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 20. Sovereign AI Studio
+    if (
+      lower.includes('open ai studio') ||
+      lower.includes('ai studio') ||
+      lower.includes('gemini studio')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        undefined,
+        'Opening Sovereign AI Studio on your screen now.',
+        'ஏஐ ஸ்டுடியோவை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 21. Cloud Billing Dashboard
+    if (
+      (lower.includes('open billing') || lower.includes('open cloud billing') || lower === 'billing') &&
+      !lower.includes('billionaire')
+    ) {
+      executeVoiceNavigation(
+        'billing',
+        undefined,
+        'Opening Google Cloud Billing Dashboard on your screen now.',
+        'கிளவுட் பில்லிங் டாஷ்போர்டை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 22. Documentation & System Guide
+    if (
+      lower.includes('open docs') ||
+      lower.includes('open documentation') ||
+      lower === 'docs'
+    ) {
+      executeVoiceNavigation(
+        'docs',
+        undefined,
+        'Opening System Documentation & Architecture Guide on your screen now.',
+        'ஆவணங்கள் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 23. Home Hub
+    if (
+      lower === 'open home' ||
+      lower === 'go home' ||
+      lower === 'go to home' ||
+      lower === 'home hub' ||
+      lower === 'home' ||
+      lower.includes('முகப்பு')
+    ) {
+      if (onGoHome) {
+        setIsThinking(false);
+        isNavigatingRef.current = true;
+        const rep = voiceLanguage.startsWith('ta') ? 'முகப்புத் திரைக்குத் திரும்புகிறேன்.' : 'Returning to Home Hub now.';
+        speakWithAuro(rep);
+        onGoHome();
+        return;
+      }
+      executeVoiceNavigation(
+        'home',
+        undefined,
+        'Returning to Home Hub now.',
+        'முகப்புத் திரைக்குத் திரும்புகிறேன்.'
+      );
+      return;
+    }
+
+    // 24. Auro Computer Vision
+    if (
+      lower.includes('open vision') ||
+      lower.includes('auro vision') ||
+      lower.includes('computer vision') ||
+      lower.includes('visual assist')
+    ) {
+      if (onOpenVision) {
+        setIsThinking(false);
+        isNavigatingRef.current = true;
+        const rep = voiceLanguage.startsWith('ta') ? 'ஆரோ கம்ப்யூட்டர் விஷன் திரையை திறக்கிறேன்.' : 'Opening Auro Computer Vision now.';
+        speakWithAuro(rep);
+        onOpenVision();
+        return;
+      }
+    }
+
+    // 25. Offline Sync Center
+    if (
+      lower.includes('open sync center') ||
+      lower.includes('open offline sync') ||
+      lower.includes('sync center') ||
+      lower.includes('offline cache')
+    ) {
+      if (onOpenOfflineSync) {
+        setIsThinking(false);
+        isNavigatingRef.current = true;
+        const rep = voiceLanguage.startsWith('ta') ? 'ஆஃப்லைன் சின்க் சென்டரை திறக்கிறேன்.' : 'Opening Offline Sync Center now.';
+        speakWithAuro(rep);
+        onOpenOfflineSync();
+        return;
+      }
+    }
+
     // Direct Voice-to-Call intent detection
-    const lower = spokenText.toLowerCase();
     if (lower.startsWith('call ') || lower.includes('place a call to ') || lower.includes('make a call to ') || lower.startsWith('dial ')) {
       const targetContact = phoneContacts.find((c) =>
         lower.includes(c.name.toLowerCase().split(' ')[0]) ||
@@ -986,6 +1521,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         setTimeout(() => setDriveUploadNotice(null), 5000);
       }
 
+      // Check if Gemini requested navigation to a specific screen
+      if (result.navigateToTab && onNavigateTab) {
+        isNavigatingRef.current = true;
+        setTimeout(() => {
+          onNavigateTab(result.navigateToTab as TabKey, result.navigateSubTab);
+        }, 1200);
+      }
+
       const aiMsg = {
         role: 'assistant' as const,
         content: replyText,
@@ -1096,6 +1639,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   handleUserSpeechRef.current = handleUserSpeech;
 
   const quickPrompts = [
+    { label: '🎙️ Open Voice Memo', text: 'Open voice memo' },
+    { label: '🎵 Open Apple Music', text: 'Open Apple Music' },
+    { label: '📚 Open Apple Books', text: 'Open Apple Book' },
+    { label: '📄 Open Document Scanner', text: 'Open Document Scanner' },
+    { label: '🎙️ வாய்ஸ் மெமோ', text: 'வாய்ஸ் மெமோ திற' },
+    { label: '🎵 ஆப்பிள் மியூசிக்', text: 'ஆப்பிள் மியூசிக் திற' },
+    { label: '📚 ஆப்பிள் புக்ஸ்', text: 'ஆப்பிள் புக் திற' },
+    { label: '📄 டாக்குமெண்ட் ஸ்கேனர்', text: 'டாக்குமெண்ட் ஸ்கேனர் திற' },
     { label: '📎 Upload to Drive', text: 'Upload this attachment to my Google Drive.' },
     { label: '📎 டிரைவில் அப்லோட்', text: 'என் attachment-ஐ கூகுள் டிரைவில் அப்லோட் பண்ணு.' },
     { label: '📝 Google Keep Notes', text: 'Check my Google Keep notes and read my grocery list.' },

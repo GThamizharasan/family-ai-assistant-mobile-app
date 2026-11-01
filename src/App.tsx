@@ -272,6 +272,18 @@ const AppContent: React.FC = () => {
           setIsVoiceOpen(false);
           setCurrentTab('home');
         }}
+        onNavigateTab={(tab, subTab) => {
+          setIsVoiceOpen(false);
+          handleNavigate(tab, subTab as any);
+        }}
+        onOpenMusicPlayer={() => {
+          setIsVoiceOpen(false);
+          setIsMusicPlayerOpen(true);
+        }}
+        onOpenOfflineSync={() => {
+          setIsVoiceOpen(false);
+          setIsOfflineSyncCenterOpen(true);
+        }}
       />
 
       {/* Auro Computer Vision Modal for Blind & Low-Vision Users */}

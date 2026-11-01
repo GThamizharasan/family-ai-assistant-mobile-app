@@ -2751,9 +2751,9 @@ export function generateHarmonicWavBuffer(genre: string, durationSeconds = 30): 
   const g = (genre || '').toLowerCase();
   const key = g.includes('lullaby') ? 'lullaby'
     : g.includes('tamil') ? 'tamil'
-    : g.includes('cinematic') ? 'cinematic'
-    : g.includes('classical') ? 'classical'
-    : 'ambient';
+      : g.includes('cinematic') ? 'cinematic'
+        : g.includes('classical') ? 'classical'
+          : 'ambient';
 
   const chords = chordSets[key] || chordSets.ambient;
   const chordDuration = 3.75; // seconds per chord
@@ -4173,8 +4173,8 @@ export function getScannedDocumentsFromSqlite(userEmail?: string): any[] {
       const row = stmt.getAsObject();
       let pages = [];
       let tags = [];
-      try { if (row.pages_json) pages = JSON.parse(String(row.pages_json)); } catch {}
-      try { if (row.tags_json) tags = JSON.parse(String(row.tags_json)); } catch {}
+      try { if (row.pages_json) pages = JSON.parse(String(row.pages_json)); } catch { }
+      try { if (row.tags_json) tags = JSON.parse(String(row.tags_json)); } catch { }
 
       results.push({
         id: String(row.id),
