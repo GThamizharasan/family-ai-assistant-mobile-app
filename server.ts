@@ -71,6 +71,11 @@ import {
   getTtsMemoAudioContentFromSqlite,
   deleteTtsMemoFromSqlite,
   toggleTtsMemoFavoriteInSqlite,
+  getSttMemosFromSqlite,
+  saveSttMemoToSqlite,
+  getSttMemoAudioContentFromSqlite,
+  deleteSttMemoFromSqlite,
+  toggleSttMemoFavoriteInSqlite,
   getTranslationsFromSqlite,
   saveTranslationToSqlite,
   deleteTranslationFromSqlite,
@@ -2856,6 +2861,7 @@ app.post('/api/sqlite/sync-all', async (req, res) => {
       musicTracks = [],
       voiceRecordings = [],
       ttsMemos = [],
+      sttMemos = [],
       translations = [],
       driveFiles = [],
     } = req.body;
@@ -2865,6 +2871,7 @@ app.post('/api/sqlite/sync-all', async (req, res) => {
       musicTracksSaved: 0,
       recordingsSaved: 0,
       ttsSaved: 0,
+      sttSaved: 0,
       translationsSaved: 0,
       driveFilesSaved: 0,
       quotaAfter: null as any,
@@ -2899,6 +2906,14 @@ app.post('/api/sqlite/sync-all', async (req, res) => {
       try {
         saveTtsMemoToSqlite({ ...t, userEmail });
         results.ttsSaved++;
+      } catch {}
+    }
+
+    // 4b. Sync STT Memos
+    for (const s of sttMemos) {
+      try {
+        saveSttMemoToSqlite({ ...s, userEmail });
+        results.sttSaved++;
       } catch {}
     }
 
@@ -4245,6 +4260,158 @@ app.post('/api/tts/memos/:id/favorite', (req, res) => {
     res.json({ success });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =========================================================================
+// REALTIME SPEECH-TO-TEXT (STT) ENDPOINTS
+// =========================================================================
+
+// List saved STT memos
+app.get('/api/stt/memos', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string) || 'chinna.tamil2000@gmail.com';
+    const memos = getSttMemosFromSqlite(userEmail);
+    res.json({ success: true, memos });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Save or update STT memo
+app.post('/api/stt/memos', (req, res) => {
+  try {
+    const memo = req.body;
+    if (!memo.title || !memo.transcribedText) {
+      return res.status(400).json({ error: 'title and transcribedText are required' });
+    }
+    const saved = saveSttMemoToSqlite(memo);
+    res.json({ success: true, memo: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Stream audio for STT memo (with HTTP Range / Partial Content support)
+app.get('/api/stt/memos/:id/audio', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const stored = getSttMemoAudioContentFromSqlite(id);
+
+    if (stored && stored.audioContentBase64) {
+      const audioBuffer = Buffer.from(stored.audioContentBase64, 'base64');
+      const totalSize = audioBuffer.length;
+      const mimeType = stored.audioMimeType || 'audio/webm';
+
+      const range = req.headers.range;
+      if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : totalSize - 1;
+
+        if (start >= totalSize || end >= totalSize) {
+          res.setHeader('Content-Range', `bytes */${totalSize}`);
+          return res.status(416).send('Requested range not satisfiable');
+        }
+
+        const chunk = audioBuffer.subarray(start, end + 1);
+        res.writeHead(206, {
+          'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunk.length,
+          'Content-Type': mimeType,
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(chunk);
+      } else {
+        res.writeHead(200, {
+          'Content-Length': totalSize,
+          'Content-Type': mimeType,
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'public, max-age=86400',
+        });
+        return res.end(audioBuffer);
+      }
+    }
+
+    res.status(404).json({ error: 'Audio content not found' });
+  } catch (err: any) {
+    console.error('Error in /api/stt/memos/:id/audio:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete STT memo
+app.delete('/api/stt/memos/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userEmail = req.query.userEmail as string | undefined;
+    const success = deleteSttMemoFromSqlite(id, userEmail);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Toggle STT memo favorite
+app.post('/api/stt/memos/:id/favorite', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isFavorite } = req.body;
+    const success = toggleSttMemoFavoriteInSqlite(id, isFavorite);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// AI Polish & Structured Summarizer for Multilingual STT Transcripts
+app.post('/api/stt/summarize', async (req, res) => {
+  try {
+    const { text, language = 'auto' } = req.body || {};
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'text is required' });
+    }
+
+    const client = refreshAiClient();
+    if (!client) {
+      return res.status(503).json({ error: 'Gemini client not initialized' });
+    }
+
+    const prompt = `You are Auro AI's multilingual speech transcript assistant.
+Analyze this spoken transcript (${language}):
+"""
+${text.trim()}
+"""
+
+Provide:
+1. "title": A concise, natural title (4-7 words) in the same language as the transcript.
+2. "summary": A well-written, polished 2-3 sentence summary in the transcript's language (supporting Tamil script, Hindi script, English, etc.).
+3. "keyPoints": Array of 3-5 concise bullet points highlighting key ideas or action items.
+4. "polishedText": The transcript cleaned of filler words (um, uh, like), with proper punctuation and capitalization, in the authentic native script.
+
+Output ONLY valid JSON matching this schema:
+{
+  "title": "string",
+  "summary": "string",
+  "keyPoints": ["string"],
+  "polishedText": "string"
+}`;
+
+    const response = await client.models.generateContent({
+      model: process.env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const raw = response?.text || '{}';
+    const parsed = JSON.parse(raw);
+    return res.json({ success: true, ...parsed });
+  } catch (err: any) {
+    console.warn('STT summarize error:', err);
+    return res.status(500).json({ error: err.message || 'Summarization failed' });
   }
 });
 

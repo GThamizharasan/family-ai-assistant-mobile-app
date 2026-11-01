@@ -31,6 +31,7 @@ import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
 import { MusicLibraryTab } from './components/tabs/MusicLibraryTab';
 import { VoiceMemosTab } from './components/tabs/VoiceMemosTab';
 import { TextToSpeechTab } from './components/tabs/TextToSpeechTab';
+import { RealtimeSttTab } from './components/tabs/RealtimeSttTab';
 import { RealtimeTranslatorTab } from './components/tabs/RealtimeTranslatorTab';
 import { AdobeScannerTab } from './components/tabs/AdobeScannerTab';
 import { ClockTab } from './components/tabs/ClockTab';
@@ -175,6 +176,8 @@ const AppContent: React.FC = () => {
         return <VoiceMemosTab />;
       case 'tts':
         return <TextToSpeechTab />;
+      case 'stt':
+        return <RealtimeSttTab />;
       case 'scanner':
         return <AdobeScannerTab />;
       case 'translate':

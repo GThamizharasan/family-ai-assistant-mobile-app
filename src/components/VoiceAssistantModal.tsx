@@ -841,6 +841,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
+    // 17b. Realtime Speech to Text Studio
+    if (
+      lower.includes('speech to text') ||
+      lower.includes('speech-to-text') ||
+      lower.includes('open stt') ||
+      lower.includes('realtime stt') ||
+      lower.includes('dictation') ||
+      lower === 'stt' ||
+      lower.includes('ஸ்பீச் டு டெக்ஸ்ட்') ||
+      lower.includes('குரலை எழுத்தாக்கு') ||
+      lower.includes('டிரான்ஸ்கிரிப்ட்')
+    ) {
+      executeVoiceNavigation(
+        'stt',
+        undefined,
+        'Opening Realtime Speech to Text Dictation Studio on your screen now.',
+        'ரியல்டைம் ஸ்பீச் டு டெக்ஸ்ட் ஸ்டுடியோவை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
     // 18. Realtime Translator
     if (
       lower.includes('open translator') ||
@@ -1628,10 +1649,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   const quickPrompts = [
     { label: '🎙️ Open Voice Memo', text: 'Open voice memo' },
+    { label: '🗣️ Speech to Text', text: 'Open speech to text' },
     { label: '🎵 Open Apple Music', text: 'Open Apple Music' },
     { label: '📚 Open Apple Books', text: 'Open Apple Book' },
     { label: '📄 Open Document Scanner', text: 'Open Document Scanner' },
     { label: '🎙️ வாய்ஸ் மெமோ', text: 'வாய்ஸ் மெமோ திற' },
+    { label: '🗣️ ஸ்பீச் டு டெக்ஸ்ட்', text: 'ஸ்பீச் டு டெக்ஸ்ட் திற' },
     { label: '🎵 ஆப்பிள் மியூசிக்', text: 'ஆப்பிள் மியூசிக் திற' },
     { label: '📚 ஆப்பிள் புக்ஸ்', text: 'ஆப்பிள் புக் திற' },
     { label: '📄 டாக்குமெண்ட் ஸ்கேனர்', text: 'டாக்குமெண்ட் ஸ்கேனர் திற' },

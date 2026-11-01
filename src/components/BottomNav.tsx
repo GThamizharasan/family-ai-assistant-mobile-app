@@ -34,6 +34,7 @@ import {
   Volume2,
   Database,
   ScanLine,
+  Radio,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -43,6 +44,7 @@ export type TabKey =
   | 'music'
   | 'memos'
   | 'tts'
+  | 'stt'
   | 'scanner'
   | 'translate'
   | 'clock'
@@ -105,6 +107,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music, offlineReady: true },
     { key: 'memos', label: 'Voice Memos', category: 'Intelligence', icon: Mic, offlineReady: true },
     { key: 'tts', label: 'Text to Speech', category: 'Intelligence', icon: Volume2, offlineReady: true },
+    { key: 'stt', label: 'Speech to Text', category: 'Intelligence', icon: Radio, offlineReady: true },
     { key: 'translate', label: 'Translator', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'clock', label: 'Clock & Alarm', category: 'Core', icon: Clock },
     { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },

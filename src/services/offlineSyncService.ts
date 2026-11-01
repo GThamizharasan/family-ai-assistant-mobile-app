@@ -6,6 +6,7 @@ import { Book } from '../types/book';
 import { MusicTrack } from '../types/music';
 import { VoiceRecording } from '../types/voiceRecording';
 import { TtsMemo } from '../types/tts';
+import { SttMemo } from '../types/stt';
 import { LanguageTranslation } from '../types/translation';
 import { fetchGoogleDriveFiles, syncGoogleDriveToSqliteStore, GoogleDriveFile } from './googleWorkspace';
 import { saveAudioToStorage } from '../utils/audioStorage';
@@ -35,6 +36,7 @@ export interface Sqlite3GbQuotaDetails {
     music: StorageBreakdownItem;
     memos: StorageBreakdownItem;
     tts: StorageBreakdownItem;
+    stt?: StorageBreakdownItem;
     translations: StorageBreakdownItem;
     scans?: StorageBreakdownItem;
     driveFiles: StorageBreakdownItem;
@@ -117,6 +119,15 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
       ttsCount = parsed.length;
     }
 
+    let sttCount = 0;
+    const localStt = typeof window !== 'undefined' ? localStorage.getItem('aura_stt_memos_cache_v1') : null;
+    if (localStt) {
+      try {
+        const parsed: SttMemo[] = JSON.parse(localStt);
+        sttCount = parsed.length;
+      } catch {}
+    }
+
     let transCount = 0;
     const localTrans = typeof window !== 'undefined' ? localStorage.getItem('aura_translations_cache_v1') : null;
     if (localTrans) {
@@ -146,11 +157,12 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
     const booksBytes = booksCount * 5.0 * 1024 * 1024;
     const memosBytes = memosCount * 1.5 * 1024 * 1024;
     const ttsBytes = ttsCount * 0.8 * 1024 * 1024;
+    const sttBytes = sttCount * 0.8 * 1024 * 1024;
     const transBytes = transCount * 0.4 * 1024 * 1024;
     const scansBytes = scansCount * 1.8 * 1024 * 1024;
     const driveBytes = driveCount * 2.0 * 1024 * 1024;
 
-    const totalBytes = musicBytes + booksBytes + memosBytes + ttsBytes + transBytes + scansBytes + driveBytes + 1024 * 1024;
+    const totalBytes = musicBytes + booksBytes + memosBytes + ttsBytes + sttBytes + transBytes + scansBytes + driveBytes + 1024 * 1024;
     const totalMb = Math.round((totalBytes / (1024 * 1024)) * 10) / 10;
     const quotaBytes = 3 * 1024 * 1024 * 1024;
     const freeBytes = Math.max(0, quotaBytes - totalBytes);
@@ -173,6 +185,7 @@ export async function fetchSqlite3GbQuota(): Promise<Sqlite3GbQuotaDetails | nul
         music: { count: musicCount, bytes: musicBytes, mb: Math.round(musicBytes / (1024 * 1024)) },
         memos: { count: memosCount, bytes: memosBytes, mb: Math.round(memosBytes / (1024 * 1024)) },
         tts: { count: ttsCount, bytes: ttsBytes, mb: Math.round(ttsBytes / (1024 * 1024)) },
+        stt: { count: sttCount, bytes: sttBytes, mb: Math.round(sttBytes / (1024 * 1024)) },
         translations: { count: transCount, bytes: transBytes, mb: Math.round(transBytes / (1024 * 1024)) },
         scans: { count: scansCount, bytes: scansBytes, mb: Math.round(scansBytes / (1024 * 1024)) },
         driveFiles: { count: driveCount, bytes: driveBytes, mb: Math.round(driveBytes / (1024 * 1024)) },
@@ -744,6 +757,105 @@ export async function cacheAllTtsMemosToSqlite(
 }
 
 /**
+ * Cache single STT memo audio directly into Client SQLite & IndexedDB store
+ */
+export async function saveSttMemoToSqliteStore(
+  memo: SttMemo,
+  audioContentBase64?: string
+): Promise<boolean> {
+  try {
+    let base64 = audioContentBase64 || memo.audioContentBase64;
+    const token = typeof window !== 'undefined'
+      ? (localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token'))
+      : null;
+
+    if (!base64 && memo.driveFileId && token) {
+      try {
+        const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${memo.driveFileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (driveRes.ok) {
+          const ab = await driveRes.arrayBuffer();
+          if (ab.byteLength > 100) {
+            base64 = arrayBufferToBase64(ab);
+          }
+        }
+      } catch (dErr) {
+        console.warn('[Offline Sync] Google Drive STT fetch note:', dErr);
+      }
+    }
+
+    if (base64) {
+      await saveAudioToStorage(memo.id, base64, memo.audioMimeType || 'audio/webm').catch((err) => {
+        console.warn('[Offline Sync] IndexedDB STT save notice:', err);
+      });
+    }
+
+    try {
+      const saved = localStorage.getItem('aura_stt_memos_cache_v1');
+      if (saved) {
+        const list: SttMemo[] = JSON.parse(saved);
+        const idx = list.findIndex((m) => m.id === memo.id);
+        const updated: SttMemo = {
+          ...memo,
+          audioContentBase64: undefined,
+        };
+        if (idx >= 0) list[idx] = updated;
+        else list.unshift(updated);
+        localStorage.setItem('aura_stt_memos_cache_v1', JSON.stringify(list));
+      }
+    } catch {}
+
+    safeFetchJson<any>('/api/stt/memos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...memo,
+        audioContentBase64: base64,
+      }),
+    }).catch(() => {});
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('aura_sqlite_synced'));
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[Offline Sync] saveSttMemoToSqliteStore error:', err);
+    return false;
+  }
+}
+
+/**
+ * Cache all STT memos into the SQLite offline store in batch with progress reporting
+ */
+export async function cacheAllSttMemosToSqlite(
+  memos: SttMemo[],
+  onProgress?: (current: number, total: number, title: string) => void
+): Promise<{ success: boolean; cachedCount: number; errors: number; quota?: Sqlite3GbQuotaDetails | null }> {
+  let cachedCount = 0;
+  let errors = 0;
+  for (let i = 0; i < memos.length; i++) {
+    const m = memos[i];
+    onProgress?.(i + 1, memos.length, m.title);
+    try {
+      const ok = await saveSttMemoToSqliteStore(m);
+      if (ok) cachedCount++;
+      else errors++;
+    } catch {
+      errors++;
+    }
+  }
+
+  const quota = await fetchSqlite3GbQuota();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('aura_sqlite_synced', { detail: { quota } }));
+  }
+
+  return { success: errors === 0, cachedCount, errors, quota };
+}
+
+/**
  * Cache single Language Translation into Client SQLite & IndexedDB store
  */
 export async function saveTranslationToSqliteStore(
@@ -928,9 +1040,21 @@ export async function syncAllFeaturesToSqliteStore(options: {
       if (savedTts) localTts = JSON.parse(savedTts);
     } catch {}
 
-    onProgress?.(`Caching ${localTts.length} TTS Memos...`, 75);
+    onProgress?.(`Caching ${localTts.length} TTS Memos...`, 72);
     for (const t of localTts) {
       await saveTtsMemoToSqliteStore(t).catch(() => {});
+    }
+
+    // 5b. Gather STT Memos
+    let localStt: SttMemo[] = [];
+    try {
+      const savedStt = localStorage.getItem('aura_stt_memos_cache_v1');
+      if (savedStt) localStt = JSON.parse(savedStt);
+    } catch {}
+
+    onProgress?.(`Caching ${localStt.length} STT Transcripts...`, 78);
+    for (const s of localStt) {
+      await saveSttMemoToSqliteStore(s).catch(() => {});
     }
 
     // 6. Gather Translations
@@ -957,6 +1081,7 @@ export async function syncAllFeaturesToSqliteStore(options: {
       musicTracks: localMusic,
       voiceRecordings: localRecordings,
       ttsMemos: localTts,
+      sttMemos: localStt,
       translations: localTranslations,
       driveFiles: driveFilesToSync,
     };

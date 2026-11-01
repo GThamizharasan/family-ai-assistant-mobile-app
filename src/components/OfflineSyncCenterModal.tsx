@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Check,
   ScanLine,
+  Radio,
 } from 'lucide-react';
 import {
   fetchSqlite3GbQuota,
@@ -65,6 +66,7 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
           (q.breakdown?.music?.count || 0) +
           (q.breakdown?.memos?.count || 0) +
           (q.breakdown?.tts?.count || 0) +
+          (q.breakdown?.stt?.count || 0) +
           (q.breakdown?.translations?.count || 0) +
           (q.breakdown?.scans?.count || 0);
         setQuotaRefreshNotice(`✓ Refreshed: ${q.totalUsedMb.toFixed(1)} MB used (${totalItems} cached items)`);
@@ -351,6 +353,26 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
                 </div>
                 <div className="text-[11px] font-mono text-slate-200 mt-1">
                   {(quota?.breakdown.tts.mb ?? 0).toFixed(1)} MB
+                </div>
+              </div>
+
+              {/* Speech-to-Text Transcripts */}
+              <div
+                onClick={() => onNavigateTab?.('stt')}
+                className="p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800/90 cursor-pointer transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5 text-sky-400">
+                    <Radio className="w-3.5 h-3.5" />
+                    <span className="font-bold">STT Transcripts</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-slate-500 group-hover:text-sky-400 transition-colors" />
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  {quota?.breakdown.stt?.count ?? 0} Memos stored
+                </div>
+                <div className="text-[11px] font-mono text-slate-200 mt-1">
+                  {((quota?.breakdown.stt?.mb) ?? 0).toFixed(1)} MB
                 </div>
               </div>
 

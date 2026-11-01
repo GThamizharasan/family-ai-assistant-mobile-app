@@ -573,6 +573,32 @@ export async function initSqliteDb(): Promise<Database> {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS stt_memos (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      transcribed_text TEXT NOT NULL,
+      source_language TEXT NOT NULL,
+      language_label TEXT NOT NULL,
+      category TEXT DEFAULT 'Voice Transcription',
+      audio_url TEXT,
+      audio_content_base64 TEXT,
+      audio_mime_type TEXT DEFAULT 'audio/webm',
+      duration_seconds REAL DEFAULT 0,
+      word_count INTEGER DEFAULT 0,
+      character_count INTEGER DEFAULT 0,
+      file_size_bytes INTEGER DEFAULT 0,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Speech To Text Transcripts',
+      summary TEXT,
+      key_points_json TEXT,
+      is_favorite INTEGER DEFAULT 0,
+      play_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS language_translations (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -3418,6 +3444,223 @@ export function toggleTtsMemoFavoriteInSqlite(id: string, isFavorite?: boolean):
 }
 
 // -------------------------------------------------------------
+// REALTIME SPEECH-TO-TEXT (STT) MEMOS & TRANSCRIPTS
+// -------------------------------------------------------------
+export interface SttMemoRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  transcribedText: string;
+  sourceLanguage: string;
+  languageLabel: string;
+  category: string;
+  audioUrl?: string;
+  audioContentBase64?: string;
+  audioMimeType: string;
+  durationSeconds: number;
+  wordCount: number;
+  characterCount: number;
+  fileSizeBytes: number;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  summary?: string;
+  keyPoints?: string[];
+  isFavorite: boolean;
+  playCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveSttMemoToSqlite(memo: Partial<SttMemoRecord> & {
+  title: string;
+  transcribedText: string;
+  sourceLanguage?: string;
+  languageLabel?: string;
+}): SttMemoRecord {
+  if (!db) throw new Error('Database not initialized');
+
+  const id = memo.id || `stt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const userEmail = (memo.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const title = memo.title.trim();
+  const transcribedText = memo.transcribedText.trim();
+  const sourceLanguage = memo.sourceLanguage || 'auto';
+  const languageLabel = memo.languageLabel || 'Multilingual Auto';
+  const category = memo.category || 'Voice Transcription';
+  const audioUrl = memo.audioUrl || `/api/stt/memos/${id}/audio`;
+  const audioContentBase64 = memo.audioContentBase64 || null;
+  const audioMimeType = memo.audioMimeType || 'audio/webm';
+  const durationSeconds = Number(memo.durationSeconds || 0);
+  const wordCount = Number(memo.wordCount || (transcribedText ? transcribedText.split(/\s+/).filter(Boolean).length : 0));
+  const characterCount = Number(memo.characterCount || transcribedText.length);
+  const fileSizeBytes = Number(memo.fileSizeBytes || (audioContentBase64 ? Math.round((audioContentBase64.length * 3) / 4) : characterCount));
+  const driveFileId = memo.driveFileId || null;
+  const driveWebViewLink = memo.driveWebViewLink || null;
+  const driveFolderPath = memo.driveFolderPath || 'Family Circle/Speech To Text Transcripts';
+  const summary = memo.summary || null;
+  const keyPointsJson = memo.keyPoints && memo.keyPoints.length ? JSON.stringify(memo.keyPoints) : null;
+  const isFavorite = memo.isFavorite ? 1 : 0;
+  const playCount = Number(memo.playCount || 0);
+  const createdAt = memo.createdAt || new Date().toISOString();
+  const updatedAt = new Date().toISOString();
+
+  db.run(`
+    INSERT OR REPLACE INTO stt_memos (
+      id, user_email, title, transcribed_text, source_language, language_label,
+      category, audio_url, audio_content_base64, audio_mime_type,
+      duration_seconds, word_count, character_count, file_size_bytes,
+      drive_file_id, drive_web_view_link, drive_folder_path,
+      summary, key_points_json, is_favorite, play_count, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    id, userEmail, title, transcribedText, sourceLanguage, languageLabel,
+    category, audioUrl, audioContentBase64, audioMimeType,
+    durationSeconds, wordCount, characterCount, fileSizeBytes,
+    driveFileId, driveWebViewLink, driveFolderPath,
+    summary, keyPointsJson, isFavorite, playCount, createdAt, updatedAt
+  ]);
+
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    title,
+    transcribedText,
+    sourceLanguage,
+    languageLabel,
+    category,
+    audioUrl,
+    audioMimeType,
+    durationSeconds,
+    wordCount,
+    characterCount,
+    fileSizeBytes,
+    driveFileId: driveFileId || undefined,
+    driveWebViewLink: driveWebViewLink || undefined,
+    driveFolderPath,
+    summary: summary || undefined,
+    keyPoints: memo.keyPoints || (keyPointsJson ? JSON.parse(keyPointsJson) : []),
+    isFavorite: isFavorite === 1,
+    playCount,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function getSttMemosFromSqlite(userEmail?: string): SttMemoRecord[] {
+  if (!db) return [];
+  try {
+    let query = 'SELECT id, user_email, title, transcribed_text, source_language, language_label, category, audio_url, audio_mime_type, duration_seconds, word_count, character_count, file_size_bytes, drive_file_id, drive_web_view_link, drive_folder_path, summary, key_points_json, is_favorite, play_count, created_at, updated_at FROM stt_memos';
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query += ' WHERE user_email = ?';
+      params.push(userEmail.toLowerCase().trim());
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: SttMemoRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      let parsedKeyPoints: string[] = [];
+      try {
+        if (row.key_points_json) {
+          parsedKeyPoints = JSON.parse(String(row.key_points_json));
+        }
+      } catch {}
+
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        transcribedText: String(row.transcribed_text),
+        sourceLanguage: String(row.source_language || 'auto'),
+        languageLabel: String(row.language_label || 'Multilingual Auto'),
+        category: String(row.category || 'Voice Transcription'),
+        audioUrl: row.audio_url ? String(row.audio_url) : `/api/stt/memos/${row.id}/audio`,
+        audioMimeType: String(row.audio_mime_type || 'audio/webm'),
+        durationSeconds: Number(row.duration_seconds || 0),
+        wordCount: Number(row.word_count || 0),
+        characterCount: Number(row.character_count || 0),
+        fileSizeBytes: Number(row.file_size_bytes || 0),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Speech To Text Transcripts'),
+        summary: row.summary ? String(row.summary) : undefined,
+        keyPoints: parsedKeyPoints,
+        isFavorite: Number(row.is_favorite) === 1,
+        playCount: Number(row.play_count || 0),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Failed to query stt_memos from SQLite:', err);
+    return [];
+  }
+}
+
+export function getSttMemoAudioContentFromSqlite(id: string): { audioContentBase64: string; audioMimeType: string } | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare('SELECT audio_content_base64, audio_mime_type FROM stt_memos WHERE id = ?');
+    stmt.bind([id]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      stmt.free();
+      if (row.audio_content_base64) {
+        return {
+          audioContentBase64: String(row.audio_content_base64),
+          audioMimeType: String(row.audio_mime_type || 'audio/webm'),
+        };
+      }
+    } else {
+      stmt.free();
+    }
+    return null;
+  } catch (err) {
+    console.warn('Failed to retrieve STT memo audio content:', err);
+    return null;
+  }
+}
+
+export function deleteSttMemoFromSqlite(id: string, userEmail?: string): boolean {
+  if (!db) return false;
+  try {
+    if (userEmail && userEmail.trim()) {
+      db.run('DELETE FROM stt_memos WHERE id = ? AND user_email = ?', [id, userEmail.toLowerCase().trim()]);
+    } else {
+      db.run('DELETE FROM stt_memos WHERE id = ?', [id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to delete STT memo from SQLite:', err);
+    return false;
+  }
+}
+
+export function toggleSttMemoFavoriteInSqlite(id: string, isFavorite?: boolean): boolean {
+  if (!db) return false;
+  try {
+    if (typeof isFavorite === 'boolean') {
+      db.run('UPDATE stt_memos SET is_favorite = ?, updated_at = ? WHERE id = ?', [isFavorite ? 1 : 0, new Date().toISOString(), id]);
+    } else {
+      db.run('UPDATE stt_memos SET is_favorite = (CASE WHEN is_favorite = 1 THEN 0 ELSE 1 END), updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+    }
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Failed to toggle STT memo favorite in SQLite:', err);
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // REAL-TIME LANGUAGE TRANSLATIONS
 // -------------------------------------------------------------
 export interface LanguageTranslationRecord {
@@ -3898,6 +4141,7 @@ export interface Sqlite3GbStorageQuota {
     music: { count: number; bytes: number; mb: number };
     memos: { count: number; bytes: number; mb: number };
     tts: { count: number; bytes: number; mb: number };
+    stt?: { count: number; bytes: number; mb: number };
     translations: { count: number; bytes: number; mb: number };
     driveFiles: { count: number; bytes: number; mb: number };
     aiCreations: { count: number; bytes: number; mb: number };
@@ -3927,6 +4171,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
         music: { count: 0, bytes: 0, mb: 0 },
         memos: { count: 0, bytes: 0, mb: 0 },
         tts: { count: 0, bytes: 0, mb: 0 },
+        stt: { count: 0, bytes: 0, mb: 0 },
         translations: { count: 0, bytes: 0, mb: 0 },
         driveFiles: { count: 0, bytes: 0, mb: 0 },
         aiCreations: { count: 0, bytes: 0, mb: 0 },
@@ -3967,6 +4212,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
   const musicStats = getTableStats('musical_library_tracks', 'audio_content_base64', 'lyrics');
   const memosStats = getTableStats('voice_recordings', 'audio_content_base64', 'transcription');
   const ttsStats = getTableStats('tts_memos', 'audio_content_base64');
+  const sttStats = getTableStats('stt_memos', 'audio_content_base64', 'transcribed_text');
   const translationsStats = getTableStats('language_translations', 'audio_content_base64');
   const driveStats = getTableStats('google_drive_files', 'file_content_base64');
   const aiStats = getTableStats('ai_studio_creations', 'metadata_json');
@@ -3977,6 +4223,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
     musicStats.bytes +
     memosStats.bytes +
     ttsStats.bytes +
+    sttStats.bytes +
     translationsStats.bytes +
     driveStats.bytes +
     aiStats.bytes +
@@ -4008,6 +4255,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
       music: musicStats,
       memos: memosStats,
       tts: ttsStats,
+      stt: sttStats,
       translations: translationsStats,
       driveFiles: driveStats,
       aiCreations: aiStats,
