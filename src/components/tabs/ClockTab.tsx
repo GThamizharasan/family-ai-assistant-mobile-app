@@ -19,9 +19,29 @@ import {
   X,
   Sparkles,
   Search,
+  BellRing,
+  Calendar,
+  CheckCircle2,
+  RefreshCw,
+  Cloud,
+  Users,
+  AlertCircle,
+  Tag,
 } from 'lucide-react';
-import { Alarm, WorldCity, LapRecord, ClockSubTab, AlarmSound } from '../../types/clock';
+import { Alarm, WorldCity, LapRecord, ClockSubTab, AlarmSound, ClockReminder, ReminderCategory, ReminderPriority } from '../../types/clock';
 import { audioAlarmEngine } from '../../services/audioAlarmSynthesizer';
+import { useApp } from '../../context/AppContext';
+import {
+  getLocalReminders,
+  saveLocalReminders,
+  syncRemindersWithGoogleDrive,
+  createReminder,
+  toggleReminder,
+  completeReminder,
+  deleteReminder,
+  REMINDER_CATEGORIES,
+  DEFAULT_FAMILY_MEMBERS,
+} from '../../services/reminderDriveSync';
 
 const ALARMS_STORAGE_KEY = 'aura_alarms_v1';
 const CITIES_STORAGE_KEY = 'aura_world_cities_v1';
@@ -145,6 +165,172 @@ export const ClockTab: React.FC = () => {
 
   const [isEditAlarmModalOpen, setIsEditAlarmModalOpen] = useState(false);
   const [editingAlarm, setEditingAlarm] = useState<Alarm | null>(null);
+
+  const { user, googleAccessToken } = useApp();
+
+  // -------------------------------------------------------------
+  // REMINDERS STATE & GOOGLE DRIVE SYNC
+  // -------------------------------------------------------------
+  const [reminders, setReminders] = useState<ClockReminder[]>(() => getLocalReminders());
+  const [reminderFilter, setReminderFilter] = useState<'all' | 'today' | 'family' | 'completed'>('all');
+  const [reminderSearchQuery, setReminderSearchQuery] = useState('');
+  const [isSyncingDrive, setIsSyncingDrive] = useState(false);
+  const [isAddReminderOpen, setIsAddReminderOpen] = useState(false);
+  const [editingReminder, setEditingReminder] = useState<ClockReminder | null>(null);
+
+  const [reminderForm, setReminderForm] = useState<{
+    title: string;
+    notes: string;
+    dueDate: string;
+    dueTime: string;
+    category: ReminderCategory;
+    priority: ReminderPriority;
+    familyMember: string;
+    sound: AlarmSound;
+    voiceAlert: boolean;
+  }>({
+    title: '',
+    notes: '',
+    dueDate: new Date().toISOString().split('T')[0],
+    dueTime: '18:00',
+    category: 'family',
+    priority: 'normal',
+    familyMember: 'All Family Circle',
+    sound: 'gentle',
+    voiceAlert: true,
+  });
+
+  const handleSyncWithDrive = async () => {
+    setIsSyncingDrive(true);
+    try {
+      const res = await syncRemindersWithGoogleDrive(googleAccessToken, user?.email || undefined);
+      setReminders(res.reminders);
+    } finally {
+      setIsSyncingDrive(false);
+    }
+  };
+
+  useEffect(() => {
+    // 1. Initial load from local cache
+    setReminders(getLocalReminders());
+
+    // 2. Fetch latest from SQLite & Google Drive
+    void handleSyncWithDrive();
+
+    // 3. Listen to instant reactive reminder updates from Voice Assistant or other components
+    const handleRemindersUpdate = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setReminders(e.detail);
+      } else {
+        setReminders(getLocalReminders());
+      }
+    };
+
+    window.addEventListener('aura_reminders_changed', handleRemindersUpdate);
+    window.addEventListener('storage', handleRemindersUpdate);
+
+    return () => {
+      window.removeEventListener('aura_reminders_changed', handleRemindersUpdate);
+      window.removeEventListener('storage', handleRemindersUpdate);
+    };
+  }, [googleAccessToken]);
+
+  const handleOpenAddReminder = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    now.setHours(now.getHours() + 1, 0, 0, 0);
+    const defaultTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    setEditingReminder(null);
+    setReminderForm({
+      title: '',
+      notes: '',
+      dueDate: today,
+      dueTime: defaultTime,
+      category: 'family',
+      priority: 'normal',
+      familyMember: 'All Family Circle',
+      sound: 'gentle',
+      voiceAlert: true,
+    });
+    setIsAddReminderOpen(true);
+  };
+
+  const handleOpenEditReminder = (rem: ClockReminder) => {
+    setEditingReminder(rem);
+    setReminderForm({
+      title: rem.title,
+      notes: rem.notes || '',
+      dueDate: rem.dueDate,
+      dueTime: rem.dueTime,
+      category: rem.category,
+      priority: rem.priority,
+      familyMember: rem.familyMember || 'All Family Circle',
+      sound: rem.sound || 'gentle',
+      voiceAlert: rem.voiceAlert !== false,
+    });
+    setIsAddReminderOpen(true);
+  };
+
+  const handleSaveReminder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reminderForm.title.trim() || !reminderForm.dueTime) return;
+
+    if (editingReminder) {
+      const updated: ClockReminder = {
+        ...editingReminder,
+        title: reminderForm.title.trim(),
+        notes: reminderForm.notes.trim(),
+        dueDate: reminderForm.dueDate,
+        dueTime: reminderForm.dueTime,
+        category: reminderForm.category,
+        priority: reminderForm.priority,
+        familyMember: reminderForm.familyMember,
+        sound: reminderForm.sound,
+        voiceAlert: reminderForm.voiceAlert,
+        updatedAt: new Date().toISOString(),
+      };
+      const list = reminders.map((r) => (r.id === editingReminder.id ? updated : r));
+      setReminders(list);
+      saveLocalReminders(list);
+      setIsAddReminderOpen(false);
+      setEditingReminder(null);
+      if (googleAccessToken) {
+        void syncRemindersWithGoogleDrive(googleAccessToken, user?.email || undefined);
+      }
+    } else {
+      const created = await createReminder(
+        reminderForm,
+        googleAccessToken,
+        user?.email || undefined
+      );
+      setReminders((prev) => [created, ...prev.filter((r) => r.id !== created.id)]);
+      setIsAddReminderOpen(false);
+    }
+  };
+
+  const handleToggleReminderItem = async (id: string) => {
+    const updated = await toggleReminder(id, googleAccessToken, user?.email || undefined);
+    if (updated) {
+      setReminders((prev) =>
+        prev.map((r) =>
+          r.id === id ? { ...r, enabled: updated.enabled, notified: updated.notified } : r
+        )
+      );
+    }
+  };
+
+  const handleCompleteReminderItem = async (id: string) => {
+    const updated = await completeReminder(id, googleAccessToken, user?.email || undefined);
+    if (updated) {
+      setReminders((prev) => prev.map((r) => (r.id === id ? { ...r, completed: true } : r)));
+    }
+  };
+
+  const handleDeleteReminderItem = async (id: string) => {
+    await deleteReminder(id, googleAccessToken, user?.email || undefined);
+    setReminders((prev) => prev.filter((r) => r.id !== id));
+  };
 
   // -------------------------------------------------------------
   // STOPWATCH STATE
@@ -431,10 +617,16 @@ export const ClockTab: React.FC = () => {
         </div>
 
         {/* SubTab Navigation Switcher */}
-        <div className="flex items-center bg-slate-950/80 p-1 rounded-2xl border border-slate-800 self-start sm:self-auto">
+        <div className="flex items-center bg-slate-950/80 p-1 rounded-2xl border border-slate-800 self-start sm:self-auto overflow-x-auto max-w-full">
           {[
             { id: 'world' as ClockSubTab, label: 'World', icon: Globe },
             { id: 'alarm' as ClockSubTab, label: 'Alarms', icon: Bell },
+            {
+              id: 'reminder' as ClockSubTab,
+              label: 'Reminders',
+              icon: BellRing,
+              badge: reminders.filter((r) => r.enabled && !r.completed).length,
+            },
             { id: 'stopwatch' as ClockSubTab, label: 'Stopwatch', icon: Clock },
             { id: 'timer' as ClockSubTab, label: 'Timer', icon: Timer },
           ].map((tab) => {
@@ -444,7 +636,7 @@ export const ClockTab: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveSubTab(tab.id)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all whitespace-nowrap ${
                   isSel
                     ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
@@ -452,6 +644,15 @@ export const ClockTab: React.FC = () => {
               >
                 <Icon className="w-3.5 h-3.5" />
                 <span>{tab.label}</span>
+                {tab.badge !== undefined && tab.badge > 0 && (
+                  <span
+                    className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                      isSel ? 'bg-slate-950 text-amber-400' : 'bg-amber-500/20 text-amber-300'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -660,6 +861,327 @@ export const ClockTab: React.FC = () => {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          TAB 2.5: REMINDERS & FAMILY CIRCLE SYNC
+      ========================================================================= */}
+      {activeSubTab === 'reminder' && (
+        <div className="space-y-4 animate-in fade-in duration-200">
+          {/* Top Status & Sync Banner */}
+          <div className="p-4 rounded-3xl bg-gradient-to-br from-slate-900/90 to-slate-950 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <BellRing className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white">Family Circle Reminders</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                    <Cloud className="w-2.5 h-2.5" />
+                    Google Drive Synced
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400">
+                  On-time voice & audio chime alerts synced with Family Circle/Reminders
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <button
+                onClick={handleSyncWithDrive}
+                disabled={isSyncingDrive}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 transition-colors disabled:opacity-50"
+                title="Sync with Family Circle/Reminders on Google Drive"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 text-amber-400 ${isSyncingDrive ? 'animate-spin' : ''}`}
+                />
+                <span>{isSyncingDrive ? 'Syncing...' : 'Sync Drive'}</span>
+              </button>
+
+              <button
+                onClick={handleOpenAddReminder}
+                className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>New Reminder</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { label: 'Total', count: reminders.length, color: 'text-slate-200' },
+              {
+                label: 'Due Today',
+                count: reminders.filter(
+                  (r) => r.dueDate === new Date().toISOString().split('T')[0] && !r.completed
+                ).length,
+                color: 'text-amber-400',
+              },
+              {
+                label: 'Family',
+                count: reminders.filter((r) => r.category === 'family' && !r.completed).length,
+                color: 'text-sky-400',
+              },
+              {
+                label: 'Done',
+                count: reminders.filter((r) => r.completed).length,
+                color: 'text-emerald-400',
+              },
+            ].map((stat, idx) => (
+              <div
+                key={idx}
+                className="p-3 rounded-2xl bg-slate-900/60 border border-slate-800/80 text-center"
+              >
+                <div className={`text-lg font-black ${stat.color}`}>{stat.count}</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
+                  {stat.label}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Search & Filters */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search reminders by title, notes, or family member..."
+                value={reminderSearchQuery}
+                onChange={(e) => setReminderSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
+              />
+              {reminderSearchQuery && (
+                <button
+                  onClick={() => setReminderSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800 overflow-x-auto">
+              {[
+                { id: 'all' as const, label: 'All' },
+                { id: 'today' as const, label: 'Today' },
+                { id: 'family' as const, label: 'Family Circle' },
+                { id: 'completed' as const, label: 'Completed' },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => setReminderFilter(f.id)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                    reminderFilter === f.id
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reminders List */}
+          {(() => {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const filtered = reminders.filter((r) => {
+              // Search filter
+              if (reminderSearchQuery.trim()) {
+                const q = reminderSearchQuery.toLowerCase();
+                const matches =
+                  r.title.toLowerCase().includes(q) ||
+                  (r.notes && r.notes.toLowerCase().includes(q)) ||
+                  (r.familyMember && r.familyMember.toLowerCase().includes(q));
+                if (!matches) return false;
+              }
+              // Tab filter
+              if (reminderFilter === 'today') return r.dueDate === todayStr && !r.completed;
+              if (reminderFilter === 'family') return r.category === 'family' && !r.completed;
+              if (reminderFilter === 'completed') return r.completed;
+              return true;
+            });
+
+            if (filtered.length === 0) {
+              return (
+                <div className="p-8 rounded-3xl bg-slate-900/40 border border-slate-800 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                    <BellRing className="w-6 h-6" />
+                  </div>
+                  <div className="text-sm font-bold text-slate-300">No Reminders Found</div>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    {reminderSearchQuery
+                      ? 'No reminders match your query. Try searching for something else.'
+                      : 'You do not have any reminders in this view. Create one or ask Auro Voice Assistant: "Remind me to..."'}
+                  </p>
+                  <button
+                    onClick={handleOpenAddReminder}
+                    className="mt-2 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Create Reminder</span>
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-3">
+                {filtered.map((rem) => {
+                  const catMeta = REMINDER_CATEGORIES.find((c) => c.id === rem.category);
+                  const isToday = rem.dueDate === todayStr;
+                  const isPastDue =
+                    !rem.completed &&
+                    (rem.dueDate < todayStr ||
+                      (rem.dueDate === todayStr &&
+                        rem.dueTime <
+                          `${String(new Date().getHours()).padStart(2, '0')}:${String(
+                            new Date().getMinutes()
+                          ).padStart(2, '0')}`));
+
+                  return (
+                    <div
+                      key={rem.id}
+                      className={`p-4 rounded-3xl border transition-all ${
+                        rem.completed
+                          ? 'bg-slate-950/40 border-slate-900 opacity-60'
+                          : rem.enabled
+                          ? 'bg-slate-900/90 border-slate-800 hover:border-slate-700 shadow-lg'
+                          : 'bg-slate-900/40 border-slate-800/50 opacity-75'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        {/* Checkbox & Details */}
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCompleteReminderItem(rem.id)}
+                            className={`mt-1 w-5 h-5 rounded-lg border flex items-center justify-center transition-colors shrink-0 ${
+                              rem.completed
+                                ? 'bg-emerald-500 border-emerald-500 text-slate-950'
+                                : 'border-slate-700 hover:border-amber-400 text-transparent'
+                            }`}
+                            title={rem.completed ? 'Completed' : 'Mark as completed'}
+                          >
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </button>
+
+                          <div className="flex-1 min-w-0 space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span
+                                className={`text-base font-bold text-white break-words ${
+                                  rem.completed ? 'line-through text-slate-400' : ''
+                                }`}
+                              >
+                                {rem.title}
+                              </span>
+
+                              {rem.priority === 'urgent' && (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold">
+                                  URGENT
+                                </span>
+                              )}
+                              {rem.priority === 'high' && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                                  HIGH
+                                </span>
+                              )}
+                            </div>
+
+                            {rem.notes && (
+                              <p className="text-xs text-slate-400 leading-relaxed break-words">
+                                {rem.notes}
+                              </p>
+                            )}
+
+                            {/* Tags row */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
+                              {/* Date & Time */}
+                              <span
+                                className={`flex items-center gap-1 font-mono font-semibold px-2 py-0.5 rounded-md ${
+                                  isPastDue
+                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    : isToday
+                                    ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                                    : 'bg-slate-800 text-slate-300'
+                                }`}
+                              >
+                                <Calendar className="w-3 h-3" />
+                                {isToday ? 'Today' : rem.dueDate} at {rem.dueTime}
+                              </span>
+
+                              {/* Category */}
+                              <span
+                                className={`px-2 py-0.5 rounded-md border font-medium ${
+                                  catMeta?.bgBadge || 'bg-slate-800 text-slate-300 border-slate-700'
+                                }`}
+                              >
+                                {catMeta?.label || rem.category}
+                              </span>
+
+                              {/* Family Member */}
+                              {rem.familyMember && (
+                                <span className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 font-medium">
+                                  <Users className="w-3 h-3" />
+                                  {rem.familyMember}
+                                </span>
+                              )}
+
+                              {/* Drive Sync Status */}
+                              <span className="flex items-center gap-1 text-[10px] text-slate-500">
+                                <Cloud className="w-3 h-3 text-emerald-400" />
+                                Family Circle/Reminders
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right Toggle & Actions */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleToggleReminderItem(rem.id)}
+                            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                              rem.enabled ? 'bg-amber-500' : 'bg-slate-800'
+                            }`}
+                            title={rem.enabled ? 'Enabled' : 'Disabled'}
+                          >
+                            <span
+                              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                                rem.enabled ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
+
+                          <button
+                            onClick={() => handleOpenEditReminder(rem)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                            title="Edit reminder"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteReminderItem(rem.id)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                            title="Delete reminder"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1017,6 +1539,268 @@ export const ClockTab: React.FC = () => {
                 className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
               />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL: ADD / EDIT REMINDER
+      ========================================================================= */}
+      {isAddReminderOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-5 sm:p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                  <BellRing className="w-4 h-4" />
+                </div>
+                <h3 className="font-bold text-white text-base">
+                  {editingReminder ? 'Edit Reminder' : 'New Family Reminder'}
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setIsAddReminderOpen(false);
+                  setEditingReminder(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveReminder} className="space-y-4">
+              {/* Title */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">Reminder Title *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Grandma blood pressure check & medicine"
+                  value={reminderForm.title}
+                  onChange={(e) => setReminderForm({ ...reminderForm, title: e.target.value })}
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Date & Time */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-300">Due Date</label>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const today = new Date().toISOString().split('T')[0];
+                          setReminderForm({ ...reminderForm, dueDate: today });
+                        }}
+                        className="text-[10px] text-amber-400 hover:underline"
+                      >
+                        Today
+                      </button>
+                      <span className="text-[10px] text-slate-600">|</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const tom = new Date();
+                          tom.setDate(tom.getDate() + 1);
+                          setReminderForm({
+                            ...reminderForm,
+                            dueDate: tom.toISOString().split('T')[0],
+                          });
+                        }}
+                        className="text-[10px] text-amber-400 hover:underline"
+                      >
+                        Tmrw
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    type="date"
+                    required
+                    value={reminderForm.dueDate}
+                    onChange={(e) => setReminderForm({ ...reminderForm, dueDate: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-300">Due Time</label>
+                  <input
+                    type="time"
+                    required
+                    value={reminderForm.dueTime}
+                    onChange={(e) => setReminderForm({ ...reminderForm, dueTime: e.target.value })}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Category */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300">Category</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {REMINDER_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setReminderForm({ ...reminderForm, category: cat.id })}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                        reminderForm.category === cat.id
+                          ? `${cat.bgBadge} ring-1 ring-amber-400`
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Priority */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300">Priority Level</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['low', 'normal', 'high', 'urgent'] as ReminderPriority[]).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setReminderForm({ ...reminderForm, priority: p })}
+                      className={`py-1.5 rounded-xl text-xs font-bold uppercase border transition-all ${
+                        reminderForm.priority === p
+                          ? p === 'urgent'
+                            ? 'bg-rose-500 text-white border-rose-500'
+                            : p === 'high'
+                            ? 'bg-amber-500 text-slate-950 border-amber-500'
+                            : 'bg-slate-800 text-amber-300 border-amber-500/50'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Target Family Member */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-300">Target Family Member</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {DEFAULT_FAMILY_MEMBERS.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setReminderForm({ ...reminderForm, familyMember: m })}
+                      className={`px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                        reminderForm.familyMember === m
+                          ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/50 ring-1 ring-indigo-400'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Audio Chime Sound */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-300">Alarm Tone Chime</label>
+                  <button
+                    type="button"
+                    onClick={() => audioAlarmEngine.playAlarmPulse(reminderForm.sound)}
+                    className="text-[10px] text-amber-400 hover:underline flex items-center gap-1"
+                  >
+                    <Volume2 className="w-3 h-3" />
+                    <span>Preview</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(['gentle', 'radar', 'cosmic', 'dawn', 'digital'] as AlarmSound[]).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => {
+                        setReminderForm({ ...reminderForm, sound: s });
+                        audioAlarmEngine.playAlarmPulse(s);
+                      }}
+                      className={`p-2 rounded-xl text-xs font-semibold capitalize border transition-all ${
+                        reminderForm.sound === s
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Voice Alert Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950 border border-slate-800">
+                <div>
+                  <div className="text-xs font-bold text-white">Auro Voice Readout</div>
+                  <div className="text-[10px] text-slate-400">
+                    Auro speaks reminder aloud in English & Tamil when due
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={reminderForm.voiceAlert}
+                  onChange={(e) =>
+                    setReminderForm({ ...reminderForm, voiceAlert: e.target.checked })
+                  }
+                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-300">
+                  Notes & Instructions (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional context, dosage, directions, or links..."
+                  value={reminderForm.notes}
+                  onChange={(e) => setReminderForm({ ...reminderForm, notes: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 resize-none"
+                />
+              </div>
+
+              {/* Google Drive sync note */}
+              <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 text-[11px] text-slate-400 flex items-center gap-2">
+                <Cloud className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  Synchronizes directly with Google Drive:{' '}
+                  <strong className="text-slate-200">
+                    Family Circle / Reminders / family_reminders.json
+                  </strong>
+                </span>
+              </div>
+
+              {/* Buttons */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddReminderOpen(false);
+                    setEditingReminder(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold shadow-lg shadow-amber-500/20"
+                >
+                  {editingReminder ? 'Save Changes' : 'Create Reminder'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

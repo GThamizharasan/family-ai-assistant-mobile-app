@@ -40,8 +40,15 @@ import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal'
 import { ActiveCallModal } from './components/ActiveCallModal';
 import { AuroVisionModal } from './components/vision/AuroVisionModal';
 import { ActiveAlarmModal } from './components/clock/ActiveAlarmModal';
+import { ActiveReminderModal } from './components/clock/ActiveReminderModal';
 import { OfflineSyncCenterModal } from './components/OfflineSyncCenterModal';
-import { Alarm } from './types/clock';
+import { Alarm, ClockReminder } from './types/clock';
+import {
+  checkDueReminders,
+  triggerReminderNotification,
+  completeReminder,
+  snoozeReminder,
+} from './services/reminderDriveSync';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
@@ -54,8 +61,9 @@ const AppContent: React.FC = () => {
   const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
   const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
   const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
+  const [activeDueReminder, setActiveDueReminder] = useState<ClockReminder | null>(null);
 
-  // Global Alarm Tick Check
+  // Global Alarm & Due Reminder Tick Check
   useEffect(() => {
     let lastCheckedMinute = '';
     const interval = setInterval(() => {
@@ -64,8 +72,17 @@ const AppContent: React.FC = () => {
         const currentMinute = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
         const currentDay = now.getDay(); // 0-6
 
+        // 1. Check Due Reminders
+        const dueReminders = checkDueReminders();
+        if (dueReminders.length > 0 && !activeDueReminder) {
+          const firstDue = dueReminders[0];
+          triggerReminderNotification(firstDue);
+          setActiveDueReminder(firstDue);
+        }
+
         if (currentMinute === lastCheckedMinute) return;
 
+        // 2. Check Alarms
         const raw = localStorage.getItem('aura_alarms_v1');
         if (!raw) return;
         const alarms: Alarm[] = JSON.parse(raw);
@@ -85,7 +102,7 @@ const AppContent: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [activeDueReminder]);
 
   const handleStopAlarm = () => {
     setRingingAlarm(null);
@@ -97,6 +114,20 @@ const AppContent: React.FC = () => {
     setTimeout(() => {
       setRingingAlarm(alarm);
     }, snoozeMins * 60 * 1000);
+  };
+
+  const handleCompleteReminder = (rem: ClockReminder) => {
+    setActiveDueReminder(null);
+    void completeReminder(rem.id);
+  };
+
+  const handleSnoozeReminder = (rem: ClockReminder, mins = 10) => {
+    setActiveDueReminder(null);
+    void snoozeReminder(rem.id, mins);
+  };
+
+  const handleDismissReminder = () => {
+    setActiveDueReminder(null);
   };
 
   useEffect(() => {
@@ -300,6 +331,14 @@ const AppContent: React.FC = () => {
         ringingAlarm={ringingAlarm}
         onStop={handleStopAlarm}
         onSnooze={handleSnoozeAlarm}
+      />
+
+      {/* Global On-Time Ringing Active Reminder Modal */}
+      <ActiveReminderModal
+        reminder={activeDueReminder}
+        onComplete={handleCompleteReminder}
+        onSnooze={handleSnoozeReminder}
+        onDismiss={handleDismissReminder}
       />
 
       <AndroidInstallerModal

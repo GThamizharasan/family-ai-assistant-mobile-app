@@ -41,6 +41,10 @@ import {
   deleteGoogleKeepNoteFromSqlite,
   saveGoogleSentEmailToSqlite,
   getGoogleSentEmailsFromSqlite,
+  saveReminderToSqlite,
+  getRemindersFromSqlite,
+  deleteReminderFromSqlite,
+  updateReminderInSqlite,
   saveGoogleDriveFileToSqlite,
   saveGoogleDriveFilesBulkToSqlite,
   updateGoogleDriveFileFolderInSqlite,
@@ -719,6 +723,23 @@ You have direct sovereign control to open and switch screens for the user. When 
 1. In "reply", confirm warmly that you are opening that feature now (e.g. "Opening Voice Memos on your screen now." or "ஆப்பிள் மியூசிக் திரையை இப்போது திறக்கிறேன்.").
 2. In your JSON response, set "navigateToTab": "memos" | "music" | "ibooks" | "scanner" | "family" | "whatsapp" | "phone" | "google" | "vault" | "finance" | "billionaire" | "wellness" | "mood" | "writing" | "productivity" | "devices" | "tts" | "translate" | "clock" | "ai-studio" | "billing" | "docs" | "home".
 
+FAMILY CIRCLE CLOCK & REMINDERS CAPABILITY:
+You have direct, sovereign capability to schedule reminders in the user's Clock & Alarm feature, saved to server SQLite and synchronized with Google Drive folder "Family Circle / Reminders / family_reminders.json".
+When the user asks you to remind them or set/add a reminder (in English, Tamil, or any language e.g. "remind me to...", "set a reminder for...", "can you remind me to...", "create a reminder...", "நினைவூட்டல் அமை...", "நினைவூட்டு...", "ரிமைண்டர் போடு"):
+1. In "reply", confirm with warm certainty that you have scheduled the reminder for that time/date and synchronized it with their Family Circle Reminders and Google Drive.
+2. In your JSON response, set "reminderToSave":
+   "reminderToSave": {
+     "shouldSave": true,
+     "title": "Clear concise reminder title",
+     "notes": "Optional notes or details",
+     "dueDate": "YYYY-MM-DD",
+     "dueTime": "HH:MM (24-hour time e.g. 17:30)",
+     "category": "family | personal | medical | school | work | tradition | celebration",
+     "priority": "low | normal | high | urgent",
+     "targetFamilyMember": "Target person or 'All Family Circle'"
+   }
+If the user did NOT ask to set a reminder, set "reminderToSave": { "shouldSave": false }.
+
 Return a valid JSON object matching:
 {
   "reply": "${isVoiceTurn ? 'Concise 1-2 sentence spoken conversational reply with empathetic warmth.' : 'Empathetic, articulate reply.'}",
@@ -727,6 +748,9 @@ Return a valid JSON object matching:
   "actionSuggestion": "one concrete, bite-sized next action step",
   "navigateToTab": "optional tab key if user asked to open a feature: memos | music | ibooks | scanner | family | whatsapp | phone | google | vault | finance | billionaire | wellness | mood | writing | productivity | devices | tts | translate | clock | ai-studio | billing | docs | home",
   "memoryToSave": {
+    "shouldSave": false
+  },
+  "reminderToSave": {
     "shouldSave": false
   }
 }`;
@@ -938,6 +962,87 @@ Return a valid JSON object matching:
       }
     }
 
+    // Persist reminder to SQLite if requested by model or user speech
+    let savedReminderRecord: any = null;
+    const isExplicitReminderRequest = /(remind|reminder|set reminder|add reminder|நினைவூட்டல்|நினைவூட்டு|ரிமைண்டர்)/i.test(message || '');
+
+    if (parsed.reminderToSave?.shouldSave && parsed.reminderToSave?.title) {
+      try {
+        const nowIso = new Date().toISOString();
+        const remData = parsed.reminderToSave;
+        savedReminderRecord = saveReminderToSqlite({
+          id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          userEmail,
+          title: remData.title.trim(),
+          notes: remData.notes || '',
+          dueDate: remData.dueDate || nowIso.split('T')[0],
+          dueTime: remData.dueTime || '09:00',
+          category: remData.category || 'family',
+          priority: remData.priority || 'normal',
+          targetFamilyMember: remData.targetFamilyMember || remData.familyMember || 'All Family Circle',
+          enabled: true,
+          completed: false,
+          notified: false,
+          repeat: 'none',
+          driveSyncStatus: userOAuthToken ? 'pending' : 'local_only',
+          createdBy: 'Auro Voice Assistant',
+        });
+        console.log(`[SQLite] Persisted voice reminder for ${userEmail}:`, savedReminderRecord.title);
+      } catch (rErr) {
+        console.error('[SQLite] Failed to persist reminder:', rErr);
+      }
+    } else if (isExplicitReminderRequest && /(to|for|at|tomorrow|morning|night|evening|நாளை|மணி)/i.test(message || '')) {
+      // Auto-fallback extraction if model missed shouldSave flag
+      try {
+        const now = new Date();
+        let dueDate = now.toISOString().split('T')[0];
+        let hours = (now.getHours() + 1) % 24;
+        let minutes = 0;
+        const lowerMsg = (message || '').toLowerCase();
+        if (lowerMsg.includes('tomorrow') || lowerMsg.includes('நாளை')) {
+          const tmrw = new Date();
+          tmrw.setDate(tmrw.getDate() + 1);
+          dueDate = tmrw.toISOString().split('T')[0];
+        }
+        const timeMatch = lowerMsg.match(/(?:at\s+|நேரம்\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|காலை|மாலை)?/i);
+        if (timeMatch) {
+          let h = parseInt(timeMatch[1], 10);
+          const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+          const mer = timeMatch[3] ? timeMatch[3].toLowerCase() : '';
+          if ((mer === 'pm' || mer === 'மாலை') && h < 12) h += 12;
+          if ((mer === 'am' || mer === 'காலை') && h === 12) h = 0;
+          hours = h;
+          minutes = m;
+        }
+        const dueTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        const titleClean = (message || '')
+          .replace(/^(hey auro|auro|please)?\s*(remind me to|set a reminder for|set reminder for|set reminder to|set reminder|add reminder|remind me|நினைவூட்டல் அமை|நினைவூட்டு|ரிமைண்டர் செட் பண்ணு)\s*/i, '')
+          .replace(/(?:at\s+|நேரம்\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm|காலை|மாலை)?/gi, '')
+          .trim() || 'Family Circle Reminder';
+
+        savedReminderRecord = saveReminderToSqlite({
+          id: `rem_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          userEmail,
+          title: titleClean.slice(0, 80),
+          notes: message.trim(),
+          dueDate,
+          dueTime,
+          category: 'family',
+          priority: 'normal',
+          targetFamilyMember: 'All Family Circle',
+          enabled: true,
+          completed: false,
+          notified: false,
+          repeat: 'none',
+          driveSyncStatus: userOAuthToken ? 'pending' : 'local_only',
+          createdBy: 'Auro Voice Assistant',
+        });
+        console.log(`[SQLite] Auto-persisted fallback voice reminder for ${userEmail}:`, savedReminderRecord.title);
+      } catch (err) {
+        console.error('[SQLite] Auto-persist reminder error:', err);
+      }
+    }
+
     // Persist this conversation turn to SQLite for the logged-in user account
     try {
       saveVoiceConversationToSqlite({
@@ -986,6 +1091,7 @@ Return a valid JSON object matching:
       modelUsed: successfulModel,
       savedMemory: savedMemoryRecord,
       savedKeepNote: savedKeepNoteRecord,
+      savedReminder: savedReminderRecord,
       savedDriveFile: savedAttachmentRecord,
     });
   } catch (error: any) {
@@ -3478,6 +3584,108 @@ app.get('/api/google/email/sent', (req, res) => {
     const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
     const emails = getGoogleSentEmailsFromSqlite(userEmail);
     res.json({ success: true, count: emails.length, emails });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Family Circle Reminders REST Endpoints (Clock & Alarm Integration)
+app.get('/api/reminders', (req, res) => {
+  try {
+    const userEmail = (req.query.userEmail as string || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    const reminders = getRemindersFromSqlite(userEmail);
+    res.json({ success: true, count: reminders.length, reminders });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/reminders', (req, res) => {
+  try {
+    const {
+      id,
+      userEmail,
+      title,
+      notes,
+      dueDate,
+      dueTime,
+      category,
+      priority,
+      targetFamilyMember,
+      enabled,
+      completed,
+      notified,
+      repeat,
+      driveFileId,
+      driveSyncStatus,
+      createdBy,
+    } = req.body;
+
+    if (!title || !title.trim()) {
+      return res.status(400).json({ success: false, error: 'Reminder title is required' });
+    }
+
+    const reminder = saveReminderToSqlite({
+      id,
+      userEmail: (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim(),
+      title: title.trim(),
+      notes,
+      dueDate: dueDate || new Date().toISOString().split('T')[0],
+      dueTime: dueTime || '09:00',
+      category: category || 'general',
+      priority: priority || 'medium',
+      targetFamilyMember: targetFamilyMember || 'All Family Circle',
+      enabled: enabled !== undefined ? Boolean(enabled) : true,
+      completed: completed !== undefined ? Boolean(completed) : false,
+      notified: notified !== undefined ? Boolean(notified) : false,
+      repeat: repeat || 'none',
+      driveFileId,
+      driveSyncStatus: driveSyncStatus || 'synced',
+      createdBy: createdBy || 'Clock & Alarm',
+    });
+
+    res.json({ success: true, reminder });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.put('/api/reminders/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = updateReminderInSqlite(id, req.body);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/reminders/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = deleteReminderFromSqlite(id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/reminders/bulk', (req, res) => {
+  try {
+    const { userEmail, reminders } = req.body;
+    const cleanEmail = (userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    if (Array.isArray(reminders)) {
+      for (const r of reminders) {
+        if (r && r.title) {
+          saveReminderToSqlite({
+            ...r,
+            userEmail: cleanEmail,
+          });
+        }
+      }
+    }
+    const updated = getRemindersFromSqlite(cleanEmail);
+    res.json({ success: true, count: updated.length, reminders: updated });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

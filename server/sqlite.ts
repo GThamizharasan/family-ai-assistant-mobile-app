@@ -504,6 +504,27 @@ export async function initSqliteDb(): Promise<Database> {
       sent_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS family_reminders (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      notes TEXT,
+      due_date TEXT NOT NULL,
+      due_time TEXT NOT NULL,
+      category TEXT DEFAULT 'general',
+      priority TEXT DEFAULT 'medium',
+      target_family_member TEXT DEFAULT 'All Family Circle',
+      enabled INTEGER DEFAULT 1,
+      completed INTEGER DEFAULT 0,
+      notified INTEGER DEFAULT 0,
+      repeat TEXT DEFAULT 'none',
+      drive_file_id TEXT,
+      drive_sync_status TEXT DEFAULT 'synced',
+      created_by TEXT DEFAULT 'Auro',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ai_studio_creations (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -4588,6 +4609,219 @@ export function getGoogleSentEmailsFromSqlite(userEmail: string): GoogleSentEmai
   } catch (err) {
     console.warn('Error reading sent emails from SQLite:', err);
     return [];
+  }
+}
+
+export interface FamilyReminderRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  notes?: string;
+  dueDate: string;
+  dueTime: string;
+  category: string;
+  priority: string;
+  targetFamilyMember: string;
+  enabled: boolean;
+  completed: boolean;
+  notified: boolean;
+  repeat: string;
+  driveFileId?: string;
+  driveSyncStatus: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveReminderToSqlite(data: {
+  id?: string;
+  userEmail: string;
+  title: string;
+  notes?: string;
+  dueDate: string;
+  dueTime: string;
+  category?: string;
+  priority?: string;
+  targetFamilyMember?: string;
+  enabled?: boolean;
+  completed?: boolean;
+  notified?: boolean;
+  repeat?: string;
+  driveFileId?: string;
+  driveSyncStatus?: string;
+  createdBy?: string;
+}): FamilyReminderRecord {
+  const id = data.id || `rem_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const nowIso = new Date().toISOString();
+  const category = data.category || 'general';
+  const priority = data.priority || 'medium';
+  const targetFamilyMember = data.targetFamilyMember || 'All Family Circle';
+  const enabled = data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1;
+  const completed = data.completed !== undefined ? (data.completed ? 1 : 0) : 0;
+  const notified = data.notified !== undefined ? (data.notified ? 1 : 0) : 0;
+  const repeat = data.repeat || 'none';
+  const driveSyncStatus = data.driveSyncStatus || 'synced';
+  const createdBy = data.createdBy || 'Auro';
+
+  if (db) {
+    try {
+      db.run(
+        `INSERT OR REPLACE INTO family_reminders (
+          id, user_email, title, notes, due_date, due_time, category, priority,
+          target_family_member, enabled, completed, notified, repeat, drive_file_id,
+          drive_sync_status, created_by, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          data.userEmail.toLowerCase().trim(),
+          data.title,
+          data.notes || null,
+          data.dueDate,
+          data.dueTime,
+          category,
+          priority,
+          targetFamilyMember,
+          enabled,
+          completed,
+          notified,
+          repeat,
+          data.driveFileId || null,
+          driveSyncStatus,
+          createdBy,
+          nowIso,
+          nowIso,
+        ]
+      );
+      scheduleSave();
+    } catch (err) {
+      console.warn('Error saving reminder to SQLite:', err);
+    }
+  }
+
+  return {
+    id,
+    userEmail: data.userEmail,
+    title: data.title,
+    notes: data.notes,
+    dueDate: data.dueDate,
+    dueTime: data.dueTime,
+    category,
+    priority,
+    targetFamilyMember,
+    enabled: Boolean(enabled),
+    completed: Boolean(completed),
+    notified: Boolean(notified),
+    repeat,
+    driveFileId: data.driveFileId,
+    driveSyncStatus,
+    createdBy,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+export function getRemindersFromSqlite(userEmail: string): FamilyReminderRecord[] {
+  if (!db) return [];
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    const stmt = db.prepare(
+      `SELECT * FROM family_reminders WHERE user_email = ? ORDER BY due_date ASC, due_time ASC LIMIT 100`
+    );
+    stmt.bind([cleanEmail]);
+    const results: FamilyReminderRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        title: String(row.title),
+        notes: row.notes ? String(row.notes) : undefined,
+        dueDate: String(row.due_date),
+        dueTime: String(row.due_time),
+        category: String(row.category || 'general'),
+        priority: String(row.priority || 'medium'),
+        targetFamilyMember: String(row.target_family_member || 'All Family Circle'),
+        enabled: Boolean(row.enabled),
+        completed: Boolean(row.completed),
+        notified: Boolean(row.notified),
+        repeat: String(row.repeat || 'none'),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveSyncStatus: String(row.drive_sync_status || 'synced'),
+        createdBy: String(row.created_by || 'Auro'),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Error reading reminders from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteReminderFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_reminders WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateReminderInSqlite(id: string, updates: Partial<FamilyReminderRecord>): boolean {
+  if (!db) return false;
+  try {
+    const nowIso = new Date().toISOString();
+    const sets: string[] = ['updated_at = ?'];
+    const values: any[] = [nowIso];
+
+    if (updates.enabled !== undefined) {
+      sets.push('enabled = ?');
+      values.push(updates.enabled ? 1 : 0);
+    }
+    if (updates.completed !== undefined) {
+      sets.push('completed = ?');
+      values.push(updates.completed ? 1 : 0);
+    }
+    if (updates.notified !== undefined) {
+      sets.push('notified = ?');
+      values.push(updates.notified ? 1 : 0);
+    }
+    if (updates.title !== undefined) {
+      sets.push('title = ?');
+      values.push(updates.title);
+    }
+    if (updates.notes !== undefined) {
+      sets.push('notes = ?');
+      values.push(updates.notes);
+    }
+    if (updates.dueDate !== undefined) {
+      sets.push('due_date = ?');
+      values.push(updates.dueDate);
+    }
+    if (updates.dueTime !== undefined) {
+      sets.push('due_time = ?');
+      values.push(updates.dueTime);
+    }
+    if (updates.driveFileId !== undefined) {
+      sets.push('drive_file_id = ?');
+      values.push(updates.driveFileId);
+    }
+    if (updates.driveSyncStatus !== undefined) {
+      sets.push('drive_sync_status = ?');
+      values.push(updates.driveSyncStatus);
+    }
+
+    values.push(id);
+    db.run(`UPDATE family_reminders SET ${sets.join(', ')} WHERE id = ?`, values);
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Error updating reminder in SQLite:', err);
+    return false;
   }
 }
 

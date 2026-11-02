@@ -39,6 +39,12 @@ import { AVAILABLE_GEMINI_MODELS } from '../types';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
+import {
+  createReminder,
+  getLocalReminders,
+  saveLocalReminders,
+  syncRemindersWithGoogleDrive,
+} from '../services/reminderDriveSync';
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
@@ -115,6 +121,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
   const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
   const [savedKeepNoteNotice, setSavedKeepNoteNotice] = useState<string | null>(null);
+  const [savedReminderNotice, setSavedReminderNotice] = useState<string | null>(null);
   const [driveUploadNotice, setDriveUploadNotice] = useState<string | null>(null);
   const [showDeviceStorageNotice, setShowDeviceStorageNotice] = useState(false);
   const [newMemTopic, setNewMemTopic] = useState('');
@@ -1127,6 +1134,180 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       }
     }
 
+    // =========================================================================
+    // AURO VOICE INTENT: QUERY / LIST REMINDERS
+    // =========================================================================
+    const isQueryReminderIntent =
+      /\b(my reminders|what.*reminders|check.*reminders|list.*reminders|show.*reminders|check my reminders|view.*reminders|any.*reminders)\b/i.test(lower) ||
+      /(நினைவூட்டல்கள்|ரிமைண்டர்கள்)/i.test(lower);
+
+    if (isQueryReminderIntent) {
+      setIsThinking(false);
+      const activeReminders = getLocalReminders().filter((r) => r.enabled && !r.completed);
+      const isTamil = voiceLanguage.startsWith('ta');
+
+      if (activeReminders.length === 0) {
+        const emptyMsg = isTamil
+          ? 'உங்கள் குடும்ப வட்டத்தில் நிலுவையில் உள்ள நினைவூட்டல்கள் எதுவும் இல்லை. அனைத்தும் ஒழுங்கமைக்கப்பட்டுள்ளது.'
+          : 'You have no pending reminders scheduled in your Family Circle right now. Everything is clean and organized.';
+        addVoiceMessage({
+          role: 'assistant',
+          content: emptyMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & clear',
+          actionSuggestion: 'Create a reminder',
+        });
+        speakWithAuro(emptyMsg);
+        return;
+      }
+
+      const topReminders = activeReminders.slice(0, 3);
+      const listItems = topReminders
+        .map((r) => `"${r.title}" at ${r.dueTime} (${r.familyMember || 'Family'})`)
+        .join(', ');
+      const replyText = isTamil
+        ? `உங்கள் குடும்ப வட்டத்தில் ${activeReminders.length} நினைவூட்டல்கள் உள்ளன. முதலாவதாக: ${listItems}.`
+        : `You have ${activeReminders.length} active reminder${
+            activeReminders.length === 1 ? '' : 's'
+          } in your Family Circle. Scheduled: ${listItems}.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: replyText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Open Clock & Reminders',
+      });
+      speakWithAuro(replyText);
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: CREATE / SET REMINDER (FAMILY CIRCLE & DRIVE SYNC)
+    // =========================================================================
+    const isCreateReminderIntent =
+      /\b(remind\s+(me|us|my|selvi|maaran|kavinmozhi|grandma|grandparents|chinna|chinnathambi)?\s*(to|about)?|set\s+a?\s*reminder|add\s+a?\s*reminder|create\s+a?\s*reminder|new\s+reminder|put\s+a?\s*reminder|make\s+a?\s*reminder|schedule\s+a?\s*reminder)\b/i.test(lower) ||
+      /(நினைவூட்டல்\s*(அமை|வை|செய்|உருவாக்கு|போடு)?|நினைவூட்டு|ரிமைண்டர்\s*(வை|செட்|போடு)?)/i.test(lower);
+
+    if (isCreateReminderIntent) {
+      setIsThinking(false);
+
+      const now = new Date();
+      let dueDate = now.toISOString().split('T')[0];
+      let hours = now.getHours();
+      let minutes = now.getMinutes();
+
+      // Check tomorrow
+      if (lower.includes('tomorrow') || lower.includes('நாளை')) {
+        const tmrw = new Date();
+        tmrw.setDate(tmrw.getDate() + 1);
+        dueDate = tmrw.toISOString().split('T')[0];
+      }
+
+      // Check target family member
+      let familyMember = 'All Family Circle';
+      if (
+        lower.includes('grandma') ||
+        lower.includes('grandparent') ||
+        lower.includes('பாட்டி') ||
+        lower.includes('தாத்தா')
+      ) {
+        familyMember = 'Grandparents';
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        familyMember = 'Selvi';
+      } else if (lower.includes('maaran') || lower.includes('மாறன்')) {
+        familyMember = 'Maaran';
+      } else if (lower.includes('kavinmozhi') || lower.includes('கவின்மொழி')) {
+        familyMember = 'Kavinmozhi';
+      } else if (
+        lower.includes('chinna') ||
+        lower.includes('chinnathambi') ||
+        lower.includes('சின்னத்தம்பி')
+      ) {
+        familyMember = 'Chinnathambi';
+      }
+
+      // Parse time: e.g. "at 5 pm", "at 6:30", "at 18:00", "at 9 am"
+      const timeMatch = lower.match(/(?:at\s+|நேரம்\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm|காலை|மாலை)?/i);
+      if (timeMatch) {
+        let h = parseInt(timeMatch[1], 10);
+        const m = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+        const meridian = timeMatch[3] ? timeMatch[3].toLowerCase() : '';
+
+        if ((meridian === 'pm' || meridian === 'மாலை') && h < 12) h += 12;
+        if ((meridian === 'am' || meridian === 'காலை') && h === 12) h = 0;
+
+        hours = h;
+        minutes = m;
+      } else {
+        // Default to next hour
+        hours = (hours + 1) % 24;
+        minutes = 0;
+      }
+
+      const dueTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+
+      // Clean title
+      let title = spokenText
+        .replace(
+          /^(hey auro|auro|please|கட்டளையிடு|can you|could you|i want to|i need to)?\s*(remind\s+(me|us|my|selvi|maaran|kavinmozhi|grandma|grandparents|chinna|chinnathambi)?\s*(to|about)?|set\s+a?\s*reminder\s*(for|to)?|add\s+a?\s*reminder\s*(for|to)?|create\s+a?\s*reminder\s*(for|to)?|new\s+reminder\s*(for|to)?|schedule\s+a?\s*reminder\s*(for|to)?|put\s+a?\s*reminder\s*(for|to)?|make\s+a?\s*reminder\s*(for|to)?|நினைவூட்டல்\s*(அமை|வை|செய்|உருவாக்கு|போடு)?|நினைவூட்டு|ரிமைண்டர்\s*(வை|செட்|போடு)?)\s*/i,
+          ''
+        )
+        .replace(/(?:at\s+|நேரம்\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm|காலை|மாலை)?/gi, '')
+        .replace(/\b(tomorrow|today|tonight|this evening|this morning|நாளை|இன்று)\b/gi, '')
+        .replace(/\b(for\s+(grandma|grandparents|selvi|maaran|kavinmozhi|chinnathambi|all family))\b/gi, '')
+        .trim();
+
+      if (!title) {
+        title = 'Family Circle Reminder';
+      }
+
+      const activeToken =
+        googleAccessToken ||
+        (typeof window !== 'undefined'
+          ? localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token')
+          : null);
+
+      try {
+        const created = await createReminder(
+          {
+            title,
+            dueDate,
+            dueTime,
+            familyMember,
+            targetFamilyMember: familyMember,
+            category: familyMember !== 'All Family Circle' ? 'family' : 'personal',
+            voiceAlert: true,
+            sound: 'gentle',
+          },
+          activeToken,
+          user.email || 'chinna.tamil2000@gmail.com'
+        );
+
+        // Instant reactive UI update
+        window.dispatchEvent(new CustomEvent('aura_reminders_changed', { detail: getLocalReminders() }));
+
+        const isTamil = voiceLanguage.startsWith('ta');
+        const replyText = isTamil
+          ? `உங்கள் நினைவூட்டல் "${title}" ${dueTime} மணிக்கு அமைக்கப்பட்டு ஆப் நினைவூட்டல் மற்றும் கூகுள் டிரைவ் குடும்ப வட்டத்தில் (Family Circle/Reminders) ஒத்திசைக்கப்பட்டது.`
+          : `I have scheduled your reminder for "${title}" on ${
+              dueDate === new Date().toISOString().split('T')[0] ? 'today' : 'tomorrow'
+            } at ${dueTime} for ${familyMember}, and stored it locally in SQLite and synchronized it with your Family Circle Google Drive.`;
+
+        addVoiceMessage({
+          role: 'assistant',
+          content: replyText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'attentive & organized',
+          actionSuggestion: `View Reminder: "${title}"`,
+        });
+        speakWithAuro(replyText);
+        return;
+      } catch (remErr) {
+        console.warn('Voice reminder create error:', remErr);
+      }
+    }
+
     // Direct WhatsApp message check / read out intent
     if (
       lower.includes('whatsapp') &&
@@ -1549,6 +1730,17 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           date: e.date,
           status: e.status,
         })),
+        familyRemindersSummary: getLocalReminders()
+          .filter((r) => r.enabled && !r.completed)
+          .slice(0, 10)
+          .map((r) => ({
+            title: r.title,
+            dueDate: r.dueDate,
+            dueTime: r.dueTime,
+            familyMember: r.familyMember,
+            category: r.category,
+            priority: r.priority,
+          })),
         recentDriveFilesSummary: (liveDriveFiles || []).slice(0, 5).map((f) => ({
           name: f.name,
           mimeType: f.mimeType,
@@ -1670,6 +1862,56 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         const keepTitle = result.savedKeepNote.title || 'Note';
         setSavedKeepNoteNotice(keepTitle);
         setTimeout(() => setSavedKeepNoteNotice(null), 5000);
+      }
+
+      // Check if a Family Reminder was saved
+      if (result.savedReminder) {
+        const remRecord = result.savedReminder;
+        const remTitle = remRecord.title || 'Reminder';
+        setSavedReminderNotice(remTitle);
+        setTimeout(() => setSavedReminderNotice(null), 5000);
+
+        const newRem = {
+          id: remRecord.id,
+          userEmail: remRecord.userEmail,
+          title: remRecord.title,
+          notes: remRecord.notes || '',
+          dueDate: remRecord.dueDate,
+          dueTime: remRecord.dueTime,
+          category: remRecord.category || 'family',
+          priority: remRecord.priority || 'normal',
+          familyMember: remRecord.targetFamilyMember || 'All Family Circle',
+          targetFamilyMember: remRecord.targetFamilyMember || 'All Family Circle',
+          enabled: Boolean(remRecord.enabled),
+          completed: Boolean(remRecord.completed),
+          notified: Boolean(remRecord.notified),
+          sound: 'gentle' as const,
+          voiceAlert: true,
+          createdAt: remRecord.createdAt,
+          updatedAt: remRecord.updatedAt,
+          driveSyncStatus: remRecord.driveSyncStatus || 'local_only',
+          driveFileId: remRecord.driveFileId,
+        };
+
+        const currentLocal = getLocalReminders();
+        const updatedLocal = [newRem, ...currentLocal.filter((r) => r.id !== newRem.id)];
+        saveLocalReminders(updatedLocal);
+
+        // Immediate reactive UI update
+        window.dispatchEvent(new CustomEvent('aura_reminders_changed', { detail: updatedLocal }));
+
+        // Background Google Drive sync
+        const activeToken =
+          googleAccessToken ||
+          (typeof window !== 'undefined'
+            ? localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token')
+            : null);
+
+        if (activeToken) {
+          syncRemindersWithGoogleDrive(activeToken, user.email || undefined).catch((e: any) =>
+            console.warn('[VoiceAssistant] Drive sync reminder error:', e)
+          );
+        }
       }
 
       // Check if a Google Drive file was indexed/saved
@@ -2071,6 +2313,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             <button
               onClick={() => setSavedKeepNoteNotice(null)}
               className="text-amber-300 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Saved Reminder Notice Banner */}
+        {savedReminderNotice && (
+          <div className="px-4 py-2.5 bg-gradient-to-r from-teal-950/80 via-slate-900 to-teal-950/80 border-b border-teal-500/40 text-teal-200 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-teal-400 shrink-0 animate-bounce" />
+              <span>
+                <strong className="text-white">Saved to Reminders, SQLite & Google Drive:</strong> {savedReminderNotice}
+              </span>
+            </div>
+            <button
+              onClick={() => setSavedReminderNotice(null)}
+              className="text-teal-300 hover:text-white"
             >
               <X className="w-3.5 h-3.5" />
             </button>
