@@ -22,6 +22,7 @@ export async function registerAiCreation(
   if (item.type === 'video') folderCategory = 'Videos';
   else if (item.type === 'music') folderCategory = 'Music';
   else if (item.type === 'transcript' || item.type === 'transcription') folderCategory = 'Transcripts';
+  else if (item.type === 'guided_learning') folderCategory = 'Guided Learning';
 
   const driveFolderPath = item.driveFolderPath || item.drivePath || `Family Circle / AI Studio Creations / ${folderCategory}`;
 
@@ -102,6 +103,7 @@ export async function uploadAiCreationToGoogleDrive(
     if (creation.type === 'video') subfolderName = 'Videos';
     else if (creation.type === 'music') subfolderName = 'Music';
     else if (creation.type === 'transcript') subfolderName = 'Transcripts';
+    else if (creation.type === 'guided_learning') subfolderName = 'Guided Learning';
 
     const typeFolder = await getOrCreateGoogleDriveFolder(accessToken, subfolderName, creationsFolder.id);
 
@@ -121,6 +123,9 @@ export async function uploadAiCreationToGoogleDrive(
     } else if (creation.type === 'transcript' || creation.type === 'transcription') {
       fileBlob = new Blob([creation.contentPreview || creation.mediaUrl || creation.prompt || ''], { type: 'text/plain;charset=utf-8' });
       fileName += '.txt';
+    } else if (creation.type === 'guided_learning') {
+      fileBlob = new Blob([creation.contentPreview || creation.prompt || ''], { type: 'text/markdown;charset=utf-8' });
+      if (!fileName.endsWith('.md')) fileName += '.md';
     } else {
       // Fetch the media URL (blob URL or external resource)
       try {

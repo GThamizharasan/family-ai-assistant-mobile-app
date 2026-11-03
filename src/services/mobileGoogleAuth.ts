@@ -69,7 +69,7 @@ export async function startMobileGoogleSignIn(): Promise<void> {
     response_type: 'token',
     scope: MOBILE_SCOPES,
     include_granted_scopes: 'true',
-    prompt: 'select_account',
+    prompt: '',
     state,
   });
 

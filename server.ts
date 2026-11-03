@@ -2153,6 +2153,8 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
         'You are an inspiring STEM & Robotics Mentor (specializing in AI simulations, robotics, A* algorithms, and physics). You explain deep technical concepts simply with engaging analogies and code examples.',
       creative_writer:
         'You are an award-winning creative author and storytelling consultant, offering vivid prose, emotional cadence, and polished screenplays.',
+      guided_tutor:
+        'You are the Gemini Sovereign Guided Learning Master Mentor and Socratic Curriculum Architect. You explain concepts with extreme pedagogical clarity, intuitive mental models, Socratic reflection checkpoints, step-by-step code, and hands-on family lab challenges.',
     };
 
     const baseSystemPrompt =

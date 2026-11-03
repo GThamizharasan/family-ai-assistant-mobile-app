@@ -645,25 +645,34 @@ const INITIAL_MOODS: MoodJournalEntry[] = [
 ];
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Option: Require Google SSO on every reload (defaults to false for seamless launching)
-  const [requireGoogleAuthOnReload, setRequireGoogleAuthOnReloadState] = useState<boolean>(() => {
-    const saved = localStorage.getItem('aura_require_google_auth_reload');
-    return saved !== null ? saved === 'true' : false;
-  });
+  // Option: Require Google SSO on every reload (defaults to false for seamless launching like native mobile apps)
+  const [requireGoogleAuthOnReload, setRequireGoogleAuthOnReloadState] = useState<boolean>(false);
 
-  // Track authentication state: presents Google SSO screen when no active persisted Google session exists
+  // Track authentication state: launch directly into the app like official Gmail and Google Drive mobile apps.
+  // Never prompt for Google SSO repeatedly across launches, reloads, or screen locks.
+  // Only shows Google SSO if the user explicitly clicked "Sign Out".
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const savedRequire = localStorage.getItem('aura_require_google_auth_reload');
-    if (savedRequire === 'true') {
+    if (typeof window === 'undefined') return true;
+    const explicitSignedOut = localStorage.getItem('aura_explicit_sign_out') === 'true';
+    if (explicitSignedOut) {
       return false;
     }
-    const persisted = localStorage.getItem('aura_google_auth_persisted');
-    return persisted === 'true';
+    // Clean any legacy reload-blocking flag so user is never trapped in login loops
+    if (localStorage.getItem('aura_require_google_auth_reload') === 'true') {
+      localStorage.removeItem('aura_require_google_auth_reload');
+    }
+    // Persist authenticated state permanently across app sessions
+    localStorage.setItem('aura_google_auth_persisted', 'true');
+    return true;
   });
 
   const setRequireGoogleAuthOnReload = (val: boolean) => {
     setRequireGoogleAuthOnReloadState(val);
-    localStorage.setItem('aura_require_google_auth_reload', String(val));
+    if (!val) {
+      localStorage.removeItem('aura_require_google_auth_reload');
+    } else {
+      localStorage.setItem('aura_require_google_auth_reload', 'true');
+    }
   };
 
   // Google Workspace Connected Services Settings
@@ -1624,6 +1633,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ) => {
     sessionStorage.setItem('aura_google_auth_session', 'true');
     localStorage.setItem('aura_google_auth_persisted', 'true');
+    localStorage.removeItem('aura_explicit_sign_out');
+    localStorage.removeItem('aura_require_google_auth_reload');
 
     const lower = email.toLowerCase();
     const matched = familyMembers.find((m) => m.email.toLowerCase() === lower);
@@ -1780,6 +1791,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     sessionStorage.removeItem('aura_google_auth_session');
     localStorage.removeItem('aura_google_auth_persisted');
     localStorage.removeItem('aura_google_access_token');
+    localStorage.setItem('aura_explicit_sign_out', 'true');
     setGoogleAccessToken(null);
     setLiveEmails(FALLBACK_GMAIL_MESSAGES);
     setLiveDriveFiles(FALLBACK_DRIVE_FILES);

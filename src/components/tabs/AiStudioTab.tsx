@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
+  GraduationCap,
+  BookOpen,
   Mic,
   MicOff,
   Video,
@@ -52,9 +54,19 @@ import {
   blobToBase64,
 } from '../../services/aiSuite';
 import { speechEngine } from '../../services/speech';
+import {
+  GUIDED_LEARNING_DOMAINS,
+  PromptConstructorOptions,
+  GuidedLearningLesson,
+  constructGuidedPrompt,
+  generateGuidedLesson,
+  syncGuidedLearningToGoogleDrive,
+  getLocalGuidedLearningHistory,
+} from '../../services/guidedLearningService';
 
 export type AiStudioSubTab =
   | 'overview'
+  | 'guided-learning'
   | 'transcribe'
   | 'veo-video'
   | 'veo-animate'
@@ -73,8 +85,128 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   initialSubTab = 'overview',
   onOpenVoiceAssistant,
 }) => {
-  const { user } = useApp();
+  const { user, googleAccessToken, signInWithGoogleOAuth } = useApp();
   const [activeTab, setActiveTab] = useState<AiStudioSubTab>(initialSubTab);
+
+  // ----------------------------------------------------
+  // Guided Learning State & Constructors
+  // ----------------------------------------------------
+  const [guidedDomainId, setGuidedDomainId] = useState<string>('stem-robotics');
+  const [guidedTopic, setGuidedTopic] = useState<string>('');
+  const [guidedAudience, setGuidedAudience] = useState<'kids' | 'teens' | 'intermediate' | 'expert'>('teens');
+  const [guidedStyle, setGuidedStyle] = useState<'socratic' | 'analogies' | 'hands_on_project' | 'executive_summary'>('hands_on_project');
+  const [guidedDepth, setGuidedDepth] = useState<'5_min_concept' | 'deep_dive_masterclass' | 'complete_curriculum'>('deep_dive_masterclass');
+  const [guidedLanguage, setGuidedLanguage] = useState<'en' | 'ta' | 'tanglish'>('en');
+  const [constructedPromptPreview, setConstructedPromptPreview] = useState<string>('');
+  const [isGeneratingLesson, setIsGeneratingLesson] = useState<boolean>(false);
+  const [currentLesson, setCurrentLesson] = useState<GuidedLearningLesson | null>(null);
+  const [isSyncingLessonToDrive, setIsSyncingLessonToDrive] = useState<boolean>(false);
+  const [lessonDriveNotice, setLessonDriveNotice] = useState<string | null>(null);
+  const [isPlayingLessonAudio, setIsPlayingLessonAudio] = useState<boolean>(false);
+  const [guidedHistory, setGuidedHistory] = useState<GuidedLearningLesson[]>(() => getLocalGuidedLearningHistory());
+
+  const selectedDomain = GUIDED_LEARNING_DOMAINS.find((d) => d.id === guidedDomainId) || GUIDED_LEARNING_DOMAINS[0];
+
+  const handleReadLessonAloud = () => {
+    if (!currentLesson) return;
+    if (isPlayingLessonAudio) {
+      speechEngine.stopSpeaking();
+      setIsPlayingLessonAudio(false);
+      return;
+    }
+    const textToSpeak = `${currentLesson.title}. Summary: ${currentLesson.summary}. ${currentLesson.keyTakeaways.join('. ')}.`;
+    setIsPlayingLessonAudio(true);
+    speechEngine.speak(textToSpeak, {
+      onEnd: () => setIsPlayingLessonAudio(false),
+    });
+  };
+
+  const handleSyncLessonToDrive = async () => {
+    if (!currentLesson) return;
+    let token = googleAccessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+    if (!token) {
+      setLessonDriveNotice('Connecting Google Account for Drive sync...');
+      const authed = await signInWithGoogleOAuth();
+      if (authed) {
+        token = (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null) || googleAccessToken;
+      }
+    }
+    if (!token) {
+      setLessonDriveNotice('Google Sign-In required to sync directly to Google Drive Family Circle.');
+      return;
+    }
+    setIsSyncingLessonToDrive(true);
+    setLessonDriveNotice(null);
+    try {
+      let res;
+      try {
+        res = await syncGuidedLearningToGoogleDrive(currentLesson, token, user.email);
+      } catch (firstErr: any) {
+        if (firstErr?.message?.includes('401') || firstErr?.message?.includes('expired')) {
+          setLessonDriveNotice('Refreshing Google authorization...');
+          const reauthed = await signInWithGoogleOAuth();
+          if (reauthed) {
+            token = (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null) || googleAccessToken;
+            if (token) {
+              res = await syncGuidedLearningToGoogleDrive(currentLesson, token, user.email);
+            }
+          }
+        }
+        if (!res) throw firstErr;
+      }
+
+      if (res) {
+        const updated: GuidedLearningLesson = {
+          ...currentLesson,
+          driveSyncStatus: 'synced',
+          driveFileId: res.driveFileId,
+          driveWebViewLink: res.driveWebViewLink,
+          driveFolderPath: res.folderPath,
+        };
+        setCurrentLesson(updated);
+        setGuidedHistory(getLocalGuidedLearningHistory());
+        setLessonDriveNotice(`✓ Successfully synchronized to "${res.folderPath}" in Google Drive!`);
+      }
+    } catch (err: any) {
+      setLessonDriveNotice(`Drive sync notice: ${err?.message || 'Could not sync file'}`);
+    } finally {
+      setIsSyncingLessonToDrive(false);
+    }
+  };
+
+  const handleGenerateGuidedLesson = async (overridePrompt?: string) => {
+    const topicToUse = overridePrompt || guidedTopic || selectedDomain?.samplePrompts[0]?.topic || '';
+    if (!topicToUse.trim()) return;
+
+    setIsGeneratingLesson(true);
+    setLessonDriveNotice(null);
+
+    try {
+      const token = googleAccessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+      const lesson = await generateGuidedLesson(
+        {
+          domainId: guidedDomainId,
+          topic: topicToUse,
+          targetAudience: guidedAudience,
+          learningStyle: guidedStyle,
+          lessonDepth: guidedDepth,
+          language: guidedLanguage,
+        },
+        user.email,
+        token || undefined
+      );
+      setCurrentLesson(lesson);
+      setGuidedHistory(getLocalGuidedLearningHistory());
+      if (lesson.driveSyncStatus === 'synced') {
+        setLessonDriveNotice(`✓ Automatically synchronized to "${lesson.driveFolderPath}" in Google Drive!`);
+      }
+    } catch (err: any) {
+      console.error('Failed to generate guided lesson:', err);
+      setLessonDriveNotice(`Generation error: ${err?.message || 'Failed to generate masterclass'}`);
+    } finally {
+      setIsGeneratingLesson(false);
+    }
+  };
 
   // ----------------------------------------------------
   // 1. Audio Transcription State
@@ -648,6 +780,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
         <div className="mt-5 pt-4 border-t border-indigo-500/20 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none text-xs">
           {[
             { id: 'overview', label: 'Suite Hub', icon: Sparkles },
+            { id: 'guided-learning', label: 'Guided Learning', icon: GraduationCap, badge: 'Gemini' },
             { id: 'veo-video', label: 'Veo 3 Video', icon: Video, badge: 'New' },
             { id: 'veo-animate', label: 'Animate Photo', icon: Wand2 },
             { id: 'chat', label: 'Argon Chat', icon: Brain },
@@ -688,6 +821,31 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       {activeTab === 'overview' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3.5">
+                        {/* Card: Gemini Guided Learning */}
+            <div
+              onClick={() => setActiveTab('guided-learning')}
+              className="cursor-pointer group p-4 rounded-3xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800 transition-all relative overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2.5 rounded-2xl bg-teal-500/10 text-teal-400 group-hover:scale-110 transition-transform">
+                  <GraduationCap className="w-5 h-5" />
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300">
+                  gemini-guided
+                </span>
+              </div>
+              <h3 className="text-sm font-bold text-white group-hover:text-teal-400 transition-colors">
+                Gemini Guided Learning
+              </h3>
+              <p className="text-xs text-slate-400 mt-1 line-clamp-2">
+                Interactive Socratic masterclasses, STEM & Python curriculum constructors, and 1-click Drive sync under Family Circle.
+              </p>
+              <div className="mt-3 flex items-center gap-1 text-[11px] font-semibold text-teal-400">
+                <span>Start Guided Session</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </div>
+            </div>
+
             {/* Card 1: Veo 3 Video */}
             <div
               onClick={() => setActiveTab('veo-video')}
@@ -922,6 +1080,384 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       )}
 
       {/* ==================================================== */}
+            {/* ==================================================== */}
+      {/* GEMINI GUIDED LEARNING & SAMPLE PROMPT CONSTRUCTOR */}
+      {/* ==================================================== */}
+      {activeTab === 'guided-learning' && (
+        <div className="rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-5">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-teal-500/10 text-teal-400">
+                <GraduationCap className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <span>Gemini Guided Learning Studio</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-bold uppercase">
+                    Family Circle Drive Synced
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Interactive Socratic masterclasses, pedagogical prompt constructors, and structured study guides.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">Folder:</span>
+              <span className="px-2 py-1 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-teal-300">
+                Family Circle / Guided Learning
+              </span>
+            </div>
+          </div>
+
+          {/* 1. Domain / Subject Selector */}
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Select Learning Subject or Domain
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {GUIDED_LEARNING_DOMAINS.map((domain) => {
+                const isSelected = guidedDomainId === domain.id;
+                return (
+                  <button
+                    key={domain.id}
+                    onClick={() => {
+                      setGuidedDomainId(domain.id);
+                      setGuidedTopic(domain.samplePrompts[0]?.topic || '');
+                    }}
+                    className={`p-3 rounded-2xl text-left transition-all border ${
+                      isSelected
+                        ? 'bg-teal-500/15 border-teal-500/50 text-white shadow-md shadow-teal-500/10'
+                        : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                    }`}
+                  >
+                    <p className={`text-xs font-bold ${isSelected ? 'text-teal-300' : 'text-slate-200'}`}>
+                      {domain.name}
+                    </p>
+                    <p className="text-[10px] text-slate-500 truncate mt-0.5">{domain.category}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Interactive Sample Prompt Constructor & Pedagogical Tuning */}
+          <div className="p-4 rounded-2xl bg-slate-950/90 border border-slate-800/90 space-y-3.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-teal-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Pedagogical Prompt Constructor</span>
+              </span>
+              <span className="text-[10px] text-slate-500">Auto-tunes Gemini system instructions</span>
+            </div>
+
+            {/* Constructor Selectors: Audience, Style, Scope, Language */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              {/* Target Audience */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Target Learner</label>
+                <select
+                  value={guidedAudience}
+                  onChange={(e) => setGuidedAudience(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-500"
+                >
+                  <option value="kids">Kids (Age 8-14)</option>
+                  <option value="teens">Teens & High School</option>
+                  <option value="intermediate">Intermediate / Adult</option>
+                  <option value="expert">Advanced Master</option>
+                </select>
+              </div>
+
+              {/* Learning Style */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Pedagogical Style</label>
+                <select
+                  value={guidedStyle}
+                  onChange={(e) => setGuidedStyle(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-500"
+                >
+                  <option value="hands_on_project">Hands-On Lab & Project</option>
+                  <option value="analogies">Visual Analogies & Models</option>
+                  <option value="socratic">Socratic Questioning</option>
+                  <option value="executive_summary">Executive Cheat Sheet</option>
+                </select>
+              </div>
+
+              {/* Lesson Scope */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Lesson Scope</label>
+                <select
+                  value={guidedDepth}
+                  onChange={(e) => setGuidedDepth(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-500"
+                >
+                  <option value="5_min_concept">5-Min Concept Sprint</option>
+                  <option value="deep_dive_masterclass">Deep-Dive 3-Step Lesson</option>
+                  <option value="complete_curriculum">Full Curriculum Syllabus</option>
+                </select>
+              </div>
+
+              {/* Language */}
+              <div>
+                <label className="text-[10px] text-slate-400 font-semibold block mb-1">Language</label>
+                <select
+                  value={guidedLanguage}
+                  onChange={(e) => setGuidedLanguage(e.target.value as any)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-500"
+                >
+                  <option value="en">English</option>
+                  <option value="ta">Pure Tamil (தமிழ்)</option>
+                  <option value="tanglish">Bilingual (Tanglish)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Quick Sample Prompts Chips */}
+            <div>
+              <label className="text-[10px] text-slate-400 font-semibold block mb-1.5">
+                Constructed Sample Prompts for {selectedDomain?.name}:
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {selectedDomain?.samplePrompts.map((sp, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setGuidedTopic(sp.topic);
+                      setGuidedAudience(sp.recommendedLevel);
+                      setGuidedStyle(sp.recommendedStyle);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                      guidedTopic === sp.topic
+                        ? 'bg-teal-500/20 text-teal-300 border-teal-500/50'
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>💡 {sp.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Editable Topic / Prompt Input */}
+            <div>
+              <label className="text-[10px] text-slate-400 font-semibold block mb-1">
+                Lesson Topic or Custom Prompt:
+              </label>
+              <textarea
+                value={guidedTopic}
+                onChange={(e) => setGuidedTopic(e.target.value)}
+                placeholder="Enter what you or your family want to learn..."
+                rows={2}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 resize-none"
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const constructed = constructGuidedPrompt({
+                    domainId: guidedDomainId,
+                    topic: guidedTopic || selectedDomain?.samplePrompts[0]?.topic || '',
+                    targetAudience: guidedAudience,
+                    learningStyle: guidedStyle,
+                    lessonDepth: guidedDepth,
+                    language: guidedLanguage,
+                  });
+                  setConstructedPromptPreview(constructedPromptPreview ? '' : constructed);
+                }}
+                className="text-xs text-slate-400 hover:text-teal-400 underline"
+              >
+                {constructedPromptPreview ? 'Hide Constructed Master Prompt' : 'Preview Constructed Master Prompt'}
+              </button>
+
+              <button
+                onClick={() => handleGenerateGuidedLesson()}
+                disabled={isGeneratingLesson || (!guidedTopic.trim() && !selectedDomain?.samplePrompts[0]?.topic)}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-emerald-600 hover:from-teal-400 hover:to-emerald-500 text-slate-950 font-black text-xs flex items-center gap-2 shadow-lg shadow-teal-500/20 disabled:opacity-50 transition-all cursor-pointer"
+              >
+                {isGeneratingLesson ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Gemini is Architecting Lesson...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Generate Guided Masterclass</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Constructed Prompt Preview Accordion */}
+            {constructedPromptPreview && (
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300 whitespace-pre-wrap">
+                {constructedPromptPreview}
+              </div>
+            )}
+          </div>
+
+          {/* Drive Sync Notice Banner */}
+          {lessonDriveNotice && (
+            <div className="p-3 rounded-2xl bg-teal-500/10 border border-teal-500/30 text-xs text-teal-300 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Check className="w-4 h-4 text-teal-400 shrink-0" />
+                <span>{lessonDriveNotice}</span>
+              </div>
+              {currentLesson?.driveWebViewLink && (
+                <a
+                  href={currentLesson.driveWebViewLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 rounded-lg bg-teal-600/30 hover:bg-teal-600/50 text-teal-200 text-[11px] font-semibold flex items-center gap-1 shrink-0"
+                >
+                  <span>Open in Drive</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* 3. Generated Lesson Display */}
+          {currentLesson && (
+            <div className="rounded-2xl bg-slate-950 border border-slate-800 p-5 space-y-4">
+              {/* Lesson Top Bar */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-2 py-0.5 rounded-md bg-teal-500/20 text-teal-300 text-[10px] font-bold uppercase">
+                      {currentLesson.domainName}
+                    </span>
+                    <span className="text-[10px] text-slate-500">
+                      {new Date(currentLesson.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  <h3 className="text-base font-bold text-white">{currentLesson.title}</h3>
+                </div>
+
+                {/* Lesson Actions: Sync to Drive, Listen, Copy */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSyncLessonToDrive}
+                    disabled={isSyncingLessonToDrive}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all ${
+                      currentLesson.driveSyncStatus === 'synced'
+                        ? 'bg-teal-500/20 text-teal-300 border border-teal-500/40'
+                        : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-md'
+                    }`}
+                  >
+                    <HardDrive className="w-3.5 h-3.5" />
+                    <span>
+                      {currentLesson.driveSyncStatus === 'synced'
+                        ? '✓ Synced in Drive'
+                        : isSyncingLessonToDrive
+                        ? 'Syncing to Drive...'
+                        : 'Sync to Google Drive'}
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={handleReadLessonAloud}
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white"
+                    title={isPlayingLessonAudio ? 'Stop speech' : 'Listen with TTS voice'}
+                  >
+                    <Volume2 className={`w-4 h-4 ${isPlayingLessonAudio ? 'text-teal-400 animate-pulse' : ''}`} />
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(currentLesson.content);
+                      setLessonDriveNotice('✓ Lesson copied to clipboard!');
+                      setTimeout(() => setLessonDriveNotice(null), 2500);
+                    }}
+                    className="p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white"
+                    title="Copy lesson markdown"
+                  >
+                    <Copy className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Summary Callout */}
+              {currentLesson.summary && (
+                <div className="p-3.5 rounded-xl bg-slate-900/90 border-l-4 border-teal-500 text-xs text-slate-200 leading-relaxed">
+                  <span className="font-bold text-teal-300">Objective: </span>
+                  {currentLesson.summary}
+                </div>
+              )}
+
+              {/* Key Takeaways */}
+              {currentLesson.keyTakeaways.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {currentLesson.keyTakeaways.map((point, idx) => (
+                    <div
+                      key={idx}
+                      className="px-2.5 py-1 rounded-lg bg-teal-500/10 border border-teal-500/20 text-teal-200 text-[11px] flex items-center gap-1.5"
+                    >
+                      <Sparkles className="w-3 h-3 text-teal-400 shrink-0" />
+                      <span>{point}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Full Content (Markdown body) */}
+              <div className="prose prose-invert prose-xs max-w-none text-slate-200 text-xs leading-relaxed space-y-3 font-normal whitespace-pre-wrap bg-slate-900/40 p-4 rounded-xl border border-slate-800/60">
+                {currentLesson.content}
+              </div>
+            </div>
+          )}
+
+          {/* 4. Past Guided Learning History in Family Circle */}
+          {guidedHistory.length > 0 && (
+            <div className="space-y-2 pt-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Recent Guided Learning Sessions in Family Circle ({guidedHistory.length})</span>
+              </h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                {guidedHistory.slice(0, 6).map((past) => (
+                  <div
+                    key={past.id}
+                    onClick={() => {
+                      setCurrentLesson(past);
+                      setGuidedDomainId(past.domainId);
+                    }}
+                    className={`p-3 rounded-xl border text-left cursor-pointer transition-all ${
+                      currentLesson?.id === past.id
+                        ? 'bg-teal-500/15 border-teal-500/50 text-white'
+                        : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:bg-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                      <span className="font-semibold text-teal-400">{past.domainName}</span>
+                      <span>{new Date(past.createdAt).toLocaleDateString()}</span>
+                    </div>
+                    <p className="text-xs font-bold text-white truncate">{past.title}</p>
+                    <div className="mt-2 flex items-center justify-between text-[10px]">
+                      <span className="text-slate-400 truncate max-w-[120px]">{past.prompt}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          past.driveSyncStatus === 'synced'
+                            ? 'bg-teal-500/20 text-teal-300'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {past.driveSyncStatus === 'synced' ? 'DRIVE' : 'LOCAL'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 1. AUDIO TRANSCRIPTION LAB (gemini-3.5-transcribe) */}
       {/* ==================================================== */}
       {activeTab === 'transcribe' && (

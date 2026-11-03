@@ -154,7 +154,7 @@ export const googleSignIn = async (): Promise<GoogleAuthResult> => {
           },
         });
 
-        client.requestAccessToken({ prompt: 'consent select_account' });
+        client.requestAccessToken({ prompt: '' });
         return;
       }
 

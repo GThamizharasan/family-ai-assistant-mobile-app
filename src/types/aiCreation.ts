@@ -1,6 +1,6 @@
 // AI Studio Creations & Family Circle Drive Sync Types
 
-export type AiCreationType = 'image' | 'video' | 'music' | 'transcript' | 'transcription';
+export type AiCreationType = 'image' | 'video' | 'music' | 'transcript' | 'transcription' | 'guided_learning';
 
 export interface AiStudioCreation {
   id: string;

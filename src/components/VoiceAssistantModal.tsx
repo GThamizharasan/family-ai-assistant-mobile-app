@@ -33,7 +33,10 @@ import {
   Camera,
   Image as ImageIcon,
   Scan,
+  Copy,
+  ExternalLink,
 } from 'lucide-react';
+import { syncAnyAiOutputToDrive } from '../services/guidedLearningService';
 import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS } from '../types';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
@@ -127,6 +130,90 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [newMemTopic, setNewMemTopic] = useState('');
   const [newMemContent, setNewMemContent] = useState('');
   const [isAddingMem, setIsAddingMem] = useState(false);
+
+  // Drive sync for Assistant messages on demand
+  const [syncingDriveMsgId, setSyncingDriveMsgId] = useState<string | null>(null);
+  const [syncedDriveMsgIds, setSyncedDriveMsgIds] = useState<Set<string>>(new Set());
+  const [syncedDriveMsgLinks, setSyncedDriveMsgLinks] = useState<Record<string, string>>({});
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+
+  const handleSyncAssistantMessageToDrive = async (msg: any) => {
+    let token = googleAccessToken || (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+    if (!token) {
+      setDriveUploadNotice('Connecting Google Account for Drive sync...');
+      const authed = await signInWithGoogleOAuth();
+      if (authed) {
+        token = (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null) || googleAccessToken;
+      }
+    }
+    if (!token) {
+      setDriveUploadNotice('Please connect your Google Account in Settings/Google One to sync with Drive.');
+      setTimeout(() => setDriveUploadNotice(null), 5000);
+      return;
+    }
+    setSyncingDriveMsgId(msg.id);
+    try {
+      const idx = chatHistory.findIndex((m) => m.id === msg.id);
+      const prevUserMsg = idx > 0 ? chatHistory[idx - 1] : null;
+      const userPrompt = prevUserMsg?.role === 'user' ? prevUserMsg.content : '';
+      const title = userPrompt ? userPrompt.slice(0, 45) : 'Auro AI Assistant Output';
+
+      const isLearning = /learn|course|lesson|tutor|stem|robot|code|python|math|science/i.test(msg.content + ' ' + userPrompt);
+      const subfolder = isLearning ? 'Guided Learning' : 'AI Assistant Outputs';
+
+      let res;
+      try {
+        res = await syncAnyAiOutputToDrive(
+          title,
+          msg.content,
+          token,
+          {
+            folderName: subfolder,
+            category: isLearning ? 'Guided Learning' : 'Voice Assistant',
+            userEmail: user?.email,
+            promptContext: userPrompt,
+          }
+        );
+      } catch (firstErr: any) {
+        if (firstErr?.message?.includes('401') || firstErr?.message?.includes('expired')) {
+          setDriveUploadNotice('Refreshing Google authorization...');
+          const reauthed = await signInWithGoogleOAuth();
+          if (reauthed) {
+            token = (typeof localStorage !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null) || googleAccessToken;
+            if (token) {
+              res = await syncAnyAiOutputToDrive(
+                title,
+                msg.content,
+                token,
+                {
+                  folderName: subfolder,
+                  category: isLearning ? 'Guided Learning' : 'Voice Assistant',
+                  userEmail: user?.email,
+                  promptContext: userPrompt,
+                }
+              );
+            }
+          }
+        }
+        if (!res) throw firstErr;
+      }
+
+      if (res) {
+        setSyncedDriveMsgIds((prev) => new Set(prev).add(msg.id));
+        if (res.driveWebViewLink) {
+          setSyncedDriveMsgLinks((prev) => ({ ...prev, [msg.id]: res.driveWebViewLink }));
+        }
+        setDriveUploadNotice(`✓ Saved to Google Drive under "${res.folderPath}"!`);
+        setTimeout(() => setDriveUploadNotice(null), 6000);
+      }
+    } catch (err: any) {
+      console.warn('Voice message drive sync error:', err);
+      setDriveUploadNotice(`Drive sync notice: ${err?.message || 'Could not sync file'}`);
+      setTimeout(() => setDriveUploadNotice(null), 5000);
+    } finally {
+      setSyncingDriveMsgId(null);
+    }
+  };
 
   // Attachment & Multimodal Plus Menu state for real-time analysis, camera, and Drive sync
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -563,6 +650,29 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     addVoiceMessage(userMsg);
 
     const lower = spokenText.toLowerCase().trim();
+
+    // Voice Intent: On-demand sync latest response to Google Drive
+    if (
+      lower === 'sync to drive' ||
+      lower === 'save to drive' ||
+      lower === 'sync this to drive' ||
+      lower === 'save this to drive' ||
+      lower === 'sync with drive' ||
+      lower === 'save to google drive' ||
+      lower === 'drive sync' ||
+      lower.includes('sync this output to drive') ||
+      lower.includes('sync to google drive') ||
+      lower.includes('save to drive') ||
+      lower === 'கூகுள் டிரைவில் சேமி' ||
+      lower === 'டிரைவில் ஏற்று'
+    ) {
+      const lastAssistantMsg = [...chatHistory].reverse().find((m) => m.role === 'assistant');
+      if (lastAssistantMsg) {
+        speakWithAuro(voiceLanguage.startsWith('ta') ? 'சமீபத்திய பதிலை கூகுள் டிரைவில் சேமிக்கிறேன்.' : 'Synchronizing latest response to Google Drive Family Circle now.');
+        await handleSyncAssistantMessageToDrive(lastAssistantMsg);
+        return;
+      }
+    }
 
     const isExplicitNavigation =
       lower.startsWith('open ') ||
@@ -2770,6 +2880,70 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                   <div className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
                     <Compass className="w-3.5 h-3.5 shrink-0" />
                     <span>Suggested: {msg.actionSuggestion}</span>
+                  </div>
+                )}
+
+                {msg.role === 'assistant' && (
+                  <div className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between text-xs gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => handleSyncAssistantMessageToDrive(msg)}
+                        disabled={syncingDriveMsgId === msg.id}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all text-[11px] font-medium cursor-pointer ${
+                          syncedDriveMsgIds.has(msg.id)
+                            ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
+                            : 'bg-indigo-950/80 hover:bg-indigo-900/90 text-indigo-300 hover:text-white border-indigo-500/30'
+                        }`}
+                        title="Sync this response to Google Drive under Family Circle"
+                      >
+                        <HardDrive className={`w-3.5 h-3.5 ${syncedDriveMsgIds.has(msg.id) ? 'text-teal-400' : 'text-indigo-400'}`} />
+                        <span>
+                          {syncedDriveMsgIds.has(msg.id)
+                            ? '✓ Synced in Drive'
+                            : syncingDriveMsgId === msg.id
+                            ? 'Syncing to Drive...'
+                            : 'Sync to Drive'}
+                        </span>
+                      </button>
+
+                      {syncedDriveMsgLinks[msg.id] && (
+                        <a
+                          href={syncedDriveMsgLinks[msg.id]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-teal-500/20 hover:bg-teal-500/30 text-teal-300 text-[10px] font-semibold border border-teal-500/30"
+                          title="Open this file in Google Drive"
+                        >
+                          <span>Open</span>
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(msg.content);
+                          setCopiedMsgId(msg.id);
+                          setTimeout(() => setCopiedMsgId(null), 2000);
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                        title="Copy message"
+                      >
+                        {copiedMsgId === msg.id ? (
+                          <Check className="w-3.5 h-3.5 text-teal-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => speakWithAuro(msg.content)}
+                        className="p-1.5 rounded-lg bg-slate-900/60 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                        title="Listen with voice"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
