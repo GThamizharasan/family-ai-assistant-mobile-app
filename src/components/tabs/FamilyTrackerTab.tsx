@@ -35,6 +35,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { FamilyGoogleMap } from '../maps/FamilyGoogleMap';
 import { FamilyMemberModal } from '../FamilyMemberModal';
+import { CustomGoogleMapModal } from '../maps/CustomGoogleMapModal';
 import { FamilyMember } from '../../types';
 
 export const FamilyTrackerTab: React.FC = () => {
@@ -65,6 +66,7 @@ export const FamilyTrackerTab: React.FC = () => {
   } = useApp();
 
   const [mapMode, setMapMode] = useState<'google' | 'radar'>('google');
+  const [isCustomNavModalOpen, setIsCustomNavModalOpen] = useState(false);
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showRedeemModal, setShowRedeemModal] = useState(false);
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
@@ -238,8 +240,16 @@ export const FamilyTrackerTab: React.FC = () => {
             </span>
           </div>
 
-          {/* Toggle between Google Maps & Radar HUD */}
-          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+          {/* Toggle between Google Maps, Radar HUD & Custom Routes */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              onClick={() => setIsCustomNavModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-sm transition-all"
+              title="Open Custom Multi-Modal Navigation"
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              <span>Multi-Modal Routes (Bus / Train / Cycle / Car)</span>
+            </button>
             <button
               onClick={() => setMapMode('google')}
               className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition-all ${
@@ -1161,6 +1171,12 @@ export const FamilyTrackerTab: React.FC = () => {
               }
             : undefined
         }
+      />
+
+      {/* Custom Google Maps & Multi-Modal Navigation Modal */}
+      <CustomGoogleMapModal
+        isOpen={isCustomNavModalOpen}
+        onClose={() => setIsCustomNavModalOpen(false)}
       />
     </div>
   );

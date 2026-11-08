@@ -118,7 +118,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { key: 'finance', label: 'Wealth', category: 'Wealth', icon: Wallet },
     { key: 'billionaire', label: 'Blueprint', category: 'Wealth', icon: TrendingUp },
     { key: 'productivity', label: 'Tasks', category: 'Lifestyle', icon: CheckSquare, badge: pendingTasksCount },
-    { key: 'wellness', label: 'Longevity', category: 'Lifestyle', icon: HeartPulse },
+    { key: 'wellness', label: 'Health & Wellness', category: 'Lifestyle', icon: HeartPulse, offlineReady: true },
     { key: 'mood', label: 'Mood Journal', category: 'Lifestyle', icon: Smile },
     { key: 'writing', label: 'Writing Coach', category: 'Intelligence', icon: PenTool },
     { key: 'vault', label: 'Memory Vault', category: 'Family & Safety', icon: HardDrive },
@@ -149,7 +149,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { key: 'billionaire', label: 'Blueprint', category: 'Wealth', icon: TrendingUp },
     { key: 'google', label: 'Google Suite', category: 'Core', icon: Mail, badge: 3, offlineReady: true },
     { key: 'productivity', label: 'Tasks', category: 'Lifestyle', icon: CheckSquare, badge: pendingTasksCount },
-    { key: 'wellness', label: 'Longevity', category: 'Lifestyle', icon: HeartPulse },
+    { key: 'wellness', label: 'Health & Wellness', category: 'Lifestyle', icon: HeartPulse, offlineReady: true },
     { key: 'devices', label: 'Smart IoT', category: 'Family & Safety', icon: Cctv },
   ];
 

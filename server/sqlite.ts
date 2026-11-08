@@ -705,6 +705,161 @@ export async function initSqliteDb(): Promise<Database> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS family_health_records (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      relationship TEXT,
+      avatar TEXT,
+      date_of_birth TEXT,
+      age INTEGER,
+      gender TEXT,
+      blood_group TEXT DEFAULT 'Unknown',
+      height_cm REAL,
+      weight_kg REAL,
+      allergies_json TEXT,
+      conditions_json TEXT,
+      vitals_json TEXT,
+      medications_json TEXT,
+      vaccinations_json TEXT,
+      emergency_contact_json TEXT,
+      primary_doctor_json TEXT,
+      insurance_json TEXT,
+      organ_donor INTEGER DEFAULT 0,
+      notes TEXT,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Health And Wellness/Family Heath Record',
+      drive_sync_status TEXT DEFAULT 'synced',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS family_health_documents (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      document_date TEXT NOT NULL,
+      doctor_or_facility TEXT,
+      file_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size_bytes INTEGER DEFAULT 0,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_folder_path TEXT DEFAULT 'Family Circle/Health And Wellness/Family Heath Record',
+      drive_sync_status TEXT DEFAULT 'local_only',
+      file_content_base64 TEXT,
+      notes TEXT,
+      ai_summary TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_map_routes (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      origin_name TEXT NOT NULL,
+      origin_lat REAL NOT NULL,
+      origin_lng REAL NOT NULL,
+      destination_name TEXT NOT NULL,
+      destination_lat REAL NOT NULL,
+      destination_lng REAL NOT NULL,
+      travel_mode TEXT NOT NULL,
+      distance_meters INTEGER DEFAULT 0,
+      distance_text TEXT,
+      duration_text TEXT,
+      duration_seconds INTEGER DEFAULT 0,
+      encoded_polyline TEXT,
+      steps_json TEXT,
+      transit_summary TEXT,
+      is_offline_cached INTEGER DEFAULT 1,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'synced',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS offline_map_packages (
+      id TEXT PRIMARY KEY,
+      package_name TEXT NOT NULL,
+      center_lat REAL NOT NULL,
+      center_lng REAL NOT NULL,
+      zoom INTEGER DEFAULT 14,
+      radius_km REAL DEFAULT 10,
+      routes_count INTEGER DEFAULT 0,
+      route_ids_json TEXT,
+      size_bytes INTEGER DEFAULT 0,
+      is_downloaded INTEGER DEFAULT 1,
+      downloaded_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS family_fever_logs (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      temperature_f REAL NOT NULL,
+      temperature_c REAL NOT NULL,
+      measurement_method TEXT DEFAULT 'forehead',
+      severity TEXT DEFAULT 'normal',
+      symptoms_json TEXT DEFAULT '[]',
+      medication_given_json TEXT,
+      notes TEXT,
+      recorded_by TEXT DEFAULT 'Auro AI',
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'local_only',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS family_medication_logs (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      medication_id TEXT NOT NULL,
+      drug_name TEXT NOT NULL,
+      category TEXT DEFAULT 'prescription',
+      dosage TEXT NOT NULL,
+      time_slot TEXT NOT NULL,
+      scheduled_time TEXT,
+      logged_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'taken',
+      logged_by TEXT DEFAULT 'Auro AI',
+      notes TEXT,
+      pills_remaining INTEGER,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'local_only',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS family_hydration_logs (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      amount_ml INTEGER NOT NULL,
+      beverage_type TEXT DEFAULT 'water',
+      container TEXT DEFAULT 'glass_250',
+      daily_goal_ml INTEGER DEFAULT 2500,
+      notes TEXT,
+      logged_by TEXT DEFAULT 'Auro AI',
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'local_only',
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
@@ -4180,6 +4335,7 @@ export interface Sqlite3GbStorageQuota {
     driveFiles: { count: number; bytes: number; mb: number };
     aiCreations: { count: number; bytes: number; mb: number };
     keepNotes: { count: number; bytes: number; mb: number };
+    healthDocuments?: { count: number; bytes: number; mb: number };
     other: { bytes: number; mb: number };
   };
   lastUpdated: string;
@@ -4210,6 +4366,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
         driveFiles: { count: 0, bytes: 0, mb: 0 },
         aiCreations: { count: 0, bytes: 0, mb: 0 },
         keepNotes: { count: 0, bytes: 0, mb: 0 },
+        healthDocuments: { count: 0, bytes: 0, mb: 0 },
         other: { bytes: 0, mb: 0 },
       },
       lastUpdated: new Date().toISOString(),
@@ -4251,6 +4408,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
   const driveStats = getTableStats('google_drive_files', 'file_content_base64');
   const aiStats = getTableStats('ai_studio_creations', 'metadata_json');
   const keepStats = getTableStats('google_keep_notes', 'body');
+  const healthStats = getTableStats('family_health_documents', 'file_content_base64');
 
   const contentTotalBytes =
     booksStats.bytes +
@@ -4261,7 +4419,8 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
     translationsStats.bytes +
     driveStats.bytes +
     aiStats.bytes +
-    keepStats.bytes;
+    keepStats.bytes +
+    healthStats.bytes;
 
   const totalUsedBytes = Math.max(dbFileSizeBytes, contentTotalBytes);
   const totalUsedMb = Number((totalUsedBytes / (1024 * 1024)).toFixed(2));
@@ -4294,6 +4453,7 @@ export function getSqlite3GbStorageQuotaStats(): Sqlite3GbStorageQuota {
       driveFiles: driveStats,
       aiCreations: aiStats,
       keepNotes: keepStats,
+      healthDocuments: healthStats,
       other: {
         bytes: Math.max(0, dbFileSizeBytes - contentTotalBytes),
         mb: Number((Math.max(0, dbFileSizeBytes - contentTotalBytes) / (1024 * 1024)).toFixed(2)),
@@ -4824,4 +4984,1035 @@ export function updateReminderInSqlite(id: string, updates: Partial<FamilyRemind
     return false;
   }
 }
+
+// =========================================================================
+// FAMILY HEALTH RECORDS & WELLNESS SQLITE ENGINE
+// =========================================================================
+
+export interface FamilyHealthRecordSqlite {
+  id: string;
+  userEmail: string;
+  memberId: string;
+  memberName: string;
+  relationship?: string;
+  avatar?: string;
+  dateOfBirth?: string;
+  age?: number;
+  gender?: string;
+  bloodGroup: string;
+  heightCm?: number;
+  weightKg?: number;
+  allergiesJson?: string;
+  conditionsJson?: string;
+  vitalsJson?: string;
+  medicationsJson?: string;
+  vaccinationsJson?: string;
+  emergencyContactJson?: string;
+  primaryDoctorJson?: string;
+  insuranceJson?: string;
+  organDonor?: boolean;
+  notes?: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveFolderPath?: string;
+  driveSyncStatus?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function saveFamilyHealthRecordToSqlite(record: any, userEmail = 'chinna.tamil2000@gmail.com'): boolean {
+  if (!db) return false;
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    const id = record.id || `hr_${record.memberId || Date.now()}`;
+    const nowIso = new Date().toISOString();
+
+    db.run(
+      `INSERT OR REPLACE INTO family_health_records (
+        id, user_email, member_id, member_name, relationship, avatar,
+        date_of_birth, age, gender, blood_group, height_cm, weight_kg,
+        allergies_json, conditions_json, vitals_json, medications_json,
+        vaccinations_json, emergency_contact_json, primary_doctor_json,
+        insurance_json, organ_donor, notes, drive_file_id, drive_web_view_link,
+        drive_folder_path, drive_sync_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        cleanEmail,
+        record.memberId || id,
+        record.memberName || 'Family Member',
+        record.relationship || '',
+        record.avatar || '',
+        record.dateOfBirth || '',
+        record.age || null,
+        record.gender || '',
+        record.bloodGroup || 'Unknown',
+        record.heightCm || null,
+        record.weightKg || null,
+        typeof record.allergies === 'string' ? record.allergies : JSON.stringify(record.allergies || []),
+        typeof record.conditions === 'string' ? record.conditions : JSON.stringify(record.conditions || []),
+        typeof record.vitalsHistory === 'string' ? record.vitalsHistory : JSON.stringify(record.vitalsHistory || []),
+        typeof record.medications === 'string' ? record.medications : JSON.stringify(record.medications || []),
+        typeof record.vaccinations === 'string' ? record.vaccinations : JSON.stringify(record.vaccinations || []),
+        typeof record.emergencyContact === 'string' ? record.emergencyContact : JSON.stringify(record.emergencyContact || null),
+        typeof record.primaryDoctor === 'string' ? record.primaryDoctor : JSON.stringify(record.primaryDoctor || null),
+        typeof record.insurance === 'string' ? record.insurance : JSON.stringify(record.insurance || null),
+        record.organDonor ? 1 : 0,
+        record.notes || '',
+        record.driveFileId || null,
+        record.driveWebViewLink || null,
+        record.driveFolderPath || 'Family Circle/Health And Wellness/Family Heath Record',
+        record.driveSyncStatus || 'synced',
+        record.createdAt || nowIso,
+        nowIso,
+      ]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Error saving family health record to SQLite:', err);
+    return false;
+  }
+}
+
+export function saveFamilyHealthRecordsBulkToSqlite(records: any[], userEmail = 'chinna.tamil2000@gmail.com'): number {
+  if (!db || !Array.isArray(records)) return 0;
+  let count = 0;
+  for (const rec of records) {
+    if (saveFamilyHealthRecordToSqlite(rec, userEmail)) {
+      count++;
+    }
+  }
+  return count;
+}
+
+export function getFamilyHealthRecordsFromSqlite(userEmail = 'chinna.tamil2000@gmail.com', memberId?: string): any[] {
+  if (!db) return [];
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    let query = `SELECT * FROM family_health_records WHERE user_email = ?`;
+    const params: any[] = [cleanEmail];
+
+    if (memberId) {
+      query += ` AND (member_id = ? OR id = ?)`;
+      params.push(memberId, memberId);
+    }
+    query += ` ORDER BY member_name ASC`;
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: any[] = [];
+
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        memberId: String(row.member_id),
+        memberName: String(row.member_name),
+        relationship: String(row.relationship || ''),
+        avatar: String(row.avatar || ''),
+        dateOfBirth: String(row.date_of_birth || ''),
+        age: row.age ? Number(row.age) : undefined,
+        gender: String(row.gender || ''),
+        bloodGroup: String(row.blood_group || 'Unknown'),
+        heightCm: row.height_cm ? Number(row.height_cm) : undefined,
+        weightKg: row.weight_kg ? Number(row.weight_kg) : undefined,
+        allergies: row.allergies_json ? JSON.parse(String(row.allergies_json)) : [],
+        conditions: row.conditions_json ? JSON.parse(String(row.conditions_json)) : [],
+        vitalsHistory: row.vitals_json ? JSON.parse(String(row.vitals_json)) : [],
+        medications: row.medications_json ? JSON.parse(String(row.medications_json)) : [],
+        vaccinations: row.vaccinations_json ? JSON.parse(String(row.vaccinations_json)) : [],
+        emergencyContact: row.emergency_contact_json ? JSON.parse(String(row.emergency_contact_json)) : null,
+        primaryDoctor: row.primary_doctor_json ? JSON.parse(String(row.primary_doctor_json)) : null,
+        insurance: row.insurance_json ? JSON.parse(String(row.insurance_json)) : null,
+        organDonor: Boolean(row.organ_donor),
+        notes: String(row.notes || ''),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path || 'Family Circle/Health And Wellness/Family Heath Record'),
+        driveSyncStatus: String(row.drive_sync_status || 'synced'),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Error reading family health records from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteFamilyHealthRecordFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_health_records WHERE id = ? OR member_id = ?`, [id, id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
+// Family Health Documents (Prescriptions, Lab Reports, Scans)
+// -------------------------------------------------------------
+
+export function saveFamilyHealthDocumentToSqlite(doc: any, userEmail = 'chinna.tamil2000@gmail.com'): boolean {
+  if (!db) return false;
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    const id = doc.id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const nowIso = new Date().toISOString();
+
+    db.run(
+      `INSERT OR REPLACE INTO family_health_documents (
+        id, user_email, member_id, member_name, title, category, document_date,
+        doctor_or_facility, file_name, mime_type, file_size_bytes, drive_file_id,
+        drive_web_view_link, drive_folder_path, drive_sync_status, file_content_base64,
+        notes, ai_summary, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        cleanEmail,
+        doc.memberId || '',
+        doc.memberName || 'Family Member',
+        doc.title || 'Medical Document',
+        doc.category || 'other',
+        doc.documentDate || nowIso.split('T')[0],
+        doc.doctorOrFacility || '',
+        doc.fileName || 'document.pdf',
+        doc.mimeType || 'application/pdf',
+        doc.fileSizeBytes || 0,
+        doc.driveFileId || null,
+        doc.driveWebViewLink || null,
+        doc.driveFolderPath || 'Family Circle/Health And Wellness/Family Heath Record',
+        doc.driveSyncStatus || 'local_only',
+        doc.fileContentBase64 || null,
+        doc.notes || '',
+        doc.aiSummary || '',
+        doc.createdAt || nowIso,
+        nowIso,
+      ]
+    );
+    scheduleSave();
+    return true;
+  } catch (err) {
+    console.warn('Error saving health document to SQLite:', err);
+    return false;
+  }
+}
+
+export function getFamilyHealthDocumentsFromSqlite(userEmail = 'chinna.tamil2000@gmail.com', memberId?: string): any[] {
+  if (!db) return [];
+  try {
+    const cleanEmail = userEmail.toLowerCase().trim();
+    let query = `SELECT id, user_email, member_id, member_name, title, category, document_date, doctor_or_facility, file_name, mime_type, file_size_bytes, drive_file_id, drive_web_view_link, drive_folder_path, drive_sync_status, notes, ai_summary, created_at, updated_at FROM family_health_documents WHERE user_email = ?`;
+    const params: any[] = [cleanEmail];
+
+    if (memberId) {
+      query += ` AND member_id = ?`;
+      params.push(memberId);
+    }
+    query += ` ORDER BY document_date DESC, created_at DESC`;
+
+    const stmt = db.prepare(query);
+    stmt.bind(params);
+    const results: any[] = [];
+
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      results.push({
+        id: String(row.id),
+        userEmail: String(row.user_email),
+        memberId: String(row.member_id),
+        memberName: String(row.member_name),
+        title: String(row.title),
+        category: String(row.category),
+        documentDate: String(row.document_date),
+        doctorOrFacility: String(row.doctor_or_facility || ''),
+        fileName: String(row.file_name),
+        mimeType: String(row.mime_type),
+        fileSizeBytes: Number(row.file_size_bytes || 0),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : undefined,
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : undefined,
+        driveFolderPath: String(row.drive_folder_path),
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        notes: String(row.notes || ''),
+        aiSummary: String(row.ai_summary || ''),
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+      });
+    }
+    stmt.free();
+    return results;
+  } catch (err) {
+    console.warn('Error reading health documents from SQLite:', err);
+    return [];
+  }
+}
+
+export function getFamilyHealthDocumentContentFromSqlite(id: string): { fileContentBase64: string; mimeType: string; fileName: string } | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare(`SELECT file_content_base64, mime_type, file_name FROM family_health_documents WHERE id = ?`);
+    stmt.bind([id]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject();
+      const content = String(row.file_content_base64 || '');
+      const mimeType = String(row.mime_type || 'application/pdf');
+      const fileName = String(row.file_name || 'document.pdf');
+      stmt.free();
+      return { fileContentBase64: content, mimeType, fileName };
+    }
+    stmt.free();
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function deleteFamilyHealthDocumentFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_health_documents WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
+// CUSTOM GOOGLE MAPS & OFFLINE NAVIGATION STORAGE
+// -------------------------------------------------------------
+export interface CustomMapRouteRecord {
+  id: string;
+  userEmail: string;
+  title: string;
+  originName: string;
+  originLat: number;
+  originLng: number;
+  destinationName: string;
+  destinationLat: number;
+  destinationLng: number;
+  travelMode: string;
+  distanceMeters: number;
+  distanceText: string;
+  durationText: string;
+  durationSeconds: number;
+  encodedPolyline: string;
+  stepsJson: string;
+  transitSummary?: string;
+  isOfflineCached: boolean;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus: 'synced' | 'local_only' | 'pending';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfflineMapPackageRecord {
+  id: string;
+  packageName: string;
+  centerLat: number;
+  centerLng: number;
+  zoom: number;
+  radiusKm: number;
+  routesCount: number;
+  routeIdsJson: string;
+  sizeBytes: number;
+  isDownloaded: boolean;
+  downloadedAt: string;
+  createdAt: string;
+}
+
+export function saveCustomMapRouteToSqlite(route: CustomMapRouteRecord): CustomMapRouteRecord {
+  if (!db) return route;
+  try {
+    const existing = db.prepare(`SELECT id FROM custom_map_routes WHERE id = ?`);
+    existing.bind([route.id]);
+    const exists = existing.step();
+    existing.free();
+
+    if (exists) {
+      db.run(
+        `UPDATE custom_map_routes SET
+          title = ?,
+          origin_name = ?,
+          origin_lat = ?,
+          origin_lng = ?,
+          destination_name = ?,
+          destination_lat = ?,
+          destination_lng = ?,
+          travel_mode = ?,
+          distance_meters = ?,
+          distance_text = ?,
+          duration_text = ?,
+          duration_seconds = ?,
+          encoded_polyline = ?,
+          steps_json = ?,
+          transit_summary = ?,
+          is_offline_cached = ?,
+          drive_file_id = ?,
+          drive_web_view_link = ?,
+          drive_sync_status = ?,
+          updated_at = ?
+         WHERE id = ?`,
+        [
+          route.title,
+          route.originName,
+          route.originLat,
+          route.originLng,
+          route.destinationName,
+          route.destinationLat,
+          route.destinationLng,
+          route.travelMode,
+          route.distanceMeters,
+          route.distanceText,
+          route.durationText,
+          route.durationSeconds,
+          route.encodedPolyline,
+          route.stepsJson,
+          route.transitSummary || '',
+          route.isOfflineCached ? 1 : 0,
+          route.driveFileId || '',
+          route.driveWebViewLink || '',
+          route.driveSyncStatus || 'synced',
+          route.updatedAt || new Date().toISOString(),
+          route.id,
+        ]
+      );
+    } else {
+      db.run(
+        `INSERT INTO custom_map_routes (
+          id, user_email, title, origin_name, origin_lat, origin_lng,
+          destination_name, destination_lat, destination_lng, travel_mode,
+          distance_meters, distance_text, duration_text, duration_seconds,
+          encoded_polyline, steps_json, transit_summary, is_offline_cached,
+          drive_file_id, drive_web_view_link, drive_sync_status, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          route.id,
+          route.userEmail,
+          route.title,
+          route.originName,
+          route.originLat,
+          route.originLng,
+          route.destinationName,
+          route.destinationLat,
+          route.destinationLng,
+          route.travelMode,
+          route.distanceMeters,
+          route.distanceText,
+          route.durationText,
+          route.durationSeconds,
+          route.encodedPolyline,
+          route.stepsJson,
+          route.transitSummary || '',
+          route.isOfflineCached ? 1 : 0,
+          route.driveFileId || '',
+          route.driveWebViewLink || '',
+          route.driveSyncStatus || 'synced',
+          route.createdAt || new Date().toISOString(),
+          route.updatedAt || new Date().toISOString(),
+        ]
+      );
+    }
+    scheduleSave();
+    return route;
+  } catch (err) {
+    console.warn('Error saving custom map route to SQLite:', err);
+    return route;
+  }
+}
+
+export function getCustomMapRoutesFromSqlite(userEmail?: string): CustomMapRouteRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM custom_map_routes ORDER BY updated_at DESC`;
+    const params: any[] = [];
+    if (userEmail && userEmail.trim()) {
+      query = `SELECT * FROM custom_map_routes WHERE user_email = ? OR user_email = '' ORDER BY updated_at DESC`;
+      params.push(userEmail.trim());
+    }
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const routes: CustomMapRouteRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      routes.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        title: String(row.title || ''),
+        originName: String(row.origin_name || ''),
+        originLat: Number(row.origin_lat || 0),
+        originLng: Number(row.origin_lng || 0),
+        destinationName: String(row.destination_name || ''),
+        destinationLat: Number(row.destination_lat || 0),
+        destinationLng: Number(row.destination_lng || 0),
+        travelMode: String(row.travel_mode || 'drive'),
+        distanceMeters: Number(row.distance_meters || 0),
+        distanceText: String(row.distance_text || ''),
+        durationText: String(row.duration_text || ''),
+        durationSeconds: Number(row.duration_seconds || 0),
+        encodedPolyline: String(row.encoded_polyline || ''),
+        stepsJson: String(row.steps_json || '[]'),
+        transitSummary: String(row.transit_summary || ''),
+        isOfflineCached: Number(row.is_offline_cached) === 1,
+        driveFileId: String(row.drive_file_id || ''),
+        driveWebViewLink: String(row.drive_web_view_link || ''),
+        driveSyncStatus: (row.drive_sync_status as any) || 'synced',
+        createdAt: String(row.created_at || ''),
+        updatedAt: String(row.updated_at || ''),
+      });
+    }
+    stmt.free();
+    return routes;
+  } catch (err) {
+    console.warn('Error fetching custom map routes from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteCustomMapRouteFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM custom_map_routes WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function toggleRouteOfflineCacheInSqlite(id: string, isOfflineCached: boolean): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE custom_map_routes SET is_offline_cached = ?, updated_at = ? WHERE id = ?`, [
+      isOfflineCached ? 1 : 0,
+      new Date().toISOString(),
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateRouteDriveSyncInSqlite(id: string, driveFileId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE custom_map_routes SET drive_file_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced', updated_at = ? WHERE id = ?`, [
+      driveFileId,
+      driveWebViewLink || '',
+      new Date().toISOString(),
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function saveOfflineMapPackageToSqlite(pkg: OfflineMapPackageRecord): OfflineMapPackageRecord {
+  if (!db) return pkg;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO offline_map_packages (
+        id, package_name, center_lat, center_lng, zoom, radius_km,
+        routes_count, route_ids_json, size_bytes, is_downloaded, downloaded_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        pkg.id,
+        pkg.packageName,
+        pkg.centerLat,
+        pkg.centerLng,
+        pkg.zoom,
+        pkg.radiusKm,
+        pkg.routesCount,
+        pkg.routeIdsJson,
+        pkg.sizeBytes,
+        pkg.isDownloaded ? 1 : 0,
+        pkg.downloadedAt || new Date().toISOString(),
+        pkg.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return pkg;
+  } catch (err) {
+    console.warn('Error saving offline map package to SQLite:', err);
+    return pkg;
+  }
+}
+
+export function getOfflineMapPackagesFromSqlite(): OfflineMapPackageRecord[] {
+  if (!db) return [];
+  try {
+    const stmt = db.prepare(`SELECT * FROM offline_map_packages ORDER BY downloaded_at DESC`);
+    const packages: OfflineMapPackageRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      packages.push({
+        id: String(row.id),
+        packageName: String(row.package_name || ''),
+        centerLat: Number(row.center_lat || 0),
+        centerLng: Number(row.center_lng || 0),
+        zoom: Number(row.zoom || 14),
+        radiusKm: Number(row.radius_km || 10),
+        routesCount: Number(row.routes_count || 0),
+        routeIdsJson: String(row.route_ids_json || '[]'),
+        sizeBytes: Number(row.size_bytes || 0),
+        isDownloaded: Number(row.is_downloaded) === 1,
+        downloadedAt: String(row.downloaded_at || ''),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return packages;
+  } catch (err) {
+    console.warn('Error reading offline map packages from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteOfflineMapPackageFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM offline_map_packages WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
+// FEVER TEMPERATURE LOGS & CLINICAL EPISODE TRACKING
+// -------------------------------------------------------------
+export interface FeverLogRecord {
+  id: string;
+  userEmail: string;
+  memberId: string;
+  memberName: string;
+  timestamp: string;
+  temperatureF: number;
+  temperatureC: number;
+  measurementMethod: string;
+  severity: string;
+  symptomsJson: string;
+  medicationGivenJson?: string;
+  notes?: string;
+  recordedBy: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus: string;
+  createdAt: string;
+}
+
+export function saveFeverLogToSqlite(log: FeverLogRecord): FeverLogRecord {
+  if (!db) return log;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO family_fever_logs (
+        id, user_email, member_id, member_name, timestamp,
+        temperature_f, temperature_c, measurement_method, severity,
+        symptoms_json, medication_given_json, notes, recorded_by,
+        drive_file_id, drive_web_view_link, drive_sync_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.id,
+        log.userEmail || '',
+        log.memberId,
+        log.memberName,
+        log.timestamp || new Date().toISOString(),
+        log.temperatureF,
+        log.temperatureC,
+        log.measurementMethod || 'forehead',
+        log.severity || 'normal',
+        log.symptomsJson || '[]',
+        log.medicationGivenJson || '',
+        log.notes || '',
+        log.recordedBy || 'Auro AI',
+        log.driveFileId || '',
+        log.driveWebViewLink || '',
+        log.driveSyncStatus || 'local_only',
+        log.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return log;
+  } catch (err) {
+    console.warn('Error saving fever log to SQLite:', err);
+    return log;
+  }
+}
+
+export function getFeverLogsFromSqlite(memberId?: string, userEmail?: string): FeverLogRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM family_fever_logs`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (memberId && memberId.trim() && memberId !== 'all') {
+      conditions.push(`member_id = ?`);
+      params.push(memberId.trim());
+    }
+    if (userEmail && userEmail.trim()) {
+      conditions.push(`(user_email = ? OR user_email = '')`);
+      params.push(userEmail.trim());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+    query += ` ORDER BY timestamp DESC`;
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const logs: FeverLogRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      logs.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        memberId: String(row.member_id || ''),
+        memberName: String(row.member_name || ''),
+        timestamp: String(row.timestamp || ''),
+        temperatureF: Number(row.temperature_f || 98.6),
+        temperatureC: Number(row.temperature_c || 37.0),
+        measurementMethod: String(row.measurement_method || 'forehead'),
+        severity: String(row.severity || 'normal'),
+        symptomsJson: String(row.symptoms_json || '[]'),
+        medicationGivenJson: String(row.medication_given_json || ''),
+        notes: String(row.notes || ''),
+        recordedBy: String(row.recorded_by || 'Auro AI'),
+        driveFileId: String(row.drive_file_id || ''),
+        driveWebViewLink: String(row.drive_web_view_link || ''),
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return logs;
+  } catch (err) {
+    console.warn('Error fetching fever logs from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteFeverLogFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_fever_logs WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateFeverLogDriveSyncInSqlite(id: string, driveFileId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE family_fever_logs SET drive_file_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced' WHERE id = ?`, [
+      driveFileId,
+      driveWebViewLink || '',
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface MedicationDoseLogRecord {
+  id: string;
+  userEmail?: string;
+  memberId: string;
+  memberName: string;
+  medicationId: string;
+  drugName: string;
+  category?: string;
+  dosage: string;
+  timeSlot: string;
+  scheduledTime?: string;
+  loggedAt: string;
+  status: string;
+  loggedBy?: string;
+  notes?: string;
+  pillsRemaining?: number;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: string;
+  createdAt: string;
+}
+
+export function saveMedicationDoseLogToSqlite(log: MedicationDoseLogRecord): MedicationDoseLogRecord {
+  if (!db) return log;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO family_medication_logs (
+        id, user_email, member_id, member_name, medication_id,
+        drug_name, category, dosage, time_slot, scheduled_time,
+        logged_at, status, logged_by, notes, pills_remaining,
+        drive_file_id, drive_web_view_link, drive_sync_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.id,
+        log.userEmail || '',
+        log.memberId,
+        log.memberName,
+        log.medicationId,
+        log.drugName,
+        log.category || 'prescription',
+        log.dosage,
+        log.timeSlot,
+        log.scheduledTime || '',
+        log.loggedAt || new Date().toISOString(),
+        log.status || 'taken',
+        log.loggedBy || 'Auro AI',
+        log.notes || '',
+        log.pillsRemaining !== undefined ? log.pillsRemaining : null,
+        log.driveFileId || '',
+        log.driveWebViewLink || '',
+        log.driveSyncStatus || 'local_only',
+        log.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return log;
+  } catch (err) {
+    console.warn('Error saving medication dose log to SQLite:', err);
+    return log;
+  }
+}
+
+export function getMedicationDoseLogsFromSqlite(memberId?: string, userEmail?: string): MedicationDoseLogRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM family_medication_logs`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (memberId && memberId.trim() && memberId !== 'all') {
+      conditions.push(`member_id = ?`);
+      params.push(memberId.trim());
+    }
+    if (userEmail && userEmail.trim()) {
+      conditions.push(`(user_email = ? OR user_email = '')`);
+      params.push(userEmail.trim());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+    query += ` ORDER BY logged_at DESC`;
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const logs: MedicationDoseLogRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      logs.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        memberId: String(row.member_id || ''),
+        memberName: String(row.member_name || ''),
+        medicationId: String(row.medication_id || ''),
+        drugName: String(row.drug_name || ''),
+        category: String(row.category || 'prescription'),
+        dosage: String(row.dosage || ''),
+        timeSlot: String(row.time_slot || 'morning'),
+        scheduledTime: String(row.scheduled_time || ''),
+        loggedAt: String(row.logged_at || ''),
+        status: String(row.status || 'taken'),
+        loggedBy: String(row.logged_by || 'Auro AI'),
+        notes: String(row.notes || ''),
+        pillsRemaining: row.pills_remaining !== null && row.pills_remaining !== undefined ? Number(row.pills_remaining) : undefined,
+        driveFileId: String(row.drive_file_id || ''),
+        driveWebViewLink: String(row.drive_web_view_link || ''),
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return logs;
+  } catch (err) {
+    console.warn('Error fetching medication dose logs from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteMedicationDoseLogFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_medication_logs WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateMedicationDoseLogDriveSyncInSqlite(id: string, driveFileId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE family_medication_logs SET drive_file_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced' WHERE id = ?`, [
+      driveFileId,
+      driveWebViewLink || '',
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface HydrationLogRecord {
+  id: string;
+  userEmail?: string;
+  memberId: string;
+  memberName: string;
+  timestamp: string;
+  amountMl: number;
+  beverageType: string;
+  container: string;
+  dailyGoalMl: number;
+  notes?: string;
+  loggedBy?: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: string;
+  createdAt: string;
+}
+
+export function saveHydrationLogToSqlite(log: HydrationLogRecord): HydrationLogRecord {
+  if (!db) return log;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO family_hydration_logs (
+        id, user_email, member_id, member_name, timestamp,
+        amount_ml, beverage_type, container, daily_goal_ml,
+        notes, logged_by, drive_file_id, drive_web_view_link,
+        drive_sync_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.id,
+        log.userEmail || '',
+        log.memberId,
+        log.memberName,
+        log.timestamp || new Date().toISOString(),
+        log.amountMl,
+        log.beverageType || 'water',
+        log.container || 'glass_250',
+        log.dailyGoalMl || 2500,
+        log.notes || '',
+        log.loggedBy || 'Auro AI',
+        log.driveFileId || '',
+        log.driveWebViewLink || '',
+        log.driveSyncStatus || 'local_only',
+        log.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return log;
+  } catch (err) {
+    console.warn('Error saving hydration log to SQLite:', err);
+    return log;
+  }
+}
+
+export function getHydrationLogsFromSqlite(memberId?: string, userEmail?: string): HydrationLogRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM family_hydration_logs`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (memberId && memberId.trim() && memberId !== 'all') {
+      conditions.push(`member_id = ?`);
+      params.push(memberId.trim());
+    }
+    if (userEmail && userEmail.trim()) {
+      conditions.push(`(user_email = ? OR user_email = '')`);
+      params.push(userEmail.trim());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+    query += ` ORDER BY timestamp DESC`;
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const logs: HydrationLogRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      logs.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        memberId: String(row.member_id || ''),
+        memberName: String(row.member_name || ''),
+        timestamp: String(row.timestamp || ''),
+        amountMl: Number(row.amount_ml || 250),
+        beverageType: String(row.beverage_type || 'water'),
+        container: String(row.container || 'glass_250'),
+        dailyGoalMl: Number(row.daily_goal_ml || 2500),
+        notes: String(row.notes || ''),
+        loggedBy: String(row.logged_by || 'Auro AI'),
+        driveFileId: String(row.drive_file_id || ''),
+        driveWebViewLink: String(row.drive_web_view_link || ''),
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return logs;
+  } catch (err) {
+    console.warn('Error fetching hydration logs from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteHydrationLogFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_hydration_logs WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateHydrationLogDriveSyncInSqlite(id: string, driveFileId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE family_hydration_logs SET drive_file_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced' WHERE id = ?`, [
+      driveFileId,
+      driveWebViewLink || '',
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+
+
+
 

@@ -49,6 +49,9 @@ import {
   completeReminder,
   snoozeReminder,
 } from './services/reminderDriveSync';
+import { CustomGoogleMapModal } from './components/maps/CustomGoogleMapModal';
+import { FeverTemperatureModal } from './components/health/FeverTemperatureModal';
+import { TransportMode } from './types/mapNavigation';
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
@@ -62,6 +65,37 @@ const AppContent: React.FC = () => {
   const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
   const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
   const [activeDueReminder, setActiveDueReminder] = useState<ClockReminder | null>(null);
+
+  // Custom Google Maps & Offline Navigation Modal State
+  const [isCustomMapOpen, setIsCustomMapOpen] = useState(false);
+  const [customMapOptions, setCustomMapOptions] = useState<{
+    origin?: { name: string; lat: number; lng: number };
+    destination?: { name: string; lat: number; lng: number };
+    mode?: TransportMode;
+    autoStart?: boolean;
+  }>({});
+  const [gmpQuotaNotice, setGmpQuotaNotice] = useState<string | null>(null);
+
+  // Fever Temperature Tracker & Doctor Report Modal State
+  const [isFeverModalOpen, setIsFeverModalOpen] = useState(false);
+  const [feverModalOptions, setFeverModalOptions] = useState<{
+    memberId?: string;
+    temperatureF?: number;
+    autoLogOpen?: boolean;
+    autoPrint?: boolean;
+  }>({});
+
+  // Google Maps Platform Quota Defense Listener
+  useEffect(() => {
+    const handleQuotaExceeded = (e: any) => {
+      console.warn('[GMP] Quota or Auth Notice:', e?.detail);
+      setGmpQuotaNotice(
+        e?.detail?.message || 'Google Maps Platform daily quota reached. Offline simulation mode active.'
+      );
+    };
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
 
   // Global Alarm & Due Reminder Tick Check
   useEffect(() => {
@@ -318,7 +352,63 @@ const AppContent: React.FC = () => {
           setIsVoiceOpen(false);
           setIsOfflineSyncCenterOpen(true);
         }}
+        onOpenCustomMap={(opts) => {
+          setIsVoiceOpen(false);
+          setCustomMapOptions({
+            destination: opts?.destination ? { name: opts.destination, lat: 13.0823, lng: 80.2755 } : undefined,
+            origin: opts?.origin ? { name: opts.origin, lat: 13.0827, lng: 80.2707 } : undefined,
+            mode: opts?.mode,
+            autoStart: opts?.autoStart,
+          });
+          setIsCustomMapOpen(true);
+        }}
+        onOpenFeverTracker={(opts) => {
+          setIsVoiceOpen(false);
+          setFeverModalOptions({
+            memberId: opts?.memberId,
+            temperatureF: opts?.temperatureF,
+            autoLogOpen: opts?.autoLog,
+            autoPrint: opts?.autoPrint,
+          });
+          setIsFeverModalOpen(true);
+        }}
       />
+
+      {/* Clinical Fever Temperature & Doctor Report Modal */}
+      <FeverTemperatureModal
+        isOpen={isFeverModalOpen}
+        onClose={() => setIsFeverModalOpen(false)}
+        selectedMemberId={feverModalOptions.memberId}
+        initialTempF={feverModalOptions.temperatureF}
+        autoLogOpen={feverModalOptions.autoLogOpen}
+        autoPrint={feverModalOptions.autoPrint}
+      />
+
+      {/* Custom Google Maps & Multi-Modal Offline Navigation Modal */}
+      <CustomGoogleMapModal
+        isOpen={isCustomMapOpen}
+        onClose={() => setIsCustomMapOpen(false)}
+        initialOrigin={customMapOptions.origin}
+        initialDestination={customMapOptions.destination}
+        initialMode={customMapOptions.mode}
+        autoStartNavigation={customMapOptions.autoStart}
+      />
+
+      {/* Google Maps Platform Quota Notice Banner */}
+      {gmpQuotaNotice && (
+        <div className="fixed top-4 left-4 right-4 z-50 max-w-md mx-auto p-3 rounded-2xl bg-amber-950/90 border border-amber-600/50 text-amber-200 text-xs shadow-2xl backdrop-blur-md flex items-center justify-between gap-2 animate-in fade-in slide-in-from-top-4">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping shrink-0" />
+            <span className="font-medium">{gmpQuotaNotice}</span>
+          </div>
+          <button
+            onClick={() => setGmpQuotaNotice(null)}
+            className="text-amber-400 hover:text-white font-bold text-sm px-1.5 py-0.5 rounded-lg hover:bg-amber-900/40"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Auro Computer Vision Modal for Blind & Low-Vision Users */}
       <AuroVisionModal

@@ -11,6 +11,7 @@ import { LanguageTranslation } from '../types/translation';
 import { fetchGoogleDriveFiles, syncGoogleDriveToSqliteStore, GoogleDriveFile } from './googleWorkspace';
 import { saveAudioToStorage } from '../utils/audioStorage';
 import { savePdfToStorage } from '../utils/pdfStorage';
+import { syncHealthRecordsWithGoogleDrive } from './healthRecordDriveSync';
 
 export interface StorageBreakdownItem {
   count: number;
@@ -1068,6 +1069,12 @@ export async function syncAllFeaturesToSqliteStore(options: {
     for (const tr of localTranslations) {
       await saveTranslationToSqliteStore(tr).catch(() => {});
     }
+
+    // 6b. Synchronize Family Health Records & Documents with Drive & SQLite
+    onProgress?.('Synchronizing Family Health Records & Medical Documents...', 88);
+    await syncHealthRecordsWithGoogleDrive(token, userEmail).catch((e) => {
+      console.warn('[Offline Sync] Health records sync notice:', e);
+    });
 
     onProgress?.('Writing all records & media into SQLite 3GB storage...', 90);
 

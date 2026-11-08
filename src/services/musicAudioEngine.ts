@@ -5,8 +5,6 @@ import { MusicTrack, AudioPlaybackState, EqualizerPreset } from '../types/music'
 import { getApiUrl } from './api';
 import { isAppOffline } from './offlineSyncService';
 import { getAudioFromStorage, saveAudioToStorage } from '../utils/audioStorage';
-import { Capacitor } from '@capacitor/core';
-import { App } from '@capacitor/app';
 
 export type AudioEngineListener = (state: AudioPlaybackState) => void;
 
@@ -27,9 +25,6 @@ class MusicAudioEngine {
   private queue: MusicTrack[] = [];
   private shuffledQueue: MusicTrack[] = [];
   private listeners: Set<AudioEngineListener> = new Set();
-  private wakeLockSentinel: any = null;
-  private isUserPausing: boolean = false;
-  private mediaSessionConfigured: boolean = false;
 
   private state: AudioPlaybackState = {
     currentTrack: null,
@@ -109,19 +104,11 @@ class MusicAudioEngine {
     this.audioEl.crossOrigin = 'anonymous';
     this.audioEl.volume = this.state.volume;
     this.audioEl.playbackRate = this.state.playbackRate;
-    (this.audioEl as any).playsInline = true;
-    (this.audioEl as any).webkitPlaysInline = true;
-    this.audioEl.setAttribute('playsinline', 'true');
-    this.audioEl.setAttribute('webkit-playsinline', 'true');
-
-    this.setupBackgroundKeepAlive();
-    this.setupMediaSession();
 
     this.audioEl.addEventListener('timeupdate', () => {
       if (this.audioEl) {
         this.state.currentTime = this.audioEl.currentTime;
         this.state.duration = this.audioEl.duration || this.state.currentTrack?.durationSeconds || 180;
-        this.updateMediaSessionPositionState();
         this.notify();
       }
     });
@@ -129,35 +116,17 @@ class MusicAudioEngine {
     this.audioEl.addEventListener('loadedmetadata', () => {
       if (this.audioEl) {
         this.state.duration = this.audioEl.duration || this.state.currentTrack?.durationSeconds || 180;
-        this.updateMediaSessionPositionState();
         this.notify();
       }
     });
 
     this.audioEl.addEventListener('play', () => {
       this.state.isPlaying = true;
-      this.updateMediaSessionPlaybackState(true);
-      void this.acquireWakeLock();
       this.notify();
     });
 
     this.audioEl.addEventListener('pause', () => {
-      // If paused unexpectedly by OS (screen auto-lock / background throttle) while state says playing:
-      if (this.state.isPlaying && !this.isUserPausing) {
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume().catch(() => {});
-        }
-        setTimeout(() => {
-          if (this.state.isPlaying && this.audioEl && this.audioEl.paused) {
-            this.audioEl.play().catch(() => {});
-          }
-        }, 80);
-        return;
-      }
-
       this.state.isPlaying = false;
-      this.updateMediaSessionPlaybackState(false);
-      this.releaseWakeLock();
       this.notify();
     });
 
@@ -208,11 +177,6 @@ class MusicAudioEngine {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
         this.audioCtx = new AudioCtx();
-        this.audioCtx.onstatechange = () => {
-          if (this.state.isPlaying && this.audioCtx?.state === 'suspended') {
-            this.audioCtx.resume().catch(() => {});
-          }
-        };
         this.analyser = this.audioCtx.createAnalyser();
         this.analyser.fftSize = 128;
         this.analyser.smoothingTimeConstant = 0.8;
@@ -358,28 +322,20 @@ class MusicAudioEngine {
           playableUrl = this.resolvePlayableUrl(track);
         }
 
-        this.isUserPausing = false;
         this.audioEl.src = playableUrl;
         this.audioEl.playbackRate = this.state.playbackRate;
         this.audioEl.volume = this.state.isMuted ? 0 : this.state.volume;
         await this.audioEl.play();
         this.state.isPlaying = true;
-        this.updateMediaSessionMetadata(track);
-        this.updateMediaSessionPlaybackState(true);
-        void this.acquireWakeLock();
       } catch (err) {
         console.warn('[MusicAudioEngine] Playback start notice:', err);
         // Fallback: check IndexedDB again in case network URL was attempted and failed
         try {
           const storedAudio = await getAudioFromStorage(track.id);
           if (storedAudio && this.audioEl) {
-            this.isUserPausing = false;
             this.audioEl.src = storedAudio;
             await this.audioEl.play();
             this.state.isPlaying = true;
-            this.updateMediaSessionMetadata(track);
-            this.updateMediaSessionPlaybackState(true);
-            void this.acquireWakeLock();
             this.notify();
             return;
           }
@@ -475,11 +431,8 @@ class MusicAudioEngine {
 
     if (this.audioEl && this.state.currentTrack) {
       try {
-        this.isUserPausing = false;
         await this.audioEl.play();
         this.state.isPlaying = true;
-        this.updateMediaSessionPlaybackState(true);
-        void this.acquireWakeLock();
         this.notify();
         return;
       } catch (playErr) {
@@ -488,12 +441,9 @@ class MusicAudioEngine {
         try {
           const storedAudio = await getAudioFromStorage(this.state.currentTrack.id);
           if (storedAudio && this.audioEl) {
-            this.isUserPausing = false;
             this.audioEl.src = storedAudio;
             await this.audioEl.play();
             this.state.isPlaying = true;
-            this.updateMediaSessionPlaybackState(true);
-            void this.acquireWakeLock();
             this.notify();
             return;
           }
@@ -501,24 +451,16 @@ class MusicAudioEngine {
       }
     }
     this.state.isPlaying = false;
-    this.updateMediaSessionPlaybackState(false);
-    this.releaseWakeLock();
     this.notify();
   }
 
   public pause() {
-    this.isUserPausing = true;
     if (this.audioEl) {
       this.audioEl.pause();
     }
     this.stopSynthesizer();
     this.state.isPlaying = false;
-    this.updateMediaSessionPlaybackState(false);
-    this.releaseWakeLock();
     this.notify();
-    setTimeout(() => {
-      this.isUserPausing = false;
-    }, 200);
   }
 
   public togglePlay() {
@@ -708,195 +650,6 @@ class MusicAudioEngine {
       this.synthGainNode = null;
     }
   }
-
-  // -------------------------------------------------------------
-  // Mobile Background Playback & Screen Auto-Lock Resilience
-  // -------------------------------------------------------------
-  private setupBackgroundKeepAlive() {
-    if (typeof window === 'undefined') return;
-
-    // 1. Web visibilitychange listener
-    document.addEventListener('visibilitychange', () => {
-      if (this.state.isPlaying) {
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume().catch(() => {});
-        }
-        if (this.audioEl && this.audioEl.paused && !this.isUserPausing) {
-          this.audioEl.play().catch(() => {});
-        }
-        if (document.visibilityState === 'visible') {
-          void this.acquireWakeLock();
-        }
-      }
-    });
-
-    // 2. Window focus & blur
-    window.addEventListener('blur', () => {
-      if (this.state.isPlaying) {
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          this.audioCtx.resume().catch(() => {});
-        }
-        if (this.audioEl && this.audioEl.paused && !this.isUserPausing) {
-          this.audioEl.play().catch(() => {});
-        }
-      }
-    });
-
-    // 3. Capacitor Native App State Change
-    try {
-      if (Capacitor.isPluginAvailable('App')) {
-        void App.addListener('appStateChange', (appState) => {
-          if (!appState.isActive && this.state.isPlaying) {
-            // App backgrounded or screen locked
-            if (this.audioCtx && this.audioCtx.state === 'suspended') {
-              this.audioCtx.resume().catch(() => {});
-            }
-            if (this.audioEl && this.audioEl.paused && !this.isUserPausing) {
-              this.audioEl.play().catch(() => {});
-            }
-          } else if (appState.isActive && this.state.isPlaying) {
-            // App brought back to foreground
-            if (this.audioCtx && this.audioCtx.state === 'suspended') {
-              this.audioCtx.resume().catch(() => {});
-            }
-            if (this.audioEl && this.audioEl.paused && !this.isUserPausing) {
-              this.audioEl.play().catch(() => {});
-            }
-            void this.acquireWakeLock();
-          }
-        });
-      }
-    } catch (capErr) {
-      console.warn('[MusicAudioEngine] Capacitor App listener notice:', capErr);
-    }
-  }
-
-  // -------------------------------------------------------------
-  // Media Session API for Lock Screen & Background Playback
-  // -------------------------------------------------------------
-  private setupMediaSession() {
-    if (typeof window === 'undefined' || !('mediaSession' in navigator) || this.mediaSessionConfigured) {
-      return;
-    }
-    this.mediaSessionConfigured = true;
-
-    try {
-      navigator.mediaSession.setActionHandler('play', () => {
-        void this.play();
-      });
-      navigator.mediaSession.setActionHandler('pause', () => {
-        this.pause();
-      });
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        void this.previousTrack();
-      });
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        void this.nextTrack();
-      });
-      navigator.mediaSession.setActionHandler('seekto', (details) => {
-        if (details.seekTime !== undefined && details.seekTime !== null) {
-          this.seek(details.seekTime);
-        }
-      });
-      navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-        const offset = details.seekOffset || 10;
-        this.seek(Math.max(0, this.state.currentTime - offset));
-      });
-      navigator.mediaSession.setActionHandler('seekforward', (details) => {
-        const offset = details.seekOffset || 10;
-        this.seek(Math.min(this.state.duration || 180, this.state.currentTime + offset));
-      });
-      navigator.mediaSession.setActionHandler('stop', () => {
-        this.pause();
-      });
-    } catch (msErr) {
-      console.warn('[MusicAudioEngine] MediaSession setActionHandler notice:', msErr);
-    }
-  }
-
-  private updateMediaSessionMetadata(track: MusicTrack) {
-    if (typeof window === 'undefined' || !('mediaSession' in navigator)) return;
-    try {
-      const artworkList = [];
-      if (track.artworkUrl && track.artworkUrl.startsWith('http')) {
-        artworkList.push(
-          { src: track.artworkUrl, sizes: '96x96', type: 'image/jpeg' },
-          { src: track.artworkUrl, sizes: '128x128', type: 'image/jpeg' },
-          { src: track.artworkUrl, sizes: '192x192', type: 'image/jpeg' },
-          { src: track.artworkUrl, sizes: '512x512', type: 'image/jpeg' }
-        );
-      } else {
-        artworkList.push(
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' }
-        );
-      }
-
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: track.title || 'Unknown Title',
-        artist: track.artist || 'Aura Family Music',
-        album: track.album || 'Family Library',
-        artwork: artworkList,
-      });
-    } catch (e) {
-      console.warn('[MusicAudioEngine] MediaMetadata update notice:', e);
-    }
-  }
-
-  private updateMediaSessionPlaybackState(isPlaying: boolean) {
-    if (typeof window === 'undefined' || !('mediaSession' in navigator)) return;
-    try {
-      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-    } catch {}
-  }
-
-  private updateMediaSessionPositionState() {
-    if (
-      typeof window === 'undefined' ||
-      !('mediaSession' in navigator) ||
-      typeof navigator.mediaSession.setPositionState !== 'function'
-    ) {
-      return;
-    }
-    try {
-      const dur = this.audioEl?.duration || this.state.duration || 0;
-      const pos = this.audioEl?.currentTime || this.state.currentTime || 0;
-      if (dur > 0 && Number.isFinite(dur) && Number.isFinite(pos)) {
-        navigator.mediaSession.setPositionState({
-          duration: Math.max(dur, 0),
-          playbackRate: this.state.playbackRate || 1.0,
-          position: Math.min(Math.max(pos, 0), dur),
-        });
-      }
-    } catch {}
-  }
-
-  // -------------------------------------------------------------
-  // Screen Wake Lock API
-  // -------------------------------------------------------------
-  private async acquireWakeLock() {
-    if (typeof window === 'undefined' || !('wakeLock' in navigator) || this.wakeLockSentinel) {
-      return;
-    }
-    try {
-      this.wakeLockSentinel = await navigator.wakeLock.request('screen');
-      this.wakeLockSentinel.addEventListener('release', () => {
-        this.wakeLockSentinel = null;
-      });
-    } catch (err) {
-      // Ignore if device power policy refuses wake lock
-    }
-  }
-
-  private releaseWakeLock() {
-    if (this.wakeLockSentinel) {
-      try {
-        this.wakeLockSentinel.release();
-      } catch {}
-      this.wakeLockSentinel = null;
-    }
-  }
-
 }
 
 export const musicAudioEngine = new MusicAudioEngine();

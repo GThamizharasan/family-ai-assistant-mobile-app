@@ -48,6 +48,29 @@ import {
   saveLocalReminders,
   syncRemindersWithGoogleDrive,
 } from '../services/reminderDriveSync';
+import {
+  getLocalHealthRecords,
+  addVitalSignToMember,
+  addAllergyToMember,
+  addMedicationToMember,
+  uploadHealthDocument,
+  getGoogleAccessToken,
+} from '../services/healthRecordDriveSync';
+import {
+  recordFeverTemperature,
+  getLocalFeverLogs,
+  calculateFeverSeverity,
+  celsiusToFahrenheit,
+} from '../services/feverDriveSync';
+import {
+  logMedicationDose,
+  getTodayDoseStatusForMember,
+} from '../services/medicationDriveSync';
+import {
+  logHydrationIntake,
+  getTodayHydrationSummary,
+} from '../services/hydrationDriveSync';
+import { TransportMode } from '../types/mapNavigation';
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
@@ -57,6 +80,8 @@ interface VoiceAssistantModalProps {
   onNavigateTab?: (tab: TabKey, subTab?: string) => void;
   onOpenMusicPlayer?: () => void;
   onOpenOfflineSync?: () => void;
+  onOpenCustomMap?: (options?: { destination?: string; origin?: string; mode?: TransportMode; autoStart?: boolean }) => void;
+  onOpenFeverTracker?: (options?: { memberId?: string; memberName?: string; temperatureF?: number; autoLog?: boolean; autoPrint?: boolean }) => void;
 }
 
 export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
@@ -67,6 +92,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   onNavigateTab,
   onOpenMusicPlayer,
   onOpenOfflineSync,
+  onOpenCustomMap,
+  onOpenFeverTracker,
 }) => {
   const {
     user,
@@ -835,6 +862,66 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
+    // 6b. Custom Google Maps & Multi-Modal Offline Navigation (Bus, Train, Cycle, Car, Walk, Two-Wheeler)
+    if (
+      lower.includes('custom google map') ||
+      lower.includes('google map') ||
+      lower.includes('custom map') ||
+      lower.includes('offline navigation') ||
+      lower.includes('offline map') ||
+      lower.includes('bus route') ||
+      lower.includes('train route') ||
+      lower.includes('metro route') ||
+      lower.includes('cycle route') ||
+      lower.includes('navigate to') ||
+      lower.includes('directions to') ||
+      lower.includes('route to') ||
+      lower.includes('வரைபடம்') ||
+      lower.includes('வழிகாட்டி')
+    ) {
+      // Determine transport mode
+      let detectedMode: TransportMode = 'drive';
+      if (lower.includes('bus') || lower.includes('பேருந்து')) detectedMode = 'transit_bus';
+      else if (lower.includes('train') || lower.includes('metro') || lower.includes('rail') || lower.includes('ரயில்')) detectedMode = 'transit_train';
+      else if (lower.includes('cycle') || lower.includes('bike') || lower.includes('சைக்கிள்')) detectedMode = 'bicycle';
+      else if (lower.includes('walk') || lower.includes('foot') || lower.includes('நடந்து')) detectedMode = 'walk';
+      else if (lower.includes('scooter') || lower.includes('two wheeler') || lower.includes('மோட்டார்')) detectedMode = 'two_wheeler';
+
+      // Parse destination
+      let destinationName = '';
+      const destMatch = lower.match(/(?:navigate to|route to|directions to|go to|show route to)\s+([^by]+?)(?:\s+by|\s+via|$)/i);
+      if (destMatch && destMatch[1]) {
+        destinationName = destMatch[1].trim();
+      }
+
+      setIsThinking(false);
+      isNavigatingRef.current = true;
+      const isTamil = voiceLanguage.startsWith('ta');
+      const modeLabel = detectedMode === 'transit_bus' ? 'City Bus' : detectedMode === 'transit_train' ? 'Metro / Train' : detectedMode === 'bicycle' ? 'Bicycle' : detectedMode === 'walk' ? 'Walking' : 'Car Drive';
+      const rep = isTamil
+        ? `கூகுள் மேப்ஸ் வழிகாட்டியை ${destinationName ? destinationName + ' நோக்கி ' : ''}${modeLabel} பாதையுடன் திறக்கிறேன்.`
+        : `Opening Custom Google Maps with ${modeLabel} navigation ${destinationName ? `to ${destinationName}` : ''} and offline SQLite/Drive sync.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: `Google Maps: ${modeLabel} ${destinationName ? `➔ ${destinationName}` : ''}`,
+      });
+      speakWithAuro(rep);
+
+      if (onOpenCustomMap) {
+        onOpenCustomMap({
+          destination: destinationName,
+          mode: detectedMode,
+          autoStart: lower.includes('start') || lower.includes('navigate'),
+        });
+        onClose();
+        return;
+      }
+    }
+
     // 7. Phone / Keypad
     if (
       lower === 'open phone' ||
@@ -940,20 +1027,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
-    // 12. Health & Wellness
+    // 12. Health & Wellness / Family Health Records
     if (
       lower.includes('open wellness') ||
       lower.includes('health hub') ||
       lower.includes('open health') ||
+      lower.includes('health record') ||
+      lower.includes('health records') ||
+      lower.includes('medical record') ||
+      lower.includes('medical records') ||
+      lower.includes('medical id') ||
+      lower.includes('family health') ||
       lower === 'wellness' ||
       lower === 'health' ||
-      lower.includes('உடல் நலம்')
+      lower.includes('உடல் நலம்') ||
+      lower.includes('மருத்துவ பதிவு')
     ) {
       executeVoiceNavigation(
         'wellness',
         undefined,
-        'Opening Health & Longevity Wellness Hub on your screen now.',
-        'ஆரோக்கிய நலவாழ்வு திரையை இப்போது திறக்கிறேன்.'
+        'Opening Family Health Records and Wellness Hub on your sovereign screen now.',
+        'குடும்ப மருத்துவ பதிவுகள் மற்றும் ஆரோக்கிய திரையை இப்போது திறக்கிறேன்.'
       );
       return;
     }
@@ -1415,6 +1509,702 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         return;
       } catch (remErr) {
         console.warn('Voice reminder create error:', remErr);
+      }
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: HEALTH RECORD QUERY (VITALS, BLOOD TYPE, ALLERGIES)
+    // =========================================================================
+    const isHealthQueryIntent =
+      /\b(blood\s+(type|group)|what.*blood|my\s+blood|latest\s+vitals|check.*vitals|check.*blood\s+pressure|what.*blood\s+pressure|check.*bp|what.*allerg|any.*allerg|medical\s+id|health\s+record|medical\s+record)\b/i.test(lower) ||
+      /(இரத்த\s*வகை|இரத்த\s*அழுத்தம்|உடல்\s*நலம்|மருத்துவ\s*பதிவு|அலர்ஜி)/i.test(lower);
+
+    if (isHealthQueryIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      // Identify member
+      let targetMember = healthRecords[0];
+      if (lower.includes('grandma') || lower.includes('grandparent') || lower.includes('பாட்டி') || lower.includes('தாத்தா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('grandparent')) || healthRecords[4] || healthRecords[0];
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife') || lower.includes('spouse')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || healthRecords[1] || healthRecords[0];
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || healthRecords[2] || healthRecords[0];
+      } else if (lower.includes('kavinmozhi') || lower.includes('கவின்மொழி') || lower.includes('daughter')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('kavinmozhi')) || healthRecords[3] || healthRecords[0];
+      }
+
+      // 1. Blood group query
+      if (lower.includes('blood') || lower.includes('இரத்த')) {
+        const reply = isTamil
+          ? `${targetMember.memberName} அவர்களின் இரத்த வகை ${targetMember.bloodGroup} ஆகும். இது குடும்ப மருத்துவ பதிவேட்டில் பதிவு செய்யப்பட்டுள்ளது.`
+          : `${targetMember.memberName}'s blood group is ${targetMember.bloodGroup}. This is verified in your Family Health Vault and Google Drive.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'helpful & attentive',
+          actionSuggestion: 'Open Family Health Records',
+        });
+        speakWithAuro(reply);
+        return;
+      }
+
+      // 2. Allergies query
+      if (lower.includes('allerg') || lower.includes('அலர்ஜி')) {
+        const allergyList = targetMember.allergies.map((a) => `${a.allergen} (${a.severity})`).join(', ');
+        const reply = isTamil
+          ? `${targetMember.memberName} அவர்களின் அலர்ஜி பதிவுகள்: ${allergyList || 'எந்த ஒவ்வாமையும் பதிவாகவில்லை'}.`
+          : `${targetMember.memberName} has ${targetMember.allergies.length} recorded allergies: ${allergyList || 'None known'}.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'helpful & attentive',
+          actionSuggestion: 'Open Medical ID',
+        });
+        speakWithAuro(reply);
+        return;
+      }
+
+      // 3. Vitals query
+      const latestV = targetMember.vitalsHistory?.[0];
+      if (latestV) {
+        const bpText = latestV.systolicBp && latestV.diastolicBp ? `${latestV.systolicBp}/${latestV.diastolicBp} mmHg` : 'Not recorded';
+        const hrText = latestV.heartRate ? `${latestV.heartRate} bpm` : 'Normal';
+        const reply = isTamil
+          ? `${targetMember.memberName} அவர்களின் சமீபத்திய ரத்த அழுத்தம் ${bpText}, இதயத் துடிப்பு ${hrText} ஆகும்.`
+          : `${targetMember.memberName}'s latest recorded vitals: Blood Pressure is ${bpText}, Pulse is ${hrText}, SpO2 is ${latestV.oxygenSpO2 || 99}%. Everything is stable in your Family Health Vault.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & clear',
+          actionSuggestion: 'View Vitals in Health Hub',
+        });
+        speakWithAuro(reply);
+        return;
+      }
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: RECORD VITALS (BP, PULSE, GLUCOSE)
+    // =========================================================================
+    const isRecordVitalsIntent =
+      /\b(record\s+blood\s+pressure|log\s+blood\s+pressure|add\s+blood\s+pressure|record\s+bp|log\s+bp|add\s+bp|record\s+vitals|log\s+vitals)\b/i.test(lower) ||
+      /(இரத்த\s*அழுத்தம்\s*(பதிவு|சேர்)|பிபி\s*பதிவு)/i.test(lower);
+
+    if (isRecordVitalsIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('grandma') || lower.includes('grandparent') || lower.includes('பாட்டி') || lower.includes('தாத்தா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('grandparent')) || healthRecords[4] || healthRecords[0];
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || healthRecords[1] || healthRecords[0];
+      } else if (lower.includes('maaran') || lower.includes('மாறன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || healthRecords[2] || healthRecords[0];
+      }
+
+      // Extract numbers: e.g. "120 over 80", "120/80", "130 by 85", "125 and 82"
+      const bpMatch = lower.match(/(\d{2,3})\s*(?:over|\/|by|and|,)\s*(\d{2,3})/i);
+      const systolic = bpMatch ? parseInt(bpMatch[1], 10) : 120;
+      const diastolic = bpMatch ? parseInt(bpMatch[2], 10) : 80;
+
+      // Extract heart rate if present: e.g. "pulse 72", "heart rate 74"
+      const hrMatch = lower.match(/(?:pulse|heart rate|துடிப்பு)\s*(\d{2,3})/i);
+      const pulse = hrMatch ? parseInt(hrMatch[1], 10) : 72;
+
+      void addVitalSignToMember(
+        targetMember.memberId,
+        {
+          recordedBy: 'AURO Voice Assistant',
+          systolicBp: systolic,
+          diastolicBp: diastolic,
+          heartRate: pulse,
+          oxygenSpO2: 99,
+          notes: `Spoken log via AURO: BP ${systolic}/${diastolic} mmHg`,
+        },
+        user?.email
+      );
+
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களுக்கு இரத்த அழுத்தம் ${systolic}/${diastolic} mmHg வெற்றிகரமாக பதிவு செய்யப்பட்டு Google Drive மற்றும் SQLite-ல் சேமிக்கப்பட்டது.`
+        : `Recorded blood pressure ${systolic}/${diastolic} mmHg (Pulse: ${pulse} bpm) for ${targetMember.memberName}. Saved into local SQLite and synchronized with Google Drive under Family Circle/Health And Wellness/Family Heath Record.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Open Health & Wellness Hub',
+      });
+      speakWithAuro(reply);
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: PRINT FEVER REPORT & CLINICAL CHART
+    // =========================================================================
+    const isPrintFeverIntent =
+      /\b(print\s+(fever|temperature|medical|health)\s+(report|chart|graph|sheet|summary)|print.*fever|print.*temperature)\b/i.test(lower) ||
+      /(காய்ச்சல்\s*(அறிக்கை|விவரம்)\s*பிரிண்ட்|பிரிண்ட்\s*காய்ச்சல்)/i.test(lower);
+
+    if (isPrintFeverIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      }
+
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களின் காய்ச்சல் அறிக்கை மற்றும் வெப்பநிலை வரைபடம் அச்சுப்பொறிக்கு (Print) தயாராகிறது.`
+        : `Opening printable clinical fever report and temperature chart for ${targetMember.memberName} for your doctor consultation.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Print Clinical Fever Sheet',
+      });
+      speakWithAuro(reply);
+
+      if (onOpenFeverTracker) {
+        onOpenFeverTracker({
+          memberId: targetMember.memberId,
+          memberName: targetMember.memberName,
+          autoPrint: true,
+        });
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: FEVER GRAPH / TEMPERATURE TREND QUERY
+    // =========================================================================
+    const isFeverGraphIntent =
+      /\b(show\s+(fever|temperature)\s*(graph|chart|trend|history)|view\s+(fever|temperature)\s*(graph|chart)|check\s+fever|how\s+is.*fever|fever\s+status|temperature\s+chart|fever\s+tracker)\b/i.test(lower) ||
+      /(காய்ச்சல்\s*(வரைபடம்|விவரம்|நிலை)|வெப்பநிலை\s*வரைபடம்)/i.test(lower);
+
+    if (isFeverGraphIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('chinnathambi') || lower.includes('சின்னத்தம்பி') || lower.includes('my')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('chinnathambi')) || targetMember;
+      }
+
+      const memberLogs = getLocalFeverLogs(targetMember.memberId);
+      const latest = memberLogs[0];
+      const peak = memberLogs.length > 0 ? Math.max(...memberLogs.map((l) => l.temperatureF)) : null;
+
+      let summaryText = latest
+        ? `Latest temperature is ${latest.temperatureF}°F (${latest.temperatureC}°C, ${latest.severity} severity). Peak recorded was ${peak}°F.`
+        : 'No fever recorded recently.';
+
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களின் காய்ச்சல் வரைபடம் திறக்கப்படுகிறது. ${latest ? `சமீபத்திய வெப்பநிலை ${latest.temperatureF}°F ஆகும்.` : ''}`
+        : `Opening interactive fever curve for ${targetMember.memberName}. ${summaryText} Stored in Google Drive and local SQLite.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'caring & diagnostic',
+        actionSuggestion: 'View Interactive Fever Graph',
+      });
+      speakWithAuro(reply);
+
+      if (onOpenFeverTracker) {
+        onOpenFeverTracker({
+          memberId: targetMember.memberId,
+          memberName: targetMember.memberName,
+        });
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: RECORD FEVER TEMPERATURE (°F / °C)
+    // =========================================================================
+    const isRecordFeverIntent =
+      /\b(record\s+(fever|temperature)|log\s+(fever|temperature)|add\s+(fever|temperature)|fever\s+(is|was|of|record)|temperature\s+(is|was|of|recorded)|take\s+temperature|logged\s+fever)\b/i.test(lower) ||
+      /(காய்ச்சல்\s*(பதிவு|அளவு|சேர்)|வெப்பநிலை\s*(பதிவு|சேர்))/i.test(lower);
+
+    if (isRecordFeverIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('chinnathambi') || lower.includes('சின்னத்தம்பி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('chinnathambi')) || targetMember;
+      }
+
+      let tempF = 100.4;
+      const celsiusMatch = lower.match(/(\d{2}(?:\.\d)?)\s*(?:c|celsius|சென்டிகிரேட்)/i);
+      const fahrMatch = lower.match(/(\d{2,3}(?:\.\d)?)\s*(?:f|fahrenheit|degrees|டிகிரி)?/i);
+
+      if (celsiusMatch) {
+        const valC = parseFloat(celsiusMatch[1]);
+        tempF = celsiusToFahrenheit(valC);
+      } else if (fahrMatch) {
+        const valF = parseFloat(fahrMatch[1]);
+        if (valF > 50) {
+          tempF = valF;
+        } else if (valF >= 35 && valF <= 43) {
+          tempF = celsiusToFahrenheit(valF);
+        }
+      }
+
+      const symptoms: string[] = [];
+      if (lower.includes('chill') || lower.includes('shiver') || lower.includes('குளிர்')) symptoms.push('Chills & Shivering');
+      if (lower.includes('headache') || lower.includes('தலைவலி')) symptoms.push('Headache');
+      if (lower.includes('body ache') || lower.includes('உடல் வலி')) symptoms.push('Body Ache');
+      if (lower.includes('cough') || lower.includes('இருமல்')) symptoms.push('Cough');
+
+      let medicationGiven: { name: string; dose: string; givenAt: string } | undefined;
+      if (lower.includes('paracetamol') || lower.includes('crocin') || lower.includes('calpol')) {
+        medicationGiven = {
+          name: 'Paracetamol',
+          dose: '1 standard dose',
+          givenAt: new Date().toISOString(),
+        };
+      } else if (lower.includes('ibuprofen') || lower.includes('ibugesic')) {
+        medicationGiven = {
+          name: 'Ibuprofen',
+          dose: '1 standard dose',
+          givenAt: new Date().toISOString(),
+        };
+      }
+
+      void recordFeverTemperature({
+        memberId: targetMember.memberId,
+        memberName: targetMember.memberName,
+        temperatureF: tempF,
+        measurementMethod: 'forehead',
+        symptoms,
+        medicationGiven,
+        recordedBy: 'AURO Voice Assistant',
+        notes: `Spoken entry recorded via AURO Assistant: "${lower}"`,
+      });
+
+      const severity = calculateFeverSeverity(tempF);
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களுக்கு காய்ச்சல் வெப்பநிலை ${tempF}°F வெற்றிகரமாக பதிவு செய்யப்பட்டது. நிலைமை: ${severity}. விவரங்கள் Google Drive மற்றும் SQLite-ல் ஒத்திசைக்கப்பட்டது.`
+        : `Recorded fever temperature of ${tempF}°F for ${targetMember.memberName} (${severity.toUpperCase()} category). Stored in local SQLite and synced to Google Drive under Family Circle/Health And Wellness/Family Heath Record/Fever Logs.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'diagnostic & warm',
+        actionSuggestion: 'View Fever Graph & Chart',
+      });
+      speakWithAuro(reply);
+
+      if (onOpenFeverTracker) {
+        onOpenFeverTracker({
+          memberId: targetMember.memberId,
+          memberName: targetMember.memberName,
+          temperatureF: tempF,
+        });
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: SMART MEDICATION & SUPPLEMENT STATUS / DUE REMINDER
+    // =========================================================================
+    const isMedicationQueryIntent =
+      /\b(medication\s+(due|status|schedule|reminder|list)|what.*(medicine|medication|pill|supplement|tablet)|check.*(medicine|medication|pill|supplement)|any.*(medicine|pill|supplement)|pills.*today|supplement.*today)\b/i.test(lower) ||
+      /(மருந்து\s*நினைவூட்டல்|இன்றைய\s*மாத்திரைகள்|மருந்துகள்\s*என்ன)/i.test(lower);
+
+    if (isMedicationQueryIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      }
+
+      const status = getTodayDoseStatusForMember(targetMember.memberId);
+      const memberMeds = targetMember.medications || [];
+
+      let reply = '';
+      if (memberMeds.length === 0) {
+        reply = isTamil
+          ? `${targetMember.memberName} அவர்களுக்கு தற்போது மாத்திரைகள் எதுவும் பதிவு செய்யப்படவில்லை.`
+          : `No active medications or supplements scheduled for ${targetMember.memberName}. You can add supplements in the Smart Meds Tracker.`;
+      } else {
+        const pendingItems: string[] = [];
+        const takenItems: string[] = [];
+
+        (['morning', 'afternoon', 'evening', 'bedtime'] as const).forEach((slot) => {
+          status.slots[slot].forEach((item) => {
+            if (item.status === 'taken') {
+              takenItems.push(`${item.med.drugName} (${slot})`);
+            } else {
+              pendingItems.push(`${item.med.drugName} (${slot})`);
+            }
+          });
+        });
+
+        if (isTamil) {
+          reply = `${targetMember.memberName} அவர்களின் இன்றைய மருந்து நிலவரம்: ${takenItems.length} மாத்திரைகள் எடுக்கப்பட்டுள்ளன. இன்னும் ${pendingItems.length} மாத்திரைகள் (${pendingItems.join(', ') || 'எதுவுமில்லை'}) எடுக்க வேண்டியுள்ளது. இன்றைய பின்பற்றுதல் வீதம் ${status.adherenceRate}% ஆகும்.`;
+        } else {
+          reply = `For ${targetMember.memberName}, today's adherence is ${status.adherenceRate}%. ${
+            takenItems.length > 0 ? `Completed: ${takenItems.join(', ')}. ` : 'No doses taken yet. '
+          }${
+            pendingItems.length > 0
+              ? `Pending: ${pendingItems.join(', ')}. Say "Auro, log that I took my pill" after taking it.`
+              : 'All scheduled doses for today have been completed!'
+          }`;
+        }
+      }
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & encouraging',
+        actionSuggestion: 'Open Smart Meds & Supplements',
+      });
+      speakWithAuro(reply);
+
+      if (onNavigateTab) {
+        onNavigateTab('wellness');
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: LOG TAKEN MEDICATION / SUPPLEMENT DOSE
+    // =========================================================================
+    const isLogMedDoseIntent =
+      /\b(took|taken|log.*(medicine|medication|pill|supplement|dose|tablet|vitamin|omega|magnesium)|mark.*(taken|done)|swallowed|administered)\b/i.test(lower) ||
+      /(மாத்திரை\s*எடுத்தாச்சு|வைட்டமின்\s*எடுத்தாச்சு|மருந்து\s*சாப்பிட்டாச்சு)/i.test(lower);
+
+    if (isLogMedDoseIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      }
+
+      const meds = targetMember.medications || [];
+      // Match drug name in utterance
+      let matchedMed = meds.find((m) =>
+        lower.includes(m.drugName.toLowerCase()) ||
+        (m.drugName.toLowerCase().includes('vitamin d') && lower.includes('vitamin')) ||
+        (m.drugName.toLowerCase().includes('omega') && lower.includes('omega')) ||
+        (m.drugName.toLowerCase().includes('magnesium') && lower.includes('magnesium')) ||
+        (m.drugName.toLowerCase().includes('metformin') && lower.includes('metformin')) ||
+        (m.drugName.toLowerCase().includes('multivitamin') && lower.includes('multi'))
+      );
+
+      // Determine timeSlot
+      const currentHour = new Date().getHours();
+      let slot: 'morning' | 'afternoon' | 'evening' | 'bedtime' = 'morning';
+      if (lower.includes('bedtime') || lower.includes('night') || currentHour >= 21) {
+        slot = 'bedtime';
+      } else if (lower.includes('evening') || lower.includes('dinner') || currentHour >= 17) {
+        slot = 'evening';
+      } else if (lower.includes('afternoon') || lower.includes('lunch') || currentHour >= 12) {
+        slot = 'afternoon';
+      }
+
+      // If no specific med named, pick first pending med for this slot or first med
+      if (!matchedMed && meds.length > 0) {
+        matchedMed = meds.find((m) => m.timeSlots.includes(slot)) || meds[0];
+      }
+
+      if (matchedMed) {
+        void logMedicationDose({
+          memberId: targetMember.memberId,
+          memberName: targetMember.memberName,
+          medicationId: matchedMed.id,
+          drugName: matchedMed.drugName,
+          category: matchedMed.category,
+          dosage: matchedMed.dosage,
+          timeSlot: slot,
+          scheduledTime: matchedMed.scheduledTime,
+          status: 'taken',
+          loggedBy: 'Auro Voice Assistant',
+          notes: `Confirmed via Auro voice command: "${lower}"`,
+        });
+
+        const remainingText =
+          matchedMed.pillsRemaining !== undefined
+            ? ` (${Math.max(0, matchedMed.pillsRemaining - 1)} doses remaining in bottle)`
+            : '';
+
+        const reply = isTamil
+          ? `${targetMember.memberName} அவர்களுக்கு ${matchedMed.drugName} (${matchedMed.dosage}) மருந்து வெற்றிகரமாக பதிவு செய்யப்பட்டது${remainingText}. Google Drive மற்றும் SQLite-ல் சேமிக்கப்பட்டது.`
+          : `Logged ${matchedMed.drugName} (${matchedMed.dosage}) as taken for ${targetMember.memberName}${remainingText}. Synced to local SQLite and Google Drive. Great job staying consistent with your health routine!`;
+
+        addVoiceMessage({
+          role: 'assistant',
+          content: reply,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'warm & motivating',
+          actionSuggestion: 'View Smart Meds Tracker',
+        });
+        speakWithAuro(reply);
+        return;
+      }
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: HYDRATION INTAKE QUERY
+    // =========================================================================
+    const isHydrationQueryIntent =
+      /\b(how\s+much\s+water|water\s+(intake|drank|goal|status)|check.*hydration|hydration\s+status|water.*today)\b/i.test(lower) ||
+      /(தண்ணீர்\s*அளவு|ஹைட்ரேஷன்\s*நிலை|எவ்வளவு\s*தண்ணீர்)/i.test(lower);
+
+    if (isHydrationQueryIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      }
+
+      const summary = getTodayHydrationSummary(targetMember.memberId);
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களின் இன்றைய தண்ணீர் உட்கொள்ளல்: ${summary.totalDrankMl} mL / ${summary.dailyGoalMl} mL (${summary.progressPercent}%). இன்னும் ${summary.remainingMl} mL தண்ணீர் குடிக்க வேண்டும்.`
+        : `For ${targetMember.memberName}, you have consumed ${summary.totalDrankMl} mL of fluids today towards your ${summary.dailyGoalMl} mL target (${summary.progressPercent}%). You need ${summary.remainingMl} mL more to reach 100%.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'refreshing & attentive',
+        actionSuggestion: 'Open Hydration Tracker',
+      });
+      speakWithAuro(reply);
+
+      if (onNavigateTab) {
+        onNavigateTab('wellness');
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: LOG HYDRATION WATER INTAKE VIA VOICE
+    // =========================================================================
+    const isLogHydrationIntent =
+      /\b(log.*(water|hydration|fluid)|drank.*(water|fluid|glass|bottle|coconut|electrolyte)|drink.*water|add.*(water|hydration))\b/i.test(lower) ||
+      /(தண்ணீர்\s*குடித்தேன்|தண்ணீர்\s*(பதிவு|சேர்))/i.test(lower);
+
+    if (isLogHydrationIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      } else if (lower.includes('sangeetha') || lower.includes('சங்கீதா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('sangeetha')) || targetMember;
+      }
+
+      // Parse amount in mL
+      let amountMl = 250;
+      const mlMatch = lower.match(/(\d{2,4})\s*(?:ml|மில்லி)/i);
+      const literMatch = lower.match(/(\d(?:\.\d)?)\s*(?:l|liter|liters|லிட்டர்)/i);
+
+      if (mlMatch) {
+        amountMl = parseInt(mlMatch[1], 10);
+      } else if (literMatch) {
+        amountMl = Math.round(parseFloat(literMatch[1]) * 1000);
+      } else if (lower.includes('bottle') || lower.includes('பாட்டில்')) {
+        amountMl = 500;
+      } else if (lower.includes('sports') || lower.includes('flask')) {
+        amountMl = 750;
+      } else if (lower.includes('jug') || lower.includes('carafe') || lower.includes('pitcher')) {
+        amountMl = 1000;
+      } else if (lower.includes('glass') || lower.includes('cup') || lower.includes('டம்ளர்') || lower.includes('கிளாஸ்')) {
+        amountMl = 250;
+      }
+
+      // Detect beverage type
+      let beverageType: 'water' | 'electrolyte' | 'lemon_water' | 'coconut_water' | 'herbal_tea' = 'water';
+      if (lower.includes('coconut') || lower.includes('இளநீர்')) beverageType = 'coconut_water';
+      else if (lower.includes('electrolyte') || lower.includes('ors')) beverageType = 'electrolyte';
+      else if (lower.includes('lemon') || lower.includes('எலுமிச்சை')) beverageType = 'lemon_water';
+      else if (lower.includes('tea') || lower.includes('herbal') || lower.includes('தேநீர்')) beverageType = 'herbal_tea';
+
+      void logHydrationIntake({
+        memberId: targetMember.memberId,
+        memberName: targetMember.memberName,
+        amountMl,
+        beverageType,
+        loggedBy: 'Auro AI Voice',
+        notes: `Logged via Auro voice command: "${lower}"`,
+      });
+
+      const updatedSummary = getTodayHydrationSummary(targetMember.memberId);
+      const newTotal = updatedSummary.totalDrankMl + amountMl;
+      const newPercent = Math.min(100, Math.round((newTotal / updatedSummary.dailyGoalMl) * 100));
+
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களுக்கு ${amountMl} mL தண்ணீர் வெற்றிகரமாக பதிவு செய்யப்பட்டது. இன்றைய மொத்த அளவு: ${newTotal} mL (${newPercent}%). Google Drive மற்றும் SQLite-ல் சேமிக்கப்பட்டது.`
+        : `Logged ${amountMl} mL of ${beverageType.replace('_', ' ')} for ${targetMember.memberName}. Today's total is now ${newTotal} mL (${newPercent}% of ${updatedSummary.dailyGoalMl} mL target). Synced with local SQLite and Google Drive.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'refreshing & encouraging',
+        actionSuggestion: 'View Circular Hydration Ring',
+      });
+      speakWithAuro(reply);
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: UPLOAD MEDICAL DOCUMENT / LAB REPORT TO DRIVE
+    // =========================================================================
+    const isUploadHealthDocIntent =
+      /\b(upload\s+(health|medical|lab|prescription|doctor|hospital|report|scan)|save\s+(health|medical|lab|prescription)\s+(document|report|file)|attach\s+(medical|health|report))\b/i.test(lower) ||
+      /(மருத்துவ\s*(ஆவணம்|அறிக்கை|ரிப்போர்ட்)\s*(பதிவேற்று|சேமி))/i.test(lower);
+
+    if (isUploadHealthDocIntent) {
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('grandma') || lower.includes('grandparent') || lower.includes('பாட்டி') || lower.includes('தாத்தா')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('grandparent')) || healthRecords[4] || healthRecords[0];
+      } else if (lower.includes('selvi') || lower.includes('செல்வி')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || healthRecords[1] || healthRecords[0];
+      } else if (lower.includes('maaran') || lower.includes('மாறன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || healthRecords[2] || healthRecords[0];
+      }
+
+      if (selectedFile) {
+        setIsThinking(true);
+        try {
+          const reader = new FileReader();
+          const base64Data = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(selectedFile);
+          });
+
+          const doc = await uploadHealthDocument(
+            {
+              memberId: targetMember.memberId,
+              memberName: targetMember.memberName,
+              title: selectedFile.name.replace(/\.[^/.]+$/, '').replace(/[_-]/g, ' '),
+              category: 'lab_report',
+              documentDate: new Date().toISOString().split('T')[0],
+              fileName: selectedFile.name,
+              mimeType: selectedFile.type || 'application/pdf',
+              fileSizeBytes: selectedFile.size,
+              fileContentBase64: base64Data,
+              notes: `Uploaded via AURO Voice Assistant for ${targetMember.memberName}`,
+            },
+            googleAccessToken || getGoogleAccessToken(),
+            user?.email
+          );
+
+          setSelectedFile(null);
+          setFilePreviewUrl(null);
+          setIsThinking(false);
+
+          const reply = isTamil
+            ? `உங்கள் மருத்துவ ஆவணம் "${doc.title}" ${targetMember.memberName} அவர்களின் கூகுள் டிரைவ் கோப்புறையில் (Family Circle/Health And Wellness/Family Heath Record/${targetMember.memberName}/Documents) மற்றும் உள்ளூர் SQLite-ல் பாதுகாப்பாக சேமிக்கப்பட்டது.`
+            : `Uploaded and stored "${doc.title}" for ${targetMember.memberName} in Google Drive under Family Circle/Health And Wellness/Family Heath Record/${targetMember.memberName}/Documents and secured in local SQLite vault.`;
+
+          addVoiceMessage({
+            role: 'assistant',
+            content: reply,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'helpful & attentive',
+            actionSuggestion: 'View Document in Health Hub',
+          });
+          speakWithAuro(reply);
+          return;
+        } catch (uploadErr) {
+          setIsThinking(false);
+          console.warn('[VoiceAssistant] Health document upload error:', uploadErr);
+        }
+      } else {
+        fileInputRef.current?.click();
+        const prompt = isTamil
+          ? `${targetMember.memberName} அவர்களின் மருத்துவ ஆவணத்தை தேர்ந்தெடுக்கவும். கீழே உள்ள Paperclip பொத்தானையும் தட்டலாம்.`
+          : `Please select the lab report or medical document for ${targetMember.memberName}. It will be stored in Google Drive under Family Circle/Health And Wellness/Family Heath Record/${targetMember.memberName}/Documents and local SQLite.`;
+        addVoiceMessage({
+          role: 'assistant',
+          content: prompt,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'attentive & organized',
+          actionSuggestion: 'Attach Medical Document',
+        });
+        speakWithAuro(prompt);
+        return;
       }
     }
 

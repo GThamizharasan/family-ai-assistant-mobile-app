@@ -688,12 +688,12 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1">
-                      <span className="text-xs font-bold text-white truncate">Family GPS Radar</span>
+                      <span className="text-xs font-bold text-white truncate">Google Maps & Transit</span>
                       <span className="text-[9px] font-mono px-1 rounded bg-emerald-500/20 text-emerald-300">
-                        {familySafeCount}/{familyMembers.length}
+                        Bus • Train • Car • Cycle
                       </span>
                     </div>
-                    <p className="text-[10px] text-slate-400 truncate">Geofence & Live Location</p>
+                    <p className="text-[10px] text-slate-400 truncate">Multi-Modal & Offline Navigation</p>
                   </div>
                 </div>
                 <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition-colors shrink-0" />
@@ -2211,10 +2211,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
             },
             {
               key: 'family' as TabKey,
-              title: 'Google Maps Family GPS Radar',
-              category: 'Family & Safety',
-              desc: 'Live Chennai coordinates, geofence security zones, and real-time battery status.',
-              badge: `${familySafeCount}/${familyMembers.length} SAFE`,
+              title: 'Google Maps & Multi-Modal Navigation',
+              category: 'Maps & Transit',
+              desc: 'Live multi-modal directions (Bus, Train, Cycle, Car), offline step-by-step guidance, and family radar.',
+              badge: `TRANSIT & OFFLINE`,
               icon: MapPin,
               accent: 'border-emerald-500/30 hover:border-emerald-400',
               iconBg: 'bg-emerald-500/20 text-emerald-400',

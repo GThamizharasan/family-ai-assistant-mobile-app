@@ -21,6 +21,7 @@ import {
   Check,
   ScanLine,
   Radio,
+  Navigation,
 } from 'lucide-react';
 import {
   fetchSqlite3GbQuota,
@@ -433,6 +434,26 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
                 </div>
                 <div className="text-[11px] font-mono text-slate-200 mt-1">
                   {(quota?.breakdown.scans?.mb ?? 0).toFixed(1)} MB
+                </div>
+              </div>
+
+              {/* Custom Google Maps & Multi-Modal Navigation */}
+              <div
+                onClick={() => onNavigateTab?.('family')}
+                className="p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800/90 cursor-pointer transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-1.5 text-teal-400">
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span className="font-bold">Offline Maps</span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-slate-500 group-hover:text-teal-400 transition-colors" />
+                </div>
+                <div className="text-[10px] text-slate-400">
+                  Routes & Offline Packages
+                </div>
+                <div className="text-[11px] font-mono text-slate-200 mt-1">
+                  Multi-Modal Transit
                 </div>
               </div>
             </div>
