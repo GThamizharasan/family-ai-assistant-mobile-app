@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import * as d3 from 'd3';
 import {
   X,
@@ -27,6 +28,9 @@ import {
   Sparkles,
   CheckCircle2,
   Bookmark,
+  Share2,
+  Download,
+  FileText,
 } from 'lucide-react';
 import { FeverLogEntry, FeverSeverity, FamilyHealthRecord, FeverReadingGroup } from '../../types/healthRecord';
 import {
@@ -35,6 +39,7 @@ import {
   deleteFeverLog,
   syncFeverLogsWithGoogleDrive,
   syncSingleFeverLogToGoogleDrive,
+  syncFeverDataWithSqlite,
   fetchFeverLogsFromSqlite,
   getLocalFeverGroups,
   fetchFeverGroupsFromSqlite,
@@ -130,6 +135,8 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const printSvgRef = useRef<SVGSVGElement | null>(null);
+  const previewSvgRef = useRef<SVGSVGElement | null>(null);
+  const [showPrintPreview, setShowPrintPreview] = useState<boolean>(false);
 
   // Load initial members, groups, and logs
   useEffect(() => {
@@ -441,23 +448,35 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     setIsSyncingDrive(true);
     setDriveSyncSuccess(null);
     try {
-      const res = await syncFeverLogsWithGoogleDrive();
-      if (res.success) {
-        setDriveSyncSuccess(`Successfully synced ${res.syncedCount} fever entries to Google Drive!`);
-        setFeverLogs(getLocalFeverLogs());
+      // 1. Sync SQLite and LocalStorage bidirectionally
+      const sqliteRes = await syncFeverDataWithSqlite();
+
+      // 2. Sync with Google Drive (folders, groups, moments, timeline)
+      const driveRes = await syncFeverLogsWithGoogleDrive();
+
+      // 3. Refresh reactive view state
+      setFeverLogs(getLocalFeverLogs());
+      setFeverGroups(getLocalFeverGroups());
+
+      const token = getGoogleAccessToken();
+      if (driveRes.success && token) {
+        setDriveSyncSuccess(
+          `Synced! SQLite (${sqliteRes.syncedLogs} moments, ${sqliteRes.syncedGroups} episodes) + Google Drive (${driveRes.syncedCount} moments, ${driveRes.groupCount} episodes) updated.`
+        );
+      } else if (sqliteRes.success) {
+        setDriveSyncSuccess(
+          `SQLite synchronized (${sqliteRes.syncedLogs} moments, ${sqliteRes.syncedGroups} episodes). ${
+            !token ? 'Connect Google Drive in Settings for cloud backup.' : 'Cloud sync completed.'
+          }`
+        );
       } else {
-        const token = getGoogleAccessToken();
-        if (!token) {
-          setDriveSyncSuccess('Offline/Local mode active. Connect Google Drive in Settings for cloud backup.');
-        } else {
-          setDriveSyncSuccess('Sync completed with local SQLite store.');
-        }
+        setDriveSyncSuccess('Sync completed with local SQLite store.');
       }
     } catch (err: any) {
-      setDriveSyncSuccess('Synced with SQLite local store.');
+      setDriveSyncSuccess('Synced with SQLite persistent store.');
     } finally {
       setIsSyncingDrive(false);
-      setTimeout(() => setDriveSyncSuccess(null), 5000);
+      setTimeout(() => setDriveSyncSuccess(null), 6000);
     }
   };
 
@@ -818,13 +837,228 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   };
 
   const handlePrint = () => {
+    const patientName = activeMember?.memberName || 'Family';
+    const episodeName = currentSelectedGroup ? currentSelectedGroup.groupName.replace(/\s+/g, '_') : 'Fever';
+    const docTitle = `Fever_Report_${patientName}_${episodeName}`;
+
     if (printSvgRef.current && displayedLogs.length > 0) {
       drawChart(printSvgRef.current, displayedLogs, true);
     }
-    // Give browser event loop a moment to flush SVG rendering before print snapshot
+    if (previewSvgRef.current && displayedLogs.length > 0) {
+      drawChart(previewSvgRef.current, displayedLogs, true);
+    }
+
+    // 1. Native Android Capacitor App support via our AndroidPrinter bridge
+    if (typeof window !== 'undefined' && (window as any).AndroidPrinter && typeof (window as any).AndroidPrinter.print === 'function') {
+      try {
+        setTimeout(() => {
+          (window as any).AndroidPrinter.print(docTitle);
+        }, 120);
+        return;
+      } catch (err) {
+        console.warn('Native Android printer error:', err);
+      }
+    }
+
+    // 2. Mobile environment detection
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      (typeof window !== 'undefined' && !!(window as any).Capacitor?.isNativePlatform?.());
+
+    if (isMobile) {
+      setShowPrintPreview(true);
+      setTimeout(() => {
+        try {
+          window.print();
+        } catch {
+          // ignore on mobile WebViews where window.print is unsupported
+        }
+      }, 120);
+      return;
+    }
+
+    // 3. Desktop browser print preview
     setTimeout(() => {
       window.print();
-    }, 60);
+    }, 120);
+  };
+
+  const handleShareReport = async () => {
+    const patientName = activeMember?.memberName || 'Family Member';
+    const episodeName = currentSelectedGroup ? currentSelectedGroup.groupName : 'All Moments';
+    const peakTemp = displayedPeakLog
+      ? `${displayedPeakLog.temperatureF}°F / ${displayedPeakLog.temperatureC}°C`
+      : 'N/A';
+    const latestTemp = displayedLatestLog
+      ? `${displayedLatestLog.temperatureF}°F / ${displayedLatestLog.temperatureC}°C`
+      : 'N/A';
+
+    const textSummary =
+      `📋 *CLINICAL FEVER EPISODE REPORT*\n` +
+      `👤 Patient: ${patientName} (${activeMember?.age || ''} yrs, Blood: ${activeMember?.bloodGroup || 'O+'})\n` +
+      `🌡️ Episode: ${episodeName}\n` +
+      `🔥 Peak Temp: ${peakTemp}\n` +
+      `⏱️ Latest Reading: ${latestTemp}\n` +
+      `💊 Medication Doses: ${displayedLogs.filter((l) => l.medicationGiven).length}\n` +
+      `📊 Total Moments: ${displayedLogs.length}\n\n` +
+      `Chronological Moments:\n` +
+      displayedLogs
+        .slice(0, 15)
+        .map(
+          (l, i) =>
+            `${i + 1}. ${new Date(l.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}: ${l.temperatureF}°F (${l.temperatureC}°C) - ${l.severity}${l.medicationGiven ? ` [Rx: ${l.medicationGiven.name} ${l.medicationGiven.dose}]` : ''}`
+        )
+        .join('\n') +
+      (displayedLogs.length > 15 ? `\n...and ${displayedLogs.length - 15} more readings.` : '') +
+      `\n\nGenerated by AuraFamily Sovereign Health Vault.`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Clinical Fever Report - ${patientName}`,
+          text: textSummary,
+        });
+        return;
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.warn('Share error:', err);
+        }
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(textSummary);
+      setDriveSyncSuccess('Report summary copied to clipboard! You can paste in WhatsApp or Email.');
+      setTimeout(() => setDriveSyncSuccess(null), 4000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDownloadOfflineReport = () => {
+    const patientName = activeMember?.memberName || 'Family_Member';
+    const episodeName = currentSelectedGroup
+      ? currentSelectedGroup.groupName.replace(/\s+/g, '_')
+      : 'Fever';
+    const docTitle = `Fever_Report_${patientName}_${episodeName}_${new Date().toISOString().slice(0, 10)}`;
+
+    const svgEl = previewSvgRef.current || printSvgRef.current;
+    const svgHtml = svgEl ? svgEl.outerHTML : '';
+
+    const htmlDoc = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${docTitle}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #ffffff; color: #0f172a; margin: 0; padding: 15px; }
+    .card { border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 10px; }
+    th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+    th { background: #f1f5f9; font-weight: bold; }
+    .kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; text-align: center; }
+    .kpi-box { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px; background: #f8fafc; }
+    .kpi-title { font-size: 9px; text-transform: uppercase; color: #64748b; font-weight: bold; }
+    .kpi-val { font-size: 16px; font-weight: bold; margin-top: 2px; }
+    @media print {
+      @page { size: A4 portrait; margin: 8mm 10mm; }
+      body { padding: 0; }
+      .no-print { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print" style="margin-bottom: 15px; display: flex; gap: 10px;">
+    <button onclick="window.print()" style="background: #2563eb; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: bold; cursor: pointer;">
+      🖨️ Print / Save as PDF
+    </button>
+  </div>
+  <div style="border-bottom: 2px solid #0f172a; padding-bottom: 8px; margin-bottom: 12px; display: flex; justify-content: space-between;">
+    <div>
+      <h1 style="font-size: 18px; margin: 0; font-weight: bold;">CLINICAL FEVER EPISODE REPORT</h1>
+      <p style="font-size: 11px; color: #64748b; margin: 2px 0 0 0;">Family Circle Health Vault • Sovereign Health Record System</p>
+    </div>
+    <div style="text-align: right; font-size: 10px; color: #64748b;">
+      <div>Printed: ${new Date().toLocaleString()}</div>
+    </div>
+  </div>
+
+  <div class="card" style="background: #f8fafc; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; font-size: 12px;">
+    <div><span style="font-size: 9px; color: #64748b; text-transform: uppercase; display: block; font-weight: bold;">Patient</span><strong>${activeMember?.memberName}</strong></div>
+    <div><span style="font-size: 9px; color: #64748b; text-transform: uppercase; display: block; font-weight: bold;">Age / Gender</span>${activeMember?.age} yrs • ${activeMember?.gender}</div>
+    <div><span style="font-size: 9px; color: #64748b; text-transform: uppercase; display: block; font-weight: bold;">Blood Group</span>${activeMember?.bloodGroup || 'O+'}</div>
+    <div><span style="font-size: 9px; color: #64748b; text-transform: uppercase; display: block; font-weight: bold;">Allergies</span><span style="color: #be123c;">${activeMember?.allergies?.map((a: any) => a.allergen).join(', ') || 'No Known Allergies'}</span></div>
+  </div>
+
+  <div class="kpi">
+    <div class="kpi-box"><div class="kpi-title">Peak Temp</div><div class="kpi-val" style="color: #e11d48;">${displayedPeakLog ? `${displayedPeakLog.temperatureF}°F` : 'N/A'}</div></div>
+    <div class="kpi-box"><div class="kpi-title">Latest Reading</div><div class="kpi-val">${displayedLatestLog ? `${displayedLatestLog.temperatureF}°F` : 'N/A'}</div></div>
+    <div class="kpi-box"><div class="kpi-title">Moments</div><div class="kpi-val">${displayedLogs.length}</div></div>
+    <div class="kpi-box"><div class="kpi-title">Meds Doses</div><div class="kpi-val" style="color: #7c3aed;">${displayedLogs.filter((l) => l.medicationGiven).length}</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom: 12px;">
+    <div style="font-size: 11px; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; color: #334155;">Thermal Trend Curve & Antipyretic Timeline</div>
+    <div style="width: 100%; height: 175px;">${svgHtml}</div>
+  </div>
+
+  <div style="font-size: 12px; font-weight: bold; margin-bottom: 4px;">Chronological Fever Moments</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Date & Time</th>
+        <th>Temp (°F / °C)</th>
+        <th>Site</th>
+        <th>Classification</th>
+        <th>Symptoms</th>
+        <th>Antipyretic / Meds</th>
+        <th>Caregiver Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${displayedLogs
+        .map(
+          (l) => `
+        <tr>
+          <td style="font-family: monospace; white-space: nowrap;">${new Date(l.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
+          <td style="font-weight: bold; color: ${l.temperatureF >= 100.4 ? '#e11d48' : '#059669'};">${l.temperatureF}°F (${l.temperatureC}°C)</td>
+          <td style="text-transform: capitalize;">${l.measurementMethod.replace('_', ' ')}</td>
+          <td style="text-transform: capitalize;">${l.severity}</td>
+          <td>${l.symptoms.length > 0 ? l.symptoms.join(', ') : 'None'}</td>
+          <td style="color: #6b21a8; font-weight: 500;">${l.medicationGiven ? `${l.medicationGiven.name} (${l.medicationGiven.dose})` : '—'}</td>
+          <td style="color: #475569;">${l.notes || '—'}</td>
+        </tr>
+      `
+        )
+        .join('')}
+    </tbody>
+  </table>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 25px; padding-top: 15px; border-top: 1px solid #94a3b8; font-size: 11px;">
+    <div>
+      <strong>Pediatrician / Physician Assessment:</strong>
+      <div style="height: 35px; border-bottom: 1px dashed #94a3b8; margin-top: 5px;"></div>
+    </div>
+    <div style="text-align: right;">
+      <strong>Consulting Physician Signature & Stamp</strong>
+      <div style="margin-top: 20px; color: #64748b;">Date: __________________________</div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    const blob = new Blob([htmlDoc], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${docTitle}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setDriveSyncSuccess(`Clinical report downloaded as "${docTitle}.html"!`);
+    setTimeout(() => setDriveSyncSuccess(null), 4000);
   };
 
   // D3.js Temperature Graph Renderer
@@ -836,248 +1070,271 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     if (printSvgRef.current) {
       drawChart(printSvgRef.current, displayedLogs, true);
     }
+    if (previewSvgRef.current) {
+      drawChart(previewSvgRef.current, displayedLogs, true);
+    }
   }, [displayedLogs, unit]);
+
+  useEffect(() => {
+    if (showPrintPreview && displayedLogs.length > 0) {
+      setTimeout(() => {
+        if (previewSvgRef.current) {
+          drawChart(previewSvgRef.current, displayedLogs, true);
+        }
+      }, 50);
+    }
+  }, [showPrintPreview, displayedLogs]);
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto print:p-0 print:m-0 print:bg-white print:static print:overflow-visible">
-      {/* PRINT-ONLY MEDICAL REPORT */}
-      <div id="aura-clinical-print-portal" className="hidden print:block bg-white text-slate-900 p-2 font-sans">
-        <style>{`
-          @media print {
-            @page {
-              size: A4 portrait;
-              margin: 8mm 10mm;
-            }
-            html, body {
-              height: auto !important;
-              min-height: 0 !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              background: #ffffff !important;
-              color: #0f172a !important;
-              overflow: visible !important;
-              -webkit-print-color-adjust: exact !important;
-              print-color-adjust: exact !important;
-            }
-            /* Hide entire screen UI / background app elements */
-            body * {
-              visibility: hidden;
-            }
-            /* Only display our clinical print report portal */
-            #aura-clinical-print-portal,
-            #aura-clinical-print-portal * {
-              visibility: visible;
-            }
-            #aura-clinical-print-portal {
-              position: absolute !important;
-              left: 0 !important;
-              top: 0 !important;
-              right: 0 !important;
-              width: 100% !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              background: #ffffff !important;
-              color: #0f172a !important;
-              display: block !important;
-            }
-            .page-break-avoid {
-              break-inside: avoid !important;
-              page-break-inside: avoid !important;
-            }
-          }
-        `}</style>
+  const printPortalNode =
+    typeof document !== 'undefined'
+      ? createPortal(
+          <div id="aura-clinical-print-portal" className="hidden print:block bg-white text-slate-900 font-sans">
+            <style>{`
+              @media print {
+                @page {
+                  size: A4 portrait;
+                  margin: 8mm 8mm;
+                }
+                html, body {
+                  height: auto !important;
+                  min-height: 0 !important;
+                  max-height: none !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  background: #ffffff !important;
+                  color: #0f172a !important;
+                  overflow: visible !important;
+                  -webkit-print-color-adjust: exact !important;
+                  print-color-adjust: exact !important;
+                }
+                #root {
+                  display: none !important;
+                }
+                body > *:not(#aura-clinical-print-portal) {
+                  display: none !important;
+                }
+                #aura-clinical-print-portal {
+                  display: block !important;
+                  position: static !important;
+                  width: 100% !important;
+                  max-width: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  background: #ffffff !important;
+                  color: #0f172a !important;
+                }
+                .page-break-avoid {
+                  break-inside: avoid !important;
+                  page-break-inside: avoid !important;
+                }
+                tr {
+                  break-inside: avoid !important;
+                  page-break-inside: avoid !important;
+                }
+                thead {
+                  display: table-header-group !important;
+                }
+              }
+            `}</style>
 
-        {/* Report Header */}
-        <div className="border-b-2 border-slate-900 pb-2 mb-2 flex justify-between items-start">
-          <div>
-            <h1 className="text-lg font-bold tracking-tight text-slate-900 leading-tight">
-              {currentSelectedGroup
-                ? `CLINICAL FEVER EPISODE REPORT: ${currentSelectedGroup.groupName.toUpperCase()}`
-                : 'CLINICAL FEVER EPISODE & TEMPERATURE REPORT'}
-            </h1>
-            <p className="text-[11px] text-slate-600">
-              Family Circle Health Vault • Sovereign Health Record System
-            </p>
-          </div>
-          <div className="text-right shrink-0">
-            <span className="inline-block bg-slate-900 text-white text-[10px] px-2 py-0.5 font-semibold rounded">
-              {currentSelectedGroup
-                ? (currentSelectedGroup.isActive ? 'ACTIVE EPISODE REPORT' : 'RESOLVED EPISODE REPORT')
-                : 'CLINICAL REPORT'}
-            </span>
-            <p className="text-[10px] text-slate-500 mt-0.5">
-              Printed: {new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-            </p>
-          </div>
-        </div>
-
-        {/* Fever Episode Details Box (if specific episode selected) */}
-        {currentSelectedGroup && (
-          <div className="bg-amber-50/80 border border-amber-400 rounded-md p-2 mb-2 text-[11px] text-slate-800 flex justify-between items-start page-break-avoid">
-            <div className="space-y-0.5">
-              <span className="font-bold text-slate-900 text-xs">
-                Fever Episode: {currentSelectedGroup.groupName}
-              </span>
-              <div className="text-slate-700 text-[10px]">
-                <strong>Status:</strong>{' '}
-                <span className={currentSelectedGroup.isActive ? 'text-amber-800 font-bold' : 'text-slate-700'}>
-                  {currentSelectedGroup.isActive ? 'Active Monitoring Episode' : 'Resolved / Concluded'}
-                </span>
-                {' • '}
-                <strong>Timeline:</strong> Started {new Date(currentSelectedGroup.startDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
-                {currentSelectedGroup.endDate ? ` to ${new Date(currentSelectedGroup.endDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ' (Ongoing)'}
-              </div>
-              {currentSelectedGroup.notes && (
-                <p className="italic text-slate-800 text-[10px] mt-0.5">
-                  <strong>Clinical Context:</strong> "{currentSelectedGroup.notes}"
+            {/* Report Header */}
+            <div className="border-b-2 border-slate-900 pb-1.5 mb-1.5 flex justify-between items-start">
+              <div>
+                <h1 className="text-base font-bold tracking-tight text-slate-900 leading-tight">
+                  {currentSelectedGroup
+                    ? `CLINICAL FEVER EPISODE REPORT: ${currentSelectedGroup.groupName.toUpperCase()}`
+                    : 'CLINICAL FEVER EPISODE & TEMPERATURE REPORT'}
+                </h1>
+                <p className="text-[10px] text-slate-600">
+                  Family Circle Health Vault • Sovereign Health Record System
                 </p>
-              )}
+              </div>
+              <div className="text-right shrink-0">
+                <span className="inline-block bg-slate-900 text-white text-[9px] px-2 py-0.5 font-semibold rounded">
+                  {currentSelectedGroup
+                    ? (currentSelectedGroup.isActive ? 'ACTIVE EPISODE REPORT' : 'RESOLVED EPISODE REPORT')
+                    : 'CLINICAL REPORT'}
+                </span>
+                <p className="text-[9px] text-slate-500 mt-0.5">
+                  Printed: {new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                </p>
+              </div>
             </div>
-            <div className="text-right shrink-0">
-              <span className="font-mono text-[9px] bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
-                EPISODE ID: {currentSelectedGroup.id.slice(-8)}
-              </span>
-            </div>
-          </div>
-        )}
 
-        {/* Patient Profile & Demographics */}
-        <div className="grid grid-cols-4 gap-2 p-2 bg-slate-100 rounded-md mb-2 border border-slate-300 text-xs page-break-avoid">
-          <div>
-            <span className="block text-[9px] uppercase text-slate-500 font-bold">Patient Name</span>
-            <span className="font-bold text-slate-900 text-xs">{activeMember?.memberName}</span>
-          </div>
-          <div>
-            <span className="block text-[9px] uppercase text-slate-500 font-bold">Age / Gender</span>
-            <span className="font-semibold text-slate-900 text-[11px]">
-              {activeMember?.age} yrs • {activeMember?.gender}
-            </span>
-          </div>
-          <div>
-            <span className="block text-[9px] uppercase text-slate-500 font-bold">Blood Group</span>
-            <span className="font-semibold text-slate-900 text-[11px]">{activeMember?.bloodGroup || 'O+'}</span>
-          </div>
-          <div>
-            <span className="block text-[9px] uppercase text-slate-500 font-bold">Known Allergies</span>
-            <span className="font-semibold text-rose-700 text-[11px] truncate block">
-              {activeMember?.allergies && activeMember.allergies.length > 0
-                ? activeMember.allergies.map((a) => a.allergen).join(', ')
-                : 'No Known Allergies'}
-            </span>
-          </div>
-        </div>
-
-        {/* Clinical Summary KPI Cards */}
-        <div className="grid grid-cols-4 gap-2 mb-2 text-center page-break-avoid">
-          <div className="p-1.5 border border-slate-300 rounded bg-slate-50/50">
-            <span className="text-[9px] text-slate-500 uppercase font-bold block">Peak Recorded Temp</span>
-            <p className="text-sm font-bold text-rose-600 mt-0.5">
-              {displayedPeakLog ? `${displayedPeakLog.temperatureF}°F / ${displayedPeakLog.temperatureC}°C` : 'N/A'}
-            </p>
-          </div>
-          <div className="p-1.5 border border-slate-300 rounded bg-slate-50/50">
-            <span className="text-[9px] text-slate-500 uppercase font-bold block">Latest Reading</span>
-            <p className="text-sm font-bold text-slate-900 mt-0.5">
-              {displayedLatestLog ? `${displayedLatestLog.temperatureF}°F / ${displayedLatestLog.temperatureC}°C` : 'N/A'}
-            </p>
-          </div>
-          <div className="p-1.5 border border-slate-300 rounded bg-slate-50/50">
-            <span className="text-[9px] text-slate-500 uppercase font-bold block">
-              {currentSelectedGroup ? 'Episode Moments' : 'Total Readings'}
-            </span>
-            <p className="text-sm font-bold text-slate-900 mt-0.5">{displayedLogs.length}</p>
-          </div>
-          <div className="p-1.5 border border-slate-300 rounded bg-slate-50/50">
-            <span className="text-[9px] text-slate-500 uppercase font-bold block">Medication Doses</span>
-            <p className="text-sm font-bold text-purple-700 mt-0.5">
-              {displayedLogs.filter((l) => l.medicationGiven).length}
-            </p>
-          </div>
-        </div>
-
-        {/* EMBEDDED THERMAL TREND CURVE GRAPH CHART */}
-        <div className="mb-2.5 border border-slate-300 rounded-md p-2 bg-white page-break-avoid">
-          <div className="flex justify-between items-center mb-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700">
-              Thermal Trend Curve & Antipyretic Timeline
-            </span>
-            <span className="text-[9px] text-slate-500 font-medium">
-              Red line = 100.4°F Fever Threshold • 'Rx' = Antipyretic Medication Administered
-            </span>
-          </div>
-          <div className="w-full h-[175px]">
-            <svg ref={printSvgRef} className="w-full h-full overflow-visible" />
-          </div>
-        </div>
-
-        {/* Detailed Moments Table */}
-        <div className="page-break-avoid">
-          <h2 className="text-xs font-bold text-slate-900 mb-1 border-b pb-0.5">
-            {currentSelectedGroup
-              ? `CHRONOLOGICAL EPISODE MOMENTS: ${currentSelectedGroup.groupName.toUpperCase()}`
-              : 'CHRONOLOGICAL FEVER LOG & ANTIPYRETIC ADMINISTRATION'}
-          </h2>
-        </div>
-        <table className="w-full text-left text-[9.5px] border-collapse border border-slate-300 mb-2">
-          <thead>
-            <tr className="bg-slate-200 text-slate-800 font-bold">
-              <th className="border border-slate-300 py-1 px-1.5">Date & Time</th>
-              {selectedGroupId === 'all' && <th className="border border-slate-300 py-1 px-1.5">Fever Episode</th>}
-              <th className="border border-slate-300 py-1 px-1.5">Temp (°F / °C)</th>
-              <th className="border border-slate-300 py-1 px-1.5">Site</th>
-              <th className="border border-slate-300 py-1 px-1.5">Classification</th>
-              <th className="border border-slate-300 py-1 px-1.5">Symptoms</th>
-              <th className="border border-slate-300 py-1 px-1.5">Antipyretic / Meds</th>
-              <th className="border border-slate-300 py-1 px-1.5">Caregiver Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayedLogs.map((log) => (
-              <tr key={log.id} className="border border-slate-300 page-break-avoid">
-                <td className="border border-slate-300 py-1 px-1.5 font-mono whitespace-nowrap">
-                  {new Date(log.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-                </td>
-                {selectedGroupId === 'all' && (
-                  <td className="border border-slate-300 py-1 px-1.5 font-semibold text-slate-700">
-                    {log.readingGroupName || 'Ungrouped'}
-                  </td>
-                )}
-                <td className="border border-slate-300 py-1 px-1.5 font-bold whitespace-nowrap">
-                  <span className={log.temperatureF >= 100.4 ? 'text-rose-600' : 'text-emerald-700'}>
-                    {log.temperatureF}°F ({log.temperatureC}°C)
+            {/* Fever Episode Details Box (if specific episode selected) */}
+            {currentSelectedGroup && (
+              <div className="bg-amber-50/80 border border-amber-400 rounded p-1.5 mb-1.5 text-[10px] text-slate-800 flex justify-between items-start page-break-avoid">
+                <div className="space-y-0.5">
+                  <span className="font-bold text-slate-900 text-xs">
+                    Fever Episode: {currentSelectedGroup.groupName}
                   </span>
-                </td>
-                <td className="border border-slate-300 py-1 px-1.5 capitalize">{log.measurementMethod.replace('_', ' ')}</td>
-                <td className="border border-slate-300 py-1 px-1.5 capitalize font-semibold">{log.severity}</td>
-                <td className="border border-slate-300 py-1 px-1.5">
-                  {log.symptoms.length > 0 ? log.symptoms.join(', ') : 'None'}
-                </td>
-                <td className="border border-slate-300 py-1 px-1.5 font-medium text-purple-900">
-                  {log.medicationGiven ? `${log.medicationGiven.name} (${log.medicationGiven.dose})` : '—'}
-                </td>
-                <td className="border border-slate-300 py-1 px-1.5 text-slate-600">{log.notes || '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  <div className="text-slate-700 text-[10px]">
+                    <strong>Status:</strong>{' '}
+                    <span className={currentSelectedGroup.isActive ? 'text-amber-800 font-bold' : 'text-slate-700'}>
+                      {currentSelectedGroup.isActive ? 'Active Monitoring Episode' : 'Resolved / Concluded'}
+                    </span>
+                    {' • '}
+                    <strong>Timeline:</strong> Started {new Date(currentSelectedGroup.startDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                    {currentSelectedGroup.endDate ? ` to ${new Date(currentSelectedGroup.endDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ' (Ongoing)'}
+                  </div>
+                  {currentSelectedGroup.notes && (
+                    <p className="italic text-slate-800 text-[10px] mt-0.5">
+                      <strong>Clinical Context:</strong> "{currentSelectedGroup.notes}"
+                    </p>
+                  )}
+                </div>
+                <div className="text-right shrink-0">
+                  <span className="font-mono text-[9px] bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
+                    EPISODE ID: {currentSelectedGroup.id.slice(-8)}
+                  </span>
+                </div>
+              </div>
+            )}
 
-        {/* Doctor Assessment & Signature Block */}
-        <div className="grid grid-cols-2 gap-6 pt-2 border-t border-slate-400 mt-2 text-[10px] page-break-avoid">
-          <div>
-            <p className="font-bold text-slate-800">Pediatrician / Physician Notes & Assessment:</p>
-            <div className="h-8 border-b border-dashed border-slate-400 mt-1"></div>
-          </div>
-          <div className="text-right">
-            <p className="font-bold text-slate-800 mb-6">Consulting Physician Signature & Stamp</p>
-            <p className="text-slate-500">Date: __________________________</p>
-          </div>
-        </div>
-      </div>
+            {/* Patient Profile & Demographics */}
+            <div className="grid grid-cols-4 gap-2 p-1.5 bg-slate-100 rounded mb-1.5 border border-slate-300 text-[10px] page-break-avoid">
+              <div>
+                <span className="block text-[8.5px] uppercase text-slate-500 font-bold">Patient Name</span>
+                <span className="font-bold text-slate-900 text-[11px]">{activeMember?.memberName}</span>
+              </div>
+              <div>
+                <span className="block text-[8.5px] uppercase text-slate-500 font-bold">Age / Gender</span>
+                <span className="font-semibold text-slate-900 text-[10.5px]">
+                  {activeMember?.age} yrs • {activeMember?.gender}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[8.5px] uppercase text-slate-500 font-bold">Blood Group</span>
+                <span className="font-semibold text-slate-900 text-[10.5px]">{activeMember?.bloodGroup || 'O+'}</span>
+              </div>
+              <div>
+                <span className="block text-[8.5px] uppercase text-slate-500 font-bold">Known Allergies</span>
+                <span className="font-semibold text-rose-700 text-[10.5px] truncate block">
+                  {activeMember?.allergies && activeMember.allergies.length > 0
+                    ? activeMember.allergies.map((a) => a.allergen).join(', ')
+                    : 'No Known Allergies'}
+                </span>
+              </div>
+            </div>
 
-      {/* SCREEN UI DIALOG */}
-      <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] print:hidden">
+            {/* Clinical Summary KPI Cards */}
+            <div className="grid grid-cols-4 gap-2 mb-1.5 text-center page-break-avoid">
+              <div className="p-1 border border-slate-300 rounded bg-slate-50/50">
+                <span className="text-[8.5px] text-slate-500 uppercase font-bold block">Peak Recorded Temp</span>
+                <p className="text-xs font-bold text-rose-600 mt-0.5">
+                  {displayedPeakLog ? `${displayedPeakLog.temperatureF}°F / ${displayedPeakLog.temperatureC}°C` : 'N/A'}
+                </p>
+              </div>
+              <div className="p-1 border border-slate-300 rounded bg-slate-50/50">
+                <span className="text-[8.5px] text-slate-500 uppercase font-bold block">Latest Reading</span>
+                <p className="text-xs font-bold text-slate-900 mt-0.5">
+                  {displayedLatestLog ? `${displayedLatestLog.temperatureF}°F / ${displayedLatestLog.temperatureC}°C` : 'N/A'}
+                </p>
+              </div>
+              <div className="p-1 border border-slate-300 rounded bg-slate-50/50">
+                <span className="text-[8.5px] text-slate-500 uppercase font-bold block">
+                  {currentSelectedGroup ? 'Episode Moments' : 'Total Readings'}
+                </span>
+                <p className="text-xs font-bold text-slate-900 mt-0.5">{displayedLogs.length}</p>
+              </div>
+              <div className="p-1 border border-slate-300 rounded bg-slate-50/50">
+                <span className="text-[8.5px] text-slate-500 uppercase font-bold block">Medication Doses</span>
+                <p className="text-xs font-bold text-purple-700 mt-0.5">
+                  {displayedLogs.filter((l) => l.medicationGiven).length}
+                </p>
+              </div>
+            </div>
+
+            {/* EMBEDDED THERMAL TREND CURVE GRAPH CHART */}
+            <div className="mb-1.5 border border-slate-300 rounded p-1.5 bg-white page-break-avoid">
+              <div className="flex justify-between items-center mb-0.5">
+                <span className="text-[9.5px] font-bold uppercase tracking-wider text-slate-700">
+                  Thermal Trend Curve & Antipyretic Timeline
+                </span>
+                <span className="text-[8.5px] text-slate-500 font-medium">
+                  Red line = 100.4°F Fever Threshold • 'Rx' = Antipyretic Medication Administered
+                </span>
+              </div>
+              <div className="w-full h-[155px]">
+                <svg ref={printSvgRef} className="w-full h-full overflow-visible" />
+              </div>
+            </div>
+
+            {/* Detailed Moments Table */}
+            <div className="page-break-avoid">
+              <h2 className="text-[10px] font-bold text-slate-900 mb-0.5 border-b pb-0.5">
+                {currentSelectedGroup
+                  ? `CHRONOLOGICAL EPISODE MOMENTS: ${currentSelectedGroup.groupName.toUpperCase()}`
+                  : 'CHRONOLOGICAL FEVER LOG & ANTIPYRETIC ADMINISTRATION'}
+              </h2>
+            </div>
+            <table className="w-full text-left text-[8.5px] border-collapse border border-slate-300 mb-1.5">
+              <thead>
+                <tr className="bg-slate-200 text-slate-800 font-bold">
+                  <th className="border border-slate-300 py-0.5 px-1 whitespace-nowrap">Date & Time</th>
+                  {selectedGroupId === 'all' && <th className="border border-slate-300 py-0.5 px-1">Fever Episode</th>}
+                  <th className="border border-slate-300 py-0.5 px-1 whitespace-nowrap">Temp (°F / °C)</th>
+                  <th className="border border-slate-300 py-0.5 px-1">Site</th>
+                  <th className="border border-slate-300 py-0.5 px-1">Classification</th>
+                  <th className="border border-slate-300 py-0.5 px-1">Symptoms</th>
+                  <th className="border border-slate-300 py-0.5 px-1">Antipyretic / Meds</th>
+                  <th className="border border-slate-300 py-0.5 px-1">Caregiver Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {displayedLogs.map((log) => (
+                  <tr key={log.id} className="border border-slate-300 page-break-avoid">
+                    <td className="border border-slate-300 py-0.5 px-1 font-mono whitespace-nowrap">
+                      {new Date(log.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                    </td>
+                    {selectedGroupId === 'all' && (
+                      <td className="border border-slate-300 py-0.5 px-1 font-semibold text-slate-700">
+                        {log.readingGroupName || 'Ungrouped'}
+                      </td>
+                    )}
+                    <td className="border border-slate-300 py-0.5 px-1 font-bold whitespace-nowrap">
+                      <span className={log.temperatureF >= 100.4 ? 'text-rose-600' : 'text-emerald-700'}>
+                        {log.temperatureF}°F ({log.temperatureC}°C)
+                      </span>
+                    </td>
+                    <td className="border border-slate-300 py-0.5 px-1 capitalize">{log.measurementMethod.replace('_', ' ')}</td>
+                    <td className="border border-slate-300 py-0.5 px-1 capitalize font-semibold">{log.severity}</td>
+                    <td className="border border-slate-300 py-0.5 px-1">
+                      {log.symptoms.length > 0 ? log.symptoms.join(', ') : 'None'}
+                    </td>
+                    <td className="border border-slate-300 py-0.5 px-1 font-medium text-purple-900">
+                      {log.medicationGiven ? `${log.medicationGiven.name} (${log.medicationGiven.dose})` : '—'}
+                    </td>
+                    <td className="border border-slate-300 py-0.5 px-1 text-slate-600">{log.notes || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Doctor Assessment & Signature Block */}
+            <div className="grid grid-cols-2 gap-4 pt-1 border-t border-slate-400 mt-1 text-[9px] page-break-avoid">
+              <div>
+                <p className="font-bold text-slate-800">Pediatrician / Physician Notes & Assessment:</p>
+                <div className="h-6 border-b border-dashed border-slate-400 mt-0.5"></div>
+              </div>
+              <div className="text-right">
+                <p className="font-bold text-slate-800 mb-4">Consulting Physician Signature & Stamp</p>
+                <p className="text-slate-500">Date: __________________________</p>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
+  return (
+    <>
+      {printPortalNode}
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto print:hidden">
+        {/* SCREEN UI DIALOG */}
+        <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-sm sticky top-0 z-20">
           <div className="flex items-center gap-3">
@@ -2404,6 +2661,274 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           </div>
         </div>
       )}
-    </div>
+
+      {/* MOBILE CLINICAL REPORT VIEWER & ACTION MODAL */}
+      {showPrintPreview && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-4xl max-h-[94vh] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            {/* Top Action Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3.5 bg-slate-950 border-b border-slate-800 gap-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    Clinical Fever Report & Chart
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {activeMember?.memberName} • {currentSelectedGroup ? currentSelectedGroup.groupName : 'All Moments'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const patientName = activeMember?.memberName || 'Family';
+                    const episodeName = currentSelectedGroup ? currentSelectedGroup.groupName.replace(/\s+/g, '_') : 'Fever';
+                    const docTitle = `Fever_Report_${patientName}_${episodeName}`;
+                    if (typeof window !== 'undefined' && (window as any).AndroidPrinter && typeof (window as any).AndroidPrinter.print === 'function') {
+                      (window as any).AndroidPrinter.print(docTitle);
+                    } else {
+                      window.print();
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow transition"
+                  title="Open system printer / Save as PDF"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print / PDF</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleShareReport}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow transition"
+                  title="Share report summary directly with Doctor via WhatsApp or Email"
+                >
+                  <Share2 className="w-3.5 h-3.5" />
+                  <span>Share Doctor</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadOfflineReport}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition"
+                  title="Download standalone offline report HTML document"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Save HTML</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPrintPreview(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition ml-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Scrollable Clinical Sheet Body */}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-950/80">
+              <div className="max-w-3xl mx-auto bg-white text-slate-900 p-4 sm:p-6 rounded-xl shadow-xl border border-slate-300 font-sans space-y-3">
+                {/* Header */}
+                <div className="border-b-2 border-slate-900 pb-2 flex justify-between items-start">
+                  <div>
+                    <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 leading-tight">
+                      {currentSelectedGroup
+                        ? `CLINICAL FEVER EPISODE REPORT: ${currentSelectedGroup.groupName.toUpperCase()}`
+                        : 'CLINICAL FEVER EPISODE & TEMPERATURE REPORT'}
+                    </h1>
+                    <p className="text-[10px] sm:text-[11px] text-slate-600">
+                      Family Circle Health Vault • Sovereign Health Record System
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="inline-block bg-slate-900 text-white text-[9px] sm:text-[10px] px-2 py-0.5 font-semibold rounded">
+                      {currentSelectedGroup
+                        ? (currentSelectedGroup.isActive ? 'ACTIVE EPISODE' : 'RESOLVED EPISODE')
+                        : 'CLINICAL REPORT'}
+                    </span>
+                    <p className="text-[9px] text-slate-500 mt-0.5">
+                      {new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Episode Details (if selected) */}
+                {currentSelectedGroup && (
+                  <div className="bg-amber-50/90 border border-amber-400 rounded-md p-2 text-[11px] text-slate-800 flex justify-between items-start">
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-900 text-xs">
+                        Fever Episode: {currentSelectedGroup.groupName}
+                      </span>
+                      <div className="text-slate-700 text-[10px]">
+                        <strong>Status:</strong>{' '}
+                        <span className={currentSelectedGroup.isActive ? 'text-amber-800 font-bold' : 'text-slate-700'}>
+                          {currentSelectedGroup.isActive ? 'Active Monitoring Episode' : 'Resolved / Concluded'}
+                        </span>
+                        {' • '}
+                        <strong>Timeline:</strong> Started {new Date(currentSelectedGroup.startDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {currentSelectedGroup.endDate ? ` to ${new Date(currentSelectedGroup.endDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ' (Ongoing)'}
+                      </div>
+                      {currentSelectedGroup.notes && (
+                        <p className="italic text-slate-800 text-[10px] mt-0.5">
+                          <strong>Clinical Context:</strong> "{currentSelectedGroup.notes}"
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="font-mono text-[9px] bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
+                        EPISODE ID: {currentSelectedGroup.id.slice(-8)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Patient Profile */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 bg-slate-100 rounded-md border border-slate-300 text-xs">
+                  <div>
+                    <span className="block text-[9px] uppercase text-slate-500 font-bold">Patient Name</span>
+                    <span className="font-bold text-slate-900 text-xs">{activeMember?.memberName}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[9px] uppercase text-slate-500 font-bold">Age / Gender</span>
+                    <span className="font-semibold text-slate-900 text-[11px]">
+                      {activeMember?.age} yrs • {activeMember?.gender}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[9px] uppercase text-slate-500 font-bold">Blood Group</span>
+                    <span className="font-semibold text-slate-900 text-[11px]">{activeMember?.bloodGroup || 'O+'}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[9px] uppercase text-slate-500 font-bold">Known Allergies</span>
+                    <span className="font-semibold text-rose-700 text-[11px] truncate block">
+                      {activeMember?.allergies && activeMember.allergies.length > 0
+                        ? activeMember.allergies.map((a) => a.allergen).join(', ')
+                        : 'No Known Allergies'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Summary KPIs */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                  <div className="p-1.5 border border-slate-300 rounded bg-slate-50">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">Peak Temp</span>
+                    <p className="text-sm font-bold text-rose-600 mt-0.5">
+                      {displayedPeakLog ? `${displayedPeakLog.temperatureF}°F / ${displayedPeakLog.temperatureC}°C` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-1.5 border border-slate-300 rounded bg-slate-50">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">Latest Reading</span>
+                    <p className="text-sm font-bold text-slate-900 mt-0.5">
+                      {displayedLatestLog ? `${displayedLatestLog.temperatureF}°F / ${displayedLatestLog.temperatureC}°C` : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="p-1.5 border border-slate-300 rounded bg-slate-50">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">
+                      {currentSelectedGroup ? 'Episode Moments' : 'Total Readings'}
+                    </span>
+                    <p className="text-sm font-bold text-slate-900 mt-0.5">{displayedLogs.length}</p>
+                  </div>
+                  <div className="p-1.5 border border-slate-300 rounded bg-slate-50">
+                    <span className="text-[9px] text-slate-500 uppercase font-bold block">Medication Doses</span>
+                    <p className="text-sm font-bold text-purple-700 mt-0.5">
+                      {displayedLogs.filter((l) => l.medicationGiven).length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Vector Thermal Trend Curve Graph Chart with All Axis Labels */}
+                <div className="border border-slate-300 rounded-md p-2 bg-white">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700">
+                      Thermal Trend Curve & Antipyretic Timeline
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-medium">
+                      Red line = 100.4°F Fever Threshold • 'Rx' = Antipyretic Medication Administered
+                    </span>
+                  </div>
+                  <div className="w-full h-[175px]">
+                    <svg ref={previewSvgRef} className="w-full h-full overflow-visible" />
+                  </div>
+                </div>
+
+                {/* Moments Table */}
+                <div>
+                  <h2 className="text-xs font-bold text-slate-900 mb-1 border-b pb-0.5">
+                    {currentSelectedGroup
+                      ? `CHRONOLOGICAL EPISODE MOMENTS: ${currentSelectedGroup.groupName.toUpperCase()}`
+                      : 'CHRONOLOGICAL FEVER LOG & ANTIPYRETIC ADMINISTRATION'}
+                  </h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[9.5px] border-collapse border border-slate-300">
+                      <thead>
+                        <tr className="bg-slate-200 text-slate-800 font-bold">
+                          <th className="border border-slate-300 py-1 px-1.5">Date & Time</th>
+                          {selectedGroupId === 'all' && <th className="border border-slate-300 py-1 px-1.5">Fever Episode</th>}
+                          <th className="border border-slate-300 py-1 px-1.5">Temp (°F / °C)</th>
+                          <th className="border border-slate-300 py-1 px-1.5">Site</th>
+                          <th className="border border-slate-300 py-1 px-1.5">Classification</th>
+                          <th className="border border-slate-300 py-1 px-1.5">Symptoms</th>
+                          <th className="border border-slate-300 py-1 px-1.5">Antipyretic / Meds</th>
+                          <th className="border border-slate-300 py-1 px-1.5">Caregiver Notes</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {displayedLogs.map((log) => (
+                          <tr key={log.id} className="border border-slate-300">
+                            <td className="border border-slate-300 py-1 px-1.5 font-mono whitespace-nowrap">
+                              {new Date(log.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                            </td>
+                            {selectedGroupId === 'all' && (
+                              <td className="border border-slate-300 py-1 px-1.5 font-semibold text-slate-700">
+                                {log.readingGroupName || 'Ungrouped'}
+                              </td>
+                            )}
+                            <td className="border border-slate-300 py-1 px-1.5 font-bold whitespace-nowrap">
+                              <span className={log.temperatureF >= 100.4 ? 'text-rose-600' : 'text-emerald-700'}>
+                                {log.temperatureF}°F ({log.temperatureC}°C)
+                              </span>
+                            </td>
+                            <td className="border border-slate-300 py-1 px-1.5 capitalize">{log.measurementMethod.replace('_', ' ')}</td>
+                            <td className="border border-slate-300 py-1 px-1.5 capitalize font-semibold">{log.severity}</td>
+                            <td className="border border-slate-300 py-1 px-1.5">
+                              {log.symptoms.length > 0 ? log.symptoms.join(', ') : 'None'}
+                            </td>
+                            <td className="border border-slate-300 py-1 px-1.5 font-medium text-purple-900">
+                              {log.medicationGiven ? `${log.medicationGiven.name} (${log.medicationGiven.dose})` : '—'}
+                            </td>
+                            <td className="border border-slate-300 py-1 px-1.5 text-slate-600">{log.notes || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Doctor Assessment & Signature Block */}
+                <div className="grid grid-cols-2 gap-6 pt-2 border-t border-slate-400 mt-2 text-[10px]">
+                  <div>
+                    <p className="font-bold text-slate-800">Pediatrician / Physician Notes & Assessment:</p>
+                    <div className="h-8 border-b border-dashed border-slate-400 mt-1"></div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-slate-800 mb-6">Consulting Physician Signature & Stamp</p>
+                    <p className="text-slate-500">Date: __________________________</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </>
   );
 };
