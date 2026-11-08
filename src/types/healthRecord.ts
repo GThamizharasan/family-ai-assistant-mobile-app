@@ -61,6 +61,8 @@ export interface FeverReadingGroup {
   createdAt: string;
 }
 
+export type FeverEpisode = FeverReadingGroup;
+
 export interface FeverLogEntry {
   id: string;
   memberId: string;

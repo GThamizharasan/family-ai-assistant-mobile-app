@@ -622,7 +622,7 @@ export async function syncFeverGroupToGoogleDrive(
       name: filename,
       mimeType: 'application/json',
       parents: [parentFolderId],
-      description: `Clinical fever reading group summary for ${group.memberName}: ${group.groupName}`,
+      description: `Clinical fever episode summary for ${group.memberName}: ${group.groupName}`,
     };
 
     const multipartRequestBody =
