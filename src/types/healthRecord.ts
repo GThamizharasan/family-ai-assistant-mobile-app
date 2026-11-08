@@ -45,10 +45,28 @@ export interface VitalSignEntry {
 
 export type FeverSeverity = 'normal' | 'low' | 'moderate' | 'high' | 'hyperpyrexia';
 
+export interface FeverReadingGroup {
+  id: string;
+  memberId: string;
+  memberName: string;
+  groupName: string; // e.g. 'Viral Flu Episode (Nov 2026)'
+  startDate: string; // ISO string
+  endDate?: string; // ISO string when fever episode has resolved
+  isActive: boolean;
+  notes?: string;
+  recordedBy?: string;
+  driveFolderId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: 'synced' | 'local_only' | 'pending';
+  createdAt: string;
+}
+
 export interface FeverLogEntry {
   id: string;
   memberId: string;
   memberName: string;
+  readingGroupId?: string;
+  readingGroupName?: string;
   timestamp: string; // ISO string
   temperatureF: number; // e.g. 101.4 °F
   temperatureC: number; // e.g. 38.6 °C

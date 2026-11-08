@@ -19,14 +19,30 @@ import {
   ChevronRight,
   TrendingDown,
   TrendingUp,
+  Database,
+  Eye,
+  FolderPlus,
+  Folder,
+  Tag,
+  Sparkles,
+  CheckCircle2,
+  Bookmark,
 } from 'lucide-react';
-import { FeverLogEntry, FeverSeverity, FamilyHealthRecord } from '../../types/healthRecord';
+import { FeverLogEntry, FeverSeverity, FamilyHealthRecord, FeverReadingGroup } from '../../types/healthRecord';
 import {
   getLocalFeverLogs,
   recordFeverTemperature,
   deleteFeverLog,
   syncFeverLogsWithGoogleDrive,
+  syncSingleFeverLogToGoogleDrive,
   fetchFeverLogsFromSqlite,
+  getLocalFeverGroups,
+  fetchFeverGroupsFromSqlite,
+  createFeverReadingGroup,
+  updateFeverReadingGroup,
+  deleteFeverReadingGroup,
+  syncFeverGroupToGoogleDrive,
+  getPrintableFeverReport,
   getSeverityColor,
   getSeverityLabel,
   calculateFeverSeverity,
@@ -85,6 +101,13 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   const [members, setMembers] = useState<FamilyHealthRecord[]>([]);
   const [activeMemberId, setActiveMemberId] = useState<string>('');
   const [feverLogs, setFeverLogs] = useState<FeverLogEntry[]>([]);
+  const [feverGroups, setFeverGroups] = useState<FeverReadingGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>('all');
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [newGroupNotes, setNewGroupNotes] = useState<string>('');
+  const [formGroupId, setFormGroupId] = useState<string>('');
+  const [isSyncingGroup, setIsSyncingGroup] = useState<boolean>(false);
   const [unit, setUnit] = useState<'F' | 'C'>('F');
   const [showAddForm, setShowAddForm] = useState(autoLogOpen);
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
@@ -102,10 +125,12 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   const [recordedBy, setRecordedBy] = useState('Chinnathambi');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hoveredPoint, setHoveredPoint] = useState<FeverLogEntry | null>(null);
+  const [inspectingMoment, setInspectingMoment] = useState<FeverLogEntry | null>(null);
+  const [syncingMomentId, setSyncingMomentId] = useState<string | null>(null);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
 
-  // Load initial members and logs
+  // Load initial members, groups, and logs
   useEffect(() => {
     if (!isOpen) return;
     const allMembers = getLocalHealthRecords();
@@ -119,6 +144,12 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     setFeverLogs(localLogs);
     fetchFeverLogsFromSqlite().then((logs) => {
       if (logs && logs.length > 0) setFeverLogs(logs);
+    });
+
+    const localGroups = getLocalFeverGroups();
+    setFeverGroups(localGroups);
+    fetchFeverGroupsFromSqlite().then((groups) => {
+      if (groups && groups.length > 0) setFeverGroups(groups);
     });
 
     if (initialTempF) {
@@ -141,6 +172,18 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     return () => window.removeEventListener('aura_fever_logs_changed', handleUpdate);
   }, []);
 
+  useEffect(() => {
+    const handleGroupsUpdate = (e: any) => {
+      if (e.detail) {
+        setFeverGroups(e.detail);
+      } else {
+        setFeverGroups(getLocalFeverGroups());
+      }
+    };
+    window.addEventListener('aura_fever_groups_changed', handleGroupsUpdate);
+    return () => window.removeEventListener('aura_fever_groups_changed', handleGroupsUpdate);
+  }, []);
+
   // Handle autoPrint trigger if voice assistant requested printing
   useEffect(() => {
     if (isOpen && autoPrint) {
@@ -155,6 +198,29 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     return members.find((m) => m.memberId === activeMemberId || m.id === activeMemberId) || members[0] || null;
   }, [members, activeMemberId]);
 
+  // Groups associated with current active member
+  const memberGroups = useMemo(() => {
+    if (!activeMember) return [];
+    return feverGroups.filter(
+      (g) =>
+        g.memberId === activeMember.memberId ||
+        g.memberId === activeMember.id ||
+        g.memberName.toLowerCase() === activeMember.memberName.toLowerCase()
+    );
+  }, [feverGroups, activeMember]);
+
+  // Set default formGroupId to active group or first group when member changes
+  useEffect(() => {
+    const active = memberGroups.find((g) => g.isActive);
+    if (active) {
+      setFormGroupId(active.id);
+    } else if (memberGroups.length > 0) {
+      setFormGroupId(memberGroups[0].id);
+    } else {
+      setFormGroupId('');
+    }
+  }, [activeMemberId, memberGroups]);
+
   // Filter logs for active member
   const memberLogs = useMemo(() => {
     if (!activeMember) return [];
@@ -168,11 +234,28 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [feverLogs, activeMember]);
 
+  const currentSelectedGroup = useMemo(() => {
+    if (selectedGroupId === 'all') return null;
+    return memberGroups.find((g) => g.id === selectedGroupId) || null;
+  }, [memberGroups, selectedGroupId]);
+
+  // Filter logs based on member AND selected reading group
+  const displayedLogs = useMemo(() => {
+    if (selectedGroupId === 'all') return memberLogs;
+    return memberLogs.filter((l) => l.readingGroupId === selectedGroupId);
+  }, [memberLogs, selectedGroupId]);
+
   const latestLog = memberLogs[memberLogs.length - 1];
   const peakLog = useMemo(() => {
     if (memberLogs.length === 0) return null;
     return [...memberLogs].sort((a, b) => b.temperatureF - a.temperatureF)[0];
   }, [memberLogs]);
+
+  const displayedLatestLog = displayedLogs[displayedLogs.length - 1];
+  const displayedPeakLog = useMemo(() => {
+    if (displayedLogs.length === 0) return null;
+    return [...displayedLogs].sort((a, b) => b.temperatureF - a.temperatureF)[0];
+  }, [displayedLogs]);
 
   // Synchronize F and C inputs
   const handleTempFChange = (val: number) => {
@@ -244,9 +327,13 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
         ? new Date(recordedDateTime).toISOString()
         : new Date().toISOString();
 
+      const targetGroup = memberGroups.find((g) => g.id === formGroupId);
+
       await recordFeverTemperature({
         memberId: activeMember.memberId,
         memberName: activeMember.memberName,
+        readingGroupId: targetGroup?.id,
+        readingGroupName: targetGroup?.groupName,
         temperatureF: inputTempF,
         temperatureC: inputTempC,
         measurementMethod,
@@ -272,8 +359,73 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
       setMedDose('');
       setNotes('');
       setFeverLogs(getLocalFeverLogs());
+      setFeverGroups(getLocalFeverGroups());
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeMember || !newGroupName.trim()) return;
+    try {
+      const created = await createFeverReadingGroup({
+        memberId: activeMember.memberId,
+        memberName: activeMember.memberName,
+        groupName: newGroupName.trim(),
+        notes: newGroupNotes.trim(),
+        recordedBy: 'Chinnathambi',
+      });
+      setNewGroupName('');
+      setNewGroupNotes('');
+      setShowCreateGroupModal(false);
+      setSelectedGroupId(created.id);
+      setFormGroupId(created.id);
+      setFeverGroups(getLocalFeverGroups());
+      setDriveSyncSuccess(`Created Named Fever Reading Group: "${created.groupName}"`);
+    } catch (err: any) {
+      console.warn('Error creating group:', err);
+    }
+  };
+
+  const handleToggleGroupActive = async (group: FeverReadingGroup) => {
+    const updated = await updateFeverReadingGroup(group.id, {
+      isActive: !group.isActive,
+      endDate: group.isActive ? new Date().toISOString() : undefined,
+    });
+    if (updated) {
+      setFeverGroups(getLocalFeverGroups());
+      setDriveSyncSuccess(
+        updated.isActive
+          ? `Re-opened episode: "${updated.groupName}"`
+          : `Episode resolved & closed: "${updated.groupName}"`
+      );
+    }
+  };
+
+  const handleDeleteGroup = async (group: FeverReadingGroup) => {
+    if (confirm(`Delete group "${group.groupName}"? Readings will remain as individual moments.`)) {
+      await deleteFeverReadingGroup(group.id);
+      setSelectedGroupId('all');
+      setFeverGroups(getLocalFeverGroups());
+      setDriveSyncSuccess(`Deleted group "${group.groupName}".`);
+    }
+  };
+
+  const handleSyncGroupToDrive = async (group: FeverReadingGroup) => {
+    setIsSyncingGroup(true);
+    try {
+      const groupMoments = memberLogs.filter((l) => l.readingGroupId === group.id);
+      const res = await syncFeverGroupToGoogleDrive(group, groupMoments);
+      if (res.success) {
+        setDriveSyncSuccess(`Fever Group "${group.groupName}" & all ${groupMoments.length} moments synced to Google Drive & SQLite!`);
+        setFeverGroups(getLocalFeverGroups());
+      } else {
+        setDriveSyncSuccess('Could not sync group to Drive. Ensure Google Drive is connected in Settings.');
+      }
+    } finally {
+      setIsSyncingGroup(false);
+      setTimeout(() => setDriveSyncSuccess(null), 5000);
     }
   };
 
@@ -308,13 +460,39 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     }
   };
 
+  const handleSyncSingleMoment = async (moment: FeverLogEntry) => {
+    setSyncingMomentId(moment.id);
+    try {
+      const res = await syncSingleFeverLogToGoogleDrive(moment);
+      if (res.success) {
+        setFeverLogs(getLocalFeverLogs());
+        if (inspectingMoment && inspectingMoment.id === moment.id) {
+          setInspectingMoment({
+            ...inspectingMoment,
+            driveFileId: res.driveFileId,
+            driveWebViewLink: res.driveWebViewLink,
+            driveSyncStatus: 'synced',
+          });
+        }
+        setDriveSyncSuccess(`Moment from ${new Date(moment.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} synced to Google Drive & SQLite!`);
+      } else {
+        setDriveSyncSuccess('Could not sync moment to Google Drive. Check connection in Settings.');
+      }
+    } catch (err) {
+      console.warn('Sync moment error:', err);
+    } finally {
+      setSyncingMomentId(null);
+      setTimeout(() => setDriveSyncSuccess(null), 4000);
+    }
+  };
+
   const handlePrint = () => {
     window.print();
   };
 
   // D3.js Temperature Graph Renderer
   useEffect(() => {
-    if (!svgRef.current || memberLogs.length === 0) return;
+    if (!svgRef.current || displayedLogs.length === 0) return;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
@@ -332,7 +510,7 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
       .attr('transform', `translate(${margin.left},${margin.top})`);
 
     // Parse dates
-    const data = memberLogs.map((d) => ({
+    const data = displayedLogs.map((d) => ({
       ...d,
       date: new Date(d.timestamp),
     }));
@@ -499,7 +677,8 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
         .attr('stroke-width', 2)
         .attr('cursor', 'pointer')
         .on('mouseenter', () => setHoveredPoint(d))
-        .on('mouseleave', () => setHoveredPoint(null));
+        .on('mouseleave', () => setHoveredPoint(null))
+        .on('click', () => setInspectingMoment(d));
 
       // If medication was given at this timestamp, add a pill icon badge
       if (d.medicationGiven) {
@@ -512,7 +691,8 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           .attr('stroke-width', 1.5)
           .attr('cursor', 'pointer')
           .on('mouseenter', () => setHoveredPoint(d))
-          .on('mouseleave', () => setHoveredPoint(null));
+          .on('mouseleave', () => setHoveredPoint(null))
+          .on('click', () => setInspectingMoment(d));
 
         g.append('text')
           .attr('x', cx)
@@ -525,7 +705,7 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           .attr('pointer-events', 'none');
       }
     });
-  }, [memberLogs]);
+  }, [displayedLogs]);
 
   if (!isOpen) return null;
 
@@ -537,7 +717,9 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           <div className="flex justify-between items-start">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                CLINICAL FEVER EPISODE & TEMPERATURE CHART
+                {currentSelectedGroup
+                  ? `CLINICAL FEVER EPISODE REPORT: ${currentSelectedGroup.groupName.toUpperCase()}`
+                  : 'CLINICAL FEVER EPISODE & TEMPERATURE CHART'}
               </h1>
               <p className="text-sm text-slate-600 mt-1">
                 Family Circle Health Vault • Sovereign Health Record System
@@ -545,7 +727,9 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
             </div>
             <div className="text-right">
               <span className="inline-block bg-slate-900 text-white text-xs px-2.5 py-1 font-semibold rounded">
-                PEDIA / CLINICAL REPORT
+                {currentSelectedGroup
+                  ? (currentSelectedGroup.isActive ? 'ACTIVE EPISODE REPORT' : 'RESOLVED EPISODE REPORT')
+                  : 'PEDIA / CLINICAL REPORT'}
               </span>
               <p className="text-xs text-slate-500 mt-1">
                 Printed: {new Date().toLocaleString()}
@@ -553,6 +737,36 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Group / Episode Details Box if group selected */}
+        {currentSelectedGroup && (
+          <div className="bg-amber-50 border-2 border-amber-400 rounded-lg p-3.5 mb-6 text-xs text-slate-800 flex justify-between items-start">
+            <div className="space-y-1">
+              <span className="font-bold text-slate-900 block text-base">
+                Fever Episode: {currentSelectedGroup.groupName}
+              </span>
+              <div className="text-slate-700">
+                <strong>Status:</strong>{' '}
+                <span className={currentSelectedGroup.isActive ? 'text-amber-800 font-bold' : 'text-slate-700'}>
+                  {currentSelectedGroup.isActive ? 'Active Monitoring Episode' : 'Resolved / Concluded'}
+                </span>
+                {' • '}
+                <strong>Timeline:</strong> Started {new Date(currentSelectedGroup.startDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+                {currentSelectedGroup.endDate ? ` to ${new Date(currentSelectedGroup.endDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ' (Ongoing)'}
+              </div>
+              {currentSelectedGroup.notes && (
+                <p className="italic text-slate-800 mt-1">
+                  <strong>Clinical Context:</strong> "{currentSelectedGroup.notes}"
+                </p>
+              )}
+            </div>
+            <div className="text-right shrink-0">
+              <span className="font-mono text-[11px] bg-amber-100 border border-amber-300 px-2 py-1 rounded font-bold">
+                GROUP ID: {currentSelectedGroup.id}
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Patient Profile */}
         <div className="grid grid-cols-4 gap-4 p-4 bg-slate-100 rounded-lg mb-6 border border-slate-300 text-sm">
@@ -585,35 +799,40 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           <div className="p-3 border border-slate-300 rounded">
             <span className="text-xs text-slate-500 uppercase font-bold">Peak Recorded Temp</span>
             <p className="text-xl font-bold text-rose-600 mt-1">
-              {peakLog ? `${peakLog.temperatureF}°F / ${peakLog.temperatureC}°C` : 'N/A'}
+              {displayedPeakLog ? `${displayedPeakLog.temperatureF}°F / ${displayedPeakLog.temperatureC}°C` : 'N/A'}
             </p>
           </div>
           <div className="p-3 border border-slate-300 rounded">
             <span className="text-xs text-slate-500 uppercase font-bold">Latest Reading</span>
             <p className="text-xl font-bold text-slate-900 mt-1">
-              {latestLog ? `${latestLog.temperatureF}°F / ${latestLog.temperatureC}°C` : 'N/A'}
+              {displayedLatestLog ? `${displayedLatestLog.temperatureF}°F / ${displayedLatestLog.temperatureC}°C` : 'N/A'}
             </p>
           </div>
           <div className="p-3 border border-slate-300 rounded">
-            <span className="text-xs text-slate-500 uppercase font-bold">Total Readings</span>
-            <p className="text-xl font-bold text-slate-900 mt-1">{memberLogs.length}</p>
+            <span className="text-xs text-slate-500 uppercase font-bold">
+              {currentSelectedGroup ? 'Episode Moments' : 'Total Readings'}
+            </span>
+            <p className="text-xl font-bold text-slate-900 mt-1">{displayedLogs.length}</p>
           </div>
           <div className="p-3 border border-slate-300 rounded">
             <span className="text-xs text-slate-500 uppercase font-bold">Medication Doses</span>
             <p className="text-xl font-bold text-purple-700 mt-1">
-              {memberLogs.filter((l) => l.medicationGiven).length}
+              {displayedLogs.filter((l) => l.medicationGiven).length}
             </p>
           </div>
         </div>
 
         {/* Detailed Table */}
         <h2 className="text-base font-bold text-slate-900 mb-2 border-b pb-1">
-          CHRONOLOGICAL FEVER LOG & ANTIPYRETIC ADMINISTRATION
+          {currentSelectedGroup
+            ? `CHRONOLOGICAL MOMENTS: ${currentSelectedGroup.groupName.toUpperCase()}`
+            : 'CHRONOLOGICAL FEVER LOG & ANTIPYRETIC ADMINISTRATION'}
         </h2>
         <table className="w-full text-left text-xs border-collapse border border-slate-300 mb-8">
           <thead>
             <tr className="bg-slate-200 text-slate-800">
               <th className="border border-slate-300 p-2">Date & Time</th>
+              {selectedGroupId === 'all' && <th className="border border-slate-300 p-2">Fever Group</th>}
               <th className="border border-slate-300 p-2">Temp (°F / °C)</th>
               <th className="border border-slate-300 p-2">Site</th>
               <th className="border border-slate-300 p-2">Classification</th>
@@ -623,11 +842,16 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
             </tr>
           </thead>
           <tbody>
-            {memberLogs.map((log) => (
+            {displayedLogs.map((log) => (
               <tr key={log.id} className="border border-slate-300">
                 <td className="border border-slate-300 p-2 font-mono whitespace-nowrap">
                   {new Date(log.timestamp).toLocaleString()}
                 </td>
+                {selectedGroupId === 'all' && (
+                  <td className="border border-slate-300 p-2 font-semibold text-slate-700">
+                    {log.readingGroupName || 'Ungrouped'}
+                  </td>
+                )}
                 <td className="border border-slate-300 p-2 font-bold">
                   <span className={log.temperatureF >= 100.4 ? 'text-rose-600' : 'text-emerald-700'}>
                     {log.temperatureF}°F ({log.temperatureC}°C)
@@ -772,61 +996,232 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
             </div>
           </div>
 
+          {/* Named Fever Reading Group (Episode) Switcher Bar */}
+          <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Folder className="w-4 h-4 text-amber-400" />
+                <span className="text-xs font-bold text-white uppercase tracking-wider">
+                  Fever Reading Groups / Episodes:
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  (Group moment-level readings into clinical episodes)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateGroupModal(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-gradient-to-r from-amber-500 to-rose-500 text-white shadow-sm hover:brightness-110 transition cursor-pointer self-start sm:self-auto"
+              >
+                <FolderPlus className="w-3.5 h-3.5" />
+                <span>+ New Reading Group</span>
+              </button>
+            </div>
+
+            {/* Group Pills */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {/* All Moments Button */}
+              <button
+                onClick={() => setSelectedGroupId('all')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition ${
+                  selectedGroupId === 'all'
+                    ? 'bg-indigo-600/30 border-indigo-500 text-white shadow-sm shadow-indigo-500/20'
+                    : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-400'
+                }`}
+              >
+                <Bookmark className="w-3 h-3" />
+                <span>All Moments</span>
+                <span className="text-[10px] bg-slate-800 px-1.5 py-0.2 rounded-full text-slate-300">
+                  {memberLogs.length}
+                </span>
+              </button>
+
+              {/* Individual Group Pills */}
+              {memberGroups.map((grp) => {
+                const isSelected = selectedGroupId === grp.id;
+                const count = memberLogs.filter((l) => l.readingGroupId === grp.id).length;
+                return (
+                  <button
+                    key={grp.id}
+                    onClick={() => setSelectedGroupId(grp.id)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-amber-500/20 to-rose-500/20 border-amber-500/50 text-white shadow-sm'
+                        : 'bg-slate-900 hover:bg-slate-800 border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        grp.isActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                      }`}
+                      title={grp.isActive ? 'Active Fever Episode' : 'Resolved Episode'}
+                    />
+                    <span className="font-semibold text-slate-200">{grp.groupName}</span>
+                    <span className="text-[10px] bg-slate-800/80 px-1.5 py-0.5 rounded-full text-slate-400">
+                      {count} moment{count !== 1 ? 's' : ''}
+                    </span>
+                    {grp.isActive && (
+                      <span className="text-[9px] uppercase px-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        Active
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+
+              {memberGroups.length === 0 && (
+                <span className="text-xs text-slate-500 italic">
+                  No groups created yet. Click "+ New Reading Group" to organize moments into episodes.
+                </span>
+              )}
+            </div>
+
+            {/* Selected Group Inspector / Management Banner */}
+            {currentSelectedGroup && (
+              <div className="mt-2 p-3 bg-gradient-to-r from-slate-900 to-slate-950 border border-amber-500/30 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-white text-sm">
+                      {currentSelectedGroup.groupName}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                        currentSelectedGroup.isActive
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      {currentSelectedGroup.isActive ? '● Active Monitoring' : '✓ Concluded / Resolved'}
+                    </span>
+                    <span className="text-slate-400 text-[11px]">
+                      Started {new Date(currentSelectedGroup.startDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                      {currentSelectedGroup.endDate && ` • Resolved ${new Date(currentSelectedGroup.endDate).toLocaleDateString([], { month: 'short', day: 'numeric' })}`}
+                    </span>
+                  </div>
+                  {currentSelectedGroup.notes && (
+                    <p className="text-slate-300 italic text-[11px]">"{currentSelectedGroup.notes}"</p>
+                  )}
+                  <div className="flex items-center gap-3 text-[11px] text-slate-400 pt-0.5">
+                    <span>
+                      Total Moments: <strong className="text-white">{displayedLogs.length}</strong>
+                    </span>
+                    <span>
+                      Peak Temp:{' '}
+                      <strong className="text-rose-400">
+                        {displayedPeakLog ? `${displayedPeakLog.temperatureF}°F` : '—'}
+                      </strong>
+                    </span>
+                    <span>
+                      Medications Administered:{' '}
+                      <strong className="text-purple-400">
+                        {displayedLogs.filter((l) => l.medicationGiven).length} doses
+                      </strong>
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap shrink-0">
+                  <button
+                    type="button"
+                    onClick={handlePrint}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold shadow-sm transition"
+                    title="Generate clinical doctor report specifically for this fever group"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print Group Report</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSyncGroupToDrive(currentSelectedGroup)}
+                    disabled={isSyncingGroup}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition"
+                    title="Sync this group report and all its moments to Google Drive and SQLite"
+                  >
+                    <Cloud className={`w-3.5 h-3.5 ${isSyncingGroup ? 'animate-spin text-amber-400' : 'text-slate-400'}`} />
+                    <span>Sync Group to Drive</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleGroupActive(currentSelectedGroup)}
+                    className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition"
+                  >
+                    {currentSelectedGroup.isActive ? 'Mark Resolved' : 'Re-open Episode'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteGroup(currentSelectedGroup)}
+                    className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition"
+                    title="Delete group"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Clinical Overview Bar */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800">
               <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Latest Temperature
+                {currentSelectedGroup ? 'Latest in Episode' : 'Latest Temperature'}
               </span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-white">
-                  {latestLog ? (unit === 'F' ? `${latestLog.temperatureF}°F` : `${latestLog.temperatureC}°C`) : '—'}
+                  {displayedLatestLog ? (unit === 'F' ? `${displayedLatestLog.temperatureF}°F` : `${displayedLatestLog.temperatureC}°C`) : '—'}
                 </span>
-                {latestLog && (
+                {displayedLatestLog && (
                   <span
                     className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                      getSeverityColor(latestLog.severity).badge
+                      getSeverityColor(displayedLatestLog.severity).badge
                     }`}
                   >
-                    {latestLog.severity.toUpperCase()}
+                    {displayedLatestLog.severity.toUpperCase()}
                   </span>
                 )}
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
-                {latestLog ? new Date(latestLog.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No records yet'}
+                {displayedLatestLog ? new Date(displayedLatestLog.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No records in view'}
               </p>
             </div>
 
             <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800">
               <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Peak Temperature
+                {currentSelectedGroup ? 'Episode Peak' : 'Peak Temperature'}
               </span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-rose-400">
-                  {peakLog ? (unit === 'F' ? `${peakLog.temperatureF}°F` : `${peakLog.temperatureC}°C`) : '—'}
+                  {displayedPeakLog ? (unit === 'F' ? `${displayedPeakLog.temperatureF}°F` : `${displayedPeakLog.temperatureC}°C`) : '—'}
                 </span>
-                {peakLog && (
+                {displayedPeakLog && (
                   <span className="text-[10px] text-slate-400 font-mono">
-                    {peakLog.temperatureF >= 100.4 ? 'Spike' : 'Normal'}
+                    {displayedPeakLog.temperatureF >= 100.4 ? 'Spike' : 'Normal'}
                   </span>
                 )}
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
-                {peakLog ? new Date(peakLog.timestamp).toLocaleDateString() : '—'}
+                {displayedPeakLog ? new Date(displayedPeakLog.timestamp).toLocaleDateString() : '—'}
               </p>
             </div>
 
             <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800">
               <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                Medication Given
+                {currentSelectedGroup ? 'Moments in Group' : 'Medication Given'}
               </span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-2xl font-black text-purple-400">
-                  {memberLogs.filter((l) => l.medicationGiven).length} doses
+                  {currentSelectedGroup
+                    ? `${displayedLogs.length} moments`
+                    : `${memberLogs.filter((l) => l.medicationGiven).length} doses`}
                 </span>
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
-                Antipyretic Tracking (Paracetamol / Ibuprofen)
+                {currentSelectedGroup
+                  ? `${displayedLogs.filter((l) => l.medicationGiven).length} antipyretic doses`
+                  : 'Antipyretic Tracking (Paracetamol / Ibuprofen)'}
               </p>
             </div>
 
@@ -888,6 +1283,46 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
               </div>
 
               <form onSubmit={handleSaveEntry} className="space-y-4">
+                {/* Fever Reading Group Selection */}
+                <div className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Folder className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Fever Reading Group / Episode</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateGroupModal(true)}
+                      className="text-[11px] font-semibold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Create New Group</span>
+                    </button>
+                  </div>
+
+                  <select
+                    value={formGroupId}
+                    onChange={(e) => {
+                      if (e.target.value === '__new__') {
+                        setShowCreateGroupModal(true);
+                      } else {
+                        setFormGroupId(e.target.value);
+                      }
+                    }}
+                    className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs font-medium text-white focus:outline-none"
+                  >
+                    {memberGroups.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.groupName} {g.isActive ? '(Active Episode)' : '(Resolved)'}
+                      </option>
+                    ))}
+                    <option value="">— No Group (Ungrouped Moment) —</option>
+                    <option value="__new__">+ Create New Named Group...</option>
+                  </select>
+                  <p className="text-[10px] text-slate-400">
+                    Moments are grouped into this episode for chronological tracking and doctor reporting.
+                  </p>
+                </div>
                 {/* Date and Time Selection (Default to current, editable for past readings) */}
                 <div className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1200,6 +1635,11 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
                   <Activity className="w-4 h-4 text-rose-400" />
                   Thermal Trend Curve: {activeMember?.memberName}
+                  {currentSelectedGroup && (
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {currentSelectedGroup.groupName}
+                    </span>
+                  )}
                 </h3>
                 <p className="text-[11px] text-slate-400">
                   Continuous progression over time with clinical thresholds and medication markers
@@ -1225,15 +1665,18 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
 
             {/* SVG Chart Container */}
             <div className="w-full relative min-h-[300px] flex items-center justify-center">
-              {memberLogs.length === 0 ? (
+              {displayedLogs.length === 0 ? (
                 <div className="text-center py-12">
                   <Thermometer className="w-10 h-10 text-slate-600 mx-auto mb-2 opacity-50" />
                   <p className="text-sm text-slate-400 font-medium">
-                    No fever temperature logs recorded for {activeMember?.memberName}.
+                    {currentSelectedGroup
+                      ? `No moments recorded yet for group "${currentSelectedGroup.groupName}".`
+                      : `No fever temperature logs recorded for ${activeMember?.memberName}.`}
                   </p>
                   <button
                     onClick={() => {
                       setRecordedDateTime(getLocalDateTimeString());
+                      if (currentSelectedGroup) setFormGroupId(currentSelectedGroup.id);
                       setShowAddForm(true);
                     }}
                     className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white cursor-pointer"
@@ -1289,7 +1732,10 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
             <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                <span>Reading History ({memberLogs.length} Entries)</span>
+                <span>
+                  Reading History ({displayedLogs.length} Moments
+                  {currentSelectedGroup ? ` in ${currentSelectedGroup.groupName}` : ''})
+                </span>
               </h3>
               <span className="text-[11px] text-slate-400">
                 Synced with SQLite & Google Drive
@@ -1300,17 +1746,17 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-slate-800/80 bg-slate-900/50 text-slate-400">
-                    <th className="py-2.5 px-4 font-semibold">Time</th>
+                    <th className="py-2.5 px-4 font-semibold">Moment / Time</th>
                     <th className="py-2.5 px-4 font-semibold">Temperature</th>
                     <th className="py-2.5 px-4 font-semibold">Site</th>
                     <th className="py-2.5 px-4 font-semibold">Symptoms</th>
                     <th className="py-2.5 px-4 font-semibold">Medication</th>
-                    <th className="py-2.5 px-4 font-semibold">Observer</th>
+                    <th className="py-2.5 px-4 font-semibold">Drive & SQLite Store</th>
                     <th className="py-2.5 px-4 font-semibold text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {memberLogs
+                  {displayedLogs
                     .slice()
                     .reverse()
                     .map((log) => {
@@ -1318,12 +1764,30 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
                       return (
                         <tr key={log.id} className="hover:bg-slate-900/40 transition">
                           <td className="py-2.5 px-4 font-mono text-slate-300 whitespace-nowrap">
-                            {new Date(log.timestamp).toLocaleString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
+                            <div className="font-semibold text-white">
+                              {new Date(log.timestamp).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {new Date(log.timestamp).toLocaleDateString([], {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })}
+                            </div>
+                            {log.readingGroupName && (
+                              <div className="mt-1">
+                                <span
+                                  className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 max-w-[150px] truncate"
+                                  title={log.readingGroupName}
+                                >
+                                  <Folder className="w-2.5 h-2.5 shrink-0" />
+                                  <span className="truncate">{log.readingGroupName}</span>
+                                </span>
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-4">
                             <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md font-bold text-xs ${colors.badge}`}>
@@ -1349,17 +1813,55 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
                               <span className="text-slate-600">—</span>
                             )}
                           </td>
-                          <td className="py-2.5 px-4 text-slate-400 text-[11px]">
-                            {log.recordedBy || 'AURO Voice'}
+                          <td className="py-2.5 px-4">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/50"
+                                title="Saved in sovereign SQLite store"
+                              >
+                                <Database className="w-2.5 h-2.5" /> SQLite
+                              </span>
+                              {log.driveWebViewLink ? (
+                                <a
+                                  href={log.driveWebViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-800/50 hover:bg-emerald-900/60 hover:underline transition"
+                                  title="View individual moment JSON file in Google Drive"
+                                >
+                                  <Cloud className="w-2.5 h-2.5" /> Drive ↗
+                                </a>
+                              ) : (
+                                <button
+                                  onClick={() => handleSyncSingleMoment(log)}
+                                  disabled={syncingMomentId === log.id}
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition disabled:opacity-50"
+                                  title="Sync this moment to Google Drive"
+                                >
+                                  <Cloud className={`w-2.5 h-2.5 ${syncingMomentId === log.id ? 'animate-spin text-indigo-400' : ''}`} />
+                                  <span>Sync</span>
+                                </button>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2.5 px-4 text-right">
-                            <button
-                              onClick={() => handleDelete(log.id)}
-                              title="Delete log entry"
-                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => setInspectingMoment(log)}
+                                title="Inspect this fever moment"
+                                className="px-2 py-1 rounded bg-indigo-600/30 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[11px] font-semibold transition flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Moment</span>
+                              </button>
+                              <button
+                                onClick={() => handleDelete(log.id)}
+                                title="Delete log entry"
+                                className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1381,6 +1883,335 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* DEDICATED MOMENT DETAIL INSPECTOR MODAL */}
+      {inspectingMoment && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-5 bg-black/85 backdrop-blur-md animate-in fade-in">
+          <div className="relative w-full max-w-xl bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center">
+                  <Thermometer className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+                    <span>{inspectingMoment.memberName}</span>
+                    <span className="text-xs font-normal text-slate-400">• Fever Moment Inspection</span>
+                  </h4>
+                  <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                    <span>
+                      {new Date(inspectingMoment.timestamp).toLocaleString([], {
+                        weekday: 'short',
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setInspectingMoment(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+              {/* Main Temperature Hero */}
+              <div
+                className={`p-4 rounded-2xl border flex items-center justify-between ${
+                  getSeverityColor(inspectingMoment.severity).bg
+                } ${getSeverityColor(inspectingMoment.severity).border}`}
+              >
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                    Recorded Moment Temperature
+                  </span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-3xl font-extrabold text-white">
+                      {unit === 'F' ? `${inspectingMoment.temperatureF}°F` : `${inspectingMoment.temperatureC}°C`}
+                    </span>
+                    <span className="text-sm text-slate-400 font-medium">
+                      ({unit === 'F' ? `${inspectingMoment.temperatureC}°C` : `${inspectingMoment.temperatureF}°F`})
+                    </span>
+                  </div>
+                  <span
+                    className={`inline-block mt-2 px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                      getSeverityColor(inspectingMoment.severity).badge
+                    }`}
+                  >
+                    {getSeverityLabel(inspectingMoment.severity)}
+                  </span>
+                </div>
+
+                <div className="text-right space-y-1">
+                  <span className="text-[11px] text-slate-400 block">Measurement Method</span>
+                  <span className="inline-block px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-xs font-semibold text-slate-200 capitalize">
+                    {inspectingMoment.measurementMethod.replace('_', ' ')}
+                  </span>
+                  <div className="text-[10px] text-slate-500 pt-1">
+                    Observer: {inspectingMoment.recordedBy || 'AURO Voice'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Symptoms at this moment */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1.5">
+                <span className="text-xs font-semibold text-slate-300 block">
+                  Symptoms Observed at this Moment
+                </span>
+                {inspectingMoment.symptoms && inspectingMoment.symptoms.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {inspectingMoment.symptoms.map((s, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-0.5 rounded-lg text-xs bg-rose-950/40 text-rose-300 border border-rose-800/40"
+                      >
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No acute symptoms noted at this reading moment.</p>
+                )}
+              </div>
+
+              {/* Medication at this moment */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1.5">
+                <span className="text-xs font-semibold text-slate-300 block flex items-center gap-1.5">
+                  <Pill className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Medication Administered</span>
+                </span>
+                {inspectingMoment.medicationGiven ? (
+                  <div className="p-2.5 rounded-xl bg-purple-950/30 border border-purple-800/40 text-xs space-y-1 text-purple-200">
+                    <div className="font-bold text-white flex items-center justify-between">
+                      <span>{inspectingMoment.medicationGiven.name}</span>
+                      {inspectingMoment.medicationGiven.dose && (
+                        <span className="px-2 py-0.5 rounded bg-purple-900/60 text-[11px] font-mono">
+                          {inspectingMoment.medicationGiven.dose}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-purple-300">
+                      Administered at:{' '}
+                      {new Date(inspectingMoment.medicationGiven.givenAt || inspectingMoment.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-500">No antipyretic medication given during this observation.</p>
+                )}
+              </div>
+
+              {/* Group / Episode of this Moment */}
+              {inspectingMoment.readingGroupName && (
+                <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <Folder className="w-4 h-4 text-amber-400" />
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-amber-400/80 block">
+                        Assigned Fever Reading Group
+                      </span>
+                      <span className="font-bold text-white text-xs">
+                        {inspectingMoment.readingGroupName}
+                      </span>
+                    </div>
+                  </div>
+                  {inspectingMoment.readingGroupId && (
+                    <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                      ID: {inspectingMoment.readingGroupId.slice(-8)}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
+              {inspectingMoment.notes && (
+                <div className="p-3.5 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-1">
+                  <span className="text-xs font-semibold text-slate-300 block">Clinical & Caregiver Notes</span>
+                  <p className="text-xs text-slate-300 italic leading-relaxed">"{inspectingMoment.notes}"</p>
+                </div>
+              )}
+
+              {/* Both Drive & SQLite Synchronization Status */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Moment Storage Verification</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    ID: {inspectingMoment.id}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* SQLite Status Card */}
+                  <div className="p-3 rounded-xl bg-cyan-950/30 border border-cyan-800/40 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-cyan-300 mb-1">
+                        <CheckCircle className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>SQLite Database</span>
+                      </div>
+                      <p className="text-[10px] text-cyan-200/80 leading-relaxed">
+                        Persisted locally in sovereign SQLite store table{' '}
+                        <code className="bg-cyan-900/50 px-1 rounded">fever_logs</code>.
+                      </p>
+                    </div>
+                    <span className="text-[9px] font-mono text-cyan-400 mt-2 block">
+                      ✓ Offline Available 24/7
+                    </span>
+                  </div>
+
+                  {/* Google Drive Status Card */}
+                  <div className="p-3 rounded-xl bg-emerald-950/30 border border-emerald-800/40 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-300 mb-1">
+                        <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Google Drive Cloud</span>
+                      </div>
+                      <p className="text-[10px] text-emerald-200/80 leading-relaxed">
+                        {inspectingMoment.driveWebViewLink
+                          ? 'Individual moment file saved in Drive under Family Circle/Health Records.'
+                          : 'Moment recorded locally; not yet synced to Google Drive.'}
+                      </p>
+                    </div>
+
+                    {inspectingMoment.driveWebViewLink ? (
+                      <a
+                        href={inspectingMoment.driveWebViewLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-sm"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Open in Google Drive</span>
+                      </a>
+                    ) : (
+                      <button
+                        onClick={() => handleSyncSingleMoment(inspectingMoment)}
+                        disabled={syncingMomentId === inspectingMoment.id}
+                        className="mt-2 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition border border-slate-700 disabled:opacity-50"
+                      >
+                        <RefreshCw
+                          className={`w-3 h-3 ${syncingMomentId === inspectingMoment.id ? 'animate-spin' : ''}`}
+                        />
+                        <span>Sync Moment to Drive</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between">
+              <button
+                onClick={() => {
+                  handleDelete(inspectingMoment.id);
+                  setInspectingMoment(null);
+                }}
+                className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1 hover:bg-rose-950/30 px-3 py-1.5 rounded-lg transition"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Moment</span>
+              </button>
+              <button
+                onClick={() => setInspectingMoment(null)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE NEW NAMED FEVER READING GROUP MODAL */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-slate-900 border border-amber-500/50 rounded-2xl p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <FolderPlus className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Create Fever Reading Group</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Group moment-level readings for {activeMember?.memberName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateGroupModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateGroup} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-200 mb-1">
+                  Group / Episode Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Viral Flu Episode Nov 2026, Teething Fever"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-200 mb-1">
+                  Clinical Notes / Context (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Temperature spiked after daycare. Prescribed Crocin 250mg. Advised 48-hour monitoring."
+                  value={newGroupNotes}
+                  onChange={(e) => setNewGroupNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-amber-500 rounded-lg px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none resize-none"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed">
+                Moments recorded in this group will be synchronized in both Google Drive and SQLite. You can print clinical reports specifically for this episode.
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateGroupModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white bg-slate-900 border border-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-amber-500 to-rose-500 hover:brightness-110 text-white shadow-md transition cursor-pointer"
+                >
+                  Create & Set as Active Group
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

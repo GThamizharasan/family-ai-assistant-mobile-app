@@ -112,6 +112,10 @@ import {
   saveOfflineMapPackageToSqlite,
   getOfflineMapPackagesFromSqlite,
   deleteOfflineMapPackageFromSqlite,
+  saveFeverReadingGroupToSqlite,
+  getFeverReadingGroupsFromSqlite,
+  deleteFeverReadingGroupFromSqlite,
+  updateFeverReadingGroupDriveSyncInSqlite,
   saveFeverLogToSqlite,
   getFeverLogsFromSqlite,
   deleteFeverLogFromSqlite,
@@ -126,6 +130,7 @@ import {
   updateHydrationLogDriveSyncInSqlite,
   type CustomMapRouteRecord,
   type OfflineMapPackageRecord,
+  type FeverReadingGroupRecord,
   type FeverLogRecord,
   type MedicationDoseLogRecord,
   type HydrationLogRecord,
@@ -3879,12 +3884,94 @@ Respond strictly in valid JSON format with keys: clinicalOverview, actionableRec
   }
 });
 
+// Family Health: Named Fever Reading Groups (Episodes / Illness Clusters)
+app.get('/api/health/fever-groups', (req, res) => {
+  try {
+    const memberId = (req.query.memberId as string || '').trim();
+    const userEmail = (req.query.userEmail as string || '').trim();
+    const groups = getFeverReadingGroupsFromSqlite(memberId, userEmail);
+    res.json({ success: true, count: groups.length, groups });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/health/fever-groups', (req, res) => {
+  try {
+    const {
+      id = 'grp_fever_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+      userEmail = 'chinna.tamil2000@gmail.com',
+      memberId,
+      memberName,
+      groupName,
+      startDate = new Date().toISOString(),
+      endDate,
+      isActive = true,
+      notes = '',
+      recordedBy = 'Auro AI',
+      driveFolderId = '',
+      driveWebViewLink = '',
+      driveSyncStatus = 'local_only',
+      createdAt = new Date().toISOString(),
+    } = req.body;
+
+    if (!memberId || !memberName || !groupName) {
+      return res.status(400).json({ success: false, error: 'memberId, memberName, and groupName are required' });
+    }
+
+    const saved = saveFeverReadingGroupToSqlite({
+      id,
+      userEmail,
+      memberId,
+      memberName,
+      groupName,
+      startDate,
+      endDate: endDate || undefined,
+      isActive: Boolean(isActive),
+      notes,
+      recordedBy,
+      driveFolderId,
+      driveWebViewLink,
+      driveSyncStatus,
+      createdAt,
+    });
+
+    res.json({ success: true, group: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/health/fever-groups/:id', (req, res) => {
+  try {
+    const success = deleteFeverReadingGroupFromSqlite(req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch('/api/health/fever-groups/:id/drive-sync', (req, res) => {
+  try {
+    const { driveFolderId, driveWebViewLink } = req.body;
+    const success = updateFeverReadingGroupDriveSyncInSqlite(
+      req.params.id,
+      driveFolderId || '',
+      driveWebViewLink || ''
+    );
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Family Health: Fever Temperature Recording & Logs
 app.get('/api/health/fever-logs', (req, res) => {
   try {
     const memberId = (req.query.memberId as string || '').trim();
     const userEmail = (req.query.userEmail as string || '').trim();
-    const logs = getFeverLogsFromSqlite(memberId, userEmail);
+    const readingGroupId = (req.query.readingGroupId as string || '').trim();
+    const logs = getFeverLogsFromSqlite(memberId, userEmail, readingGroupId);
     res.json({ success: true, count: logs.length, logs });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
@@ -3898,6 +3985,8 @@ app.post('/api/health/fever-logs', (req, res) => {
       userEmail = 'chinna.tamil2000@gmail.com',
       memberId,
       memberName,
+      readingGroupId,
+      readingGroupName,
       timestamp = new Date().toISOString(),
       temperatureF,
       temperatureC,
@@ -3942,6 +4031,8 @@ app.post('/api/health/fever-logs', (req, res) => {
       userEmail,
       memberId,
       memberName,
+      readingGroupId: readingGroupId || undefined,
+      readingGroupName: readingGroupName || undefined,
       timestamp,
       temperatureF: tempF,
       temperatureC: tempC,

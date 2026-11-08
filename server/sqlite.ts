@@ -801,11 +801,30 @@ export async function initSqliteDb(): Promise<Database> {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS family_fever_reading_groups (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      group_name TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT,
+      is_active INTEGER DEFAULT 1,
+      notes TEXT,
+      recorded_by TEXT DEFAULT 'Auro AI',
+      drive_folder_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'local_only',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS family_fever_logs (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
       member_id TEXT NOT NULL,
       member_name TEXT NOT NULL,
+      reading_group_id TEXT,
+      reading_group_name TEXT,
       timestamp TEXT NOT NULL,
       temperature_f REAL NOT NULL,
       temperature_c REAL NOT NULL,
@@ -881,6 +900,10 @@ export async function initSqliteDb(): Promise<Database> {
   } catch { }
   try { db.run('ALTER TABLE apple_books_library ADD COLUMN pdf_content_base64 TEXT;'); } catch { }
   try { db.run('ALTER TABLE apple_books_library ADD COLUMN is_local_cached INTEGER DEFAULT 1;'); } catch { }
+  try { db.run('ALTER TABLE family_fever_logs ADD COLUMN reading_group_id TEXT;'); } catch { }
+  try { db.run('ALTER TABLE family_fever_logs ADD COLUMN reading_group_name TEXT;'); } catch { }
+  try { db.run('ALTER TABLE family_fever_reading_groups ADD COLUMN recorded_by TEXT DEFAULT "Auro AI";'); } catch { }
+  try { db.run('ALTER TABLE family_fever_reading_groups ADD COLUMN drive_sync_status TEXT DEFAULT "local_only";'); } catch { }
 
   // Seed default Google Keep notes if empty
   try {
@@ -5592,6 +5615,138 @@ export function deleteOfflineMapPackageFromSqlite(id: string): boolean {
 }
 
 // -------------------------------------------------------------
+// FEVER READING GROUPS & CLINICAL EPISODE TRACKING
+// -------------------------------------------------------------
+export interface FeverReadingGroupRecord {
+  id: string;
+  userEmail: string;
+  memberId: string;
+  memberName: string;
+  groupName: string;
+  startDate: string;
+  endDate?: string;
+  isActive: boolean;
+  notes?: string;
+  recordedBy?: string;
+  driveFolderId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: string;
+  createdAt: string;
+}
+
+export function saveFeverReadingGroupToSqlite(group: FeverReadingGroupRecord): FeverReadingGroupRecord {
+  if (!db) return group;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO family_fever_reading_groups (
+        id, user_email, member_id, member_name, group_name,
+        start_date, end_date, is_active, notes, recorded_by,
+        drive_folder_id, drive_web_view_link, drive_sync_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        group.id,
+        group.userEmail || '',
+        group.memberId,
+        group.memberName,
+        group.groupName,
+        group.startDate || new Date().toISOString(),
+        group.endDate || '',
+        group.isActive ? 1 : 0,
+        group.notes || '',
+        group.recordedBy || 'Auro AI',
+        group.driveFolderId || '',
+        group.driveWebViewLink || '',
+        group.driveSyncStatus || 'local_only',
+        group.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return group;
+  } catch (err) {
+    console.warn('Error saving fever reading group to SQLite:', err);
+    return group;
+  }
+}
+
+export function getFeverReadingGroupsFromSqlite(memberId?: string, userEmail?: string): FeverReadingGroupRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM family_fever_reading_groups`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (memberId && memberId.trim() && memberId !== 'all') {
+      conditions.push(`member_id = ?`);
+      params.push(memberId.trim());
+    }
+    if (userEmail && userEmail.trim()) {
+      conditions.push(`(user_email = ? OR user_email = '')`);
+      params.push(userEmail.trim());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+    query += ` ORDER BY start_date DESC`;
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const groups: FeverReadingGroupRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      groups.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        memberId: String(row.member_id || ''),
+        memberName: String(row.member_name || ''),
+        groupName: String(row.group_name || ''),
+        startDate: String(row.start_date || ''),
+        endDate: row.end_date ? String(row.end_date) : undefined,
+        isActive: Boolean(row.is_active === 1 || row.is_active === '1'),
+        notes: row.notes ? String(row.notes) : '',
+        recordedBy: String(row.recorded_by || 'Auro AI'),
+        driveFolderId: row.drive_folder_id ? String(row.drive_folder_id) : '',
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : '',
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return groups;
+  } catch (err) {
+    console.warn('Error fetching fever reading groups from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteFeverReadingGroupFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_fever_reading_groups WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateFeverReadingGroupDriveSyncInSqlite(id: string, driveFolderId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE family_fever_reading_groups SET drive_folder_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced' WHERE id = ?`, [
+      driveFolderId,
+      driveWebViewLink || '',
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -------------------------------------------------------------
 // FEVER TEMPERATURE LOGS & CLINICAL EPISODE TRACKING
 // -------------------------------------------------------------
 export interface FeverLogRecord {
@@ -5599,6 +5754,8 @@ export interface FeverLogRecord {
   userEmail: string;
   memberId: string;
   memberName: string;
+  readingGroupId?: string;
+  readingGroupName?: string;
   timestamp: string;
   temperatureF: number;
   temperatureC: number;
@@ -5619,16 +5776,18 @@ export function saveFeverLogToSqlite(log: FeverLogRecord): FeverLogRecord {
   try {
     db.run(
       `INSERT OR REPLACE INTO family_fever_logs (
-        id, user_email, member_id, member_name, timestamp,
+        id, user_email, member_id, member_name, reading_group_id, reading_group_name, timestamp,
         temperature_f, temperature_c, measurement_method, severity,
         symptoms_json, medication_given_json, notes, recorded_by,
         drive_file_id, drive_web_view_link, drive_sync_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         log.id,
         log.userEmail || '',
         log.memberId,
         log.memberName,
+        log.readingGroupId || '',
+        log.readingGroupName || '',
         log.timestamp || new Date().toISOString(),
         log.temperatureF,
         log.temperatureC,
@@ -5652,7 +5811,7 @@ export function saveFeverLogToSqlite(log: FeverLogRecord): FeverLogRecord {
   }
 }
 
-export function getFeverLogsFromSqlite(memberId?: string, userEmail?: string): FeverLogRecord[] {
+export function getFeverLogsFromSqlite(memberId?: string, userEmail?: string, readingGroupId?: string): FeverLogRecord[] {
   if (!db) return [];
   try {
     let query = `SELECT * FROM family_fever_logs`;
@@ -5666,6 +5825,10 @@ export function getFeverLogsFromSqlite(memberId?: string, userEmail?: string): F
     if (userEmail && userEmail.trim()) {
       conditions.push(`(user_email = ? OR user_email = '')`);
       params.push(userEmail.trim());
+    }
+    if (readingGroupId && readingGroupId.trim() && readingGroupId !== 'all') {
+      conditions.push(`reading_group_id = ?`);
+      params.push(readingGroupId.trim());
     }
 
     if (conditions.length > 0) {
@@ -5684,6 +5847,8 @@ export function getFeverLogsFromSqlite(memberId?: string, userEmail?: string): F
         userEmail: String(row.user_email || ''),
         memberId: String(row.member_id || ''),
         memberName: String(row.member_name || ''),
+        readingGroupId: row.reading_group_id ? String(row.reading_group_id) : undefined,
+        readingGroupName: row.reading_group_name ? String(row.reading_group_name) : undefined,
         timestamp: String(row.timestamp || ''),
         temperatureF: Number(row.temperature_f || 98.6),
         temperatureC: Number(row.temperature_c || 37.0),
