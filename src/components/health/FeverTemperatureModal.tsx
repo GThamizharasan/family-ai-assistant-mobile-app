@@ -499,10 +499,10 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
 
     const container = svgNode.parentElement;
     const width = isPrintMode ? 720 : (container ? container.clientWidth : 700);
-    const height = isPrintMode ? 150 : 300;
+    const height = isPrintMode ? 175 : 300;
     const margin = isPrintMode
-      ? { top: 16, right: 45, bottom: 25, left: 45 }
-      : { top: 30, right: 55, bottom: 45, left: 55 };
+      ? { top: 18, right: 52, bottom: 42, left: 54 }
+      : { top: 25, right: 55, bottom: 48, left: 55 };
 
     const innerWidth = width - margin.left - margin.right;
     const innerHeight = height - margin.top - margin.bottom;
@@ -608,32 +608,102 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     const yAxisLeft = d3.axisLeft(yScaleF).ticks(5).tickFormat((d) => `${d}°F`);
     const yAxisRight = d3.axisRight(yScaleC).ticks(5).tickFormat((d) => `${(d as number).toFixed(1)}°C`);
 
-    const axisTextColor = isPrintMode ? '#334155' : '#94a3b8';
+    const axisColor = isPrintMode ? '#0f172a' : '#94a3b8';
+    const tickLineColor = isPrintMode ? '#475569' : '#64748b';
+    const domainLineColor = isPrintMode ? '#1e293b' : '#475569';
 
-    g.append('g')
+    // Render X Axis
+    const xAxisG = g.append('g')
+      .attr('class', 'x-axis')
       .attr('transform', `translate(0,${innerHeight})`)
-      .call(xAxis)
-      .attr('color', axisTextColor)
-      .selectAll('text')
-      .attr('font-size', isPrintMode ? '8.5px' : '10px')
-      .attr('font-weight', isPrintMode ? '600' : 'normal')
-      .attr('transform', 'rotate(-10)')
-      .style('text-anchor', 'end');
+      .call(xAxis);
 
-    g.append('g')
-      .call(yAxisLeft)
-      .attr('color', axisTextColor)
-      .selectAll('text')
-      .attr('font-size', isPrintMode ? '8.5px' : '10px')
-      .attr('font-weight', isPrintMode ? '600' : 'normal');
+    xAxisG.select('.domain')
+      .attr('stroke', domainLineColor)
+      .attr('stroke-width', 1.2);
 
-    g.append('g')
+    xAxisG.selectAll('.tick line')
+      .attr('stroke', tickLineColor);
+
+    xAxisG.selectAll('text')
+      .attr('fill', axisColor)
+      .attr('font-size', isPrintMode ? '9px' : '10px')
+      .attr('font-weight', isPrintMode ? '700' : 'normal')
+      .attr('transform', 'rotate(-12)')
+      .style('text-anchor', 'end')
+      .attr('dx', '-3px')
+      .attr('dy', '4px');
+
+    // Render Left Y Axis (Fahrenheit)
+    const yAxisLeftG = g.append('g')
+      .attr('class', 'y-axis-left')
+      .call(yAxisLeft);
+
+    yAxisLeftG.select('.domain')
+      .attr('stroke', domainLineColor)
+      .attr('stroke-width', 1.2);
+
+    yAxisLeftG.selectAll('.tick line')
+      .attr('stroke', tickLineColor);
+
+    yAxisLeftG.selectAll('text')
+      .attr('fill', axisColor)
+      .attr('font-size', isPrintMode ? '9px' : '10px')
+      .attr('font-weight', isPrintMode ? '700' : 'normal');
+
+    // Render Right Y Axis (Celsius)
+    const yAxisRightG = g.append('g')
+      .attr('class', 'y-axis-right')
       .attr('transform', `translate(${innerWidth}, 0)`)
-      .call(yAxisRight)
-      .attr('color', axisTextColor)
-      .selectAll('text')
-      .attr('font-size', isPrintMode ? '8.5px' : '10px')
-      .attr('font-weight', isPrintMode ? '600' : 'normal');
+      .call(yAxisRight);
+
+    yAxisRightG.select('.domain')
+      .attr('stroke', domainLineColor)
+      .attr('stroke-width', 1.2);
+
+    yAxisRightG.selectAll('.tick line')
+      .attr('stroke', tickLineColor);
+
+    yAxisRightG.selectAll('text')
+      .attr('fill', axisColor)
+      .attr('font-size', isPrintMode ? '9px' : '10px')
+      .attr('font-weight', isPrintMode ? '700' : 'normal');
+
+    // EXPLICIT AXIS TITLES / LABELS
+    // 1. Left Y-Axis Label: Temperature (°F)
+    g.append('text')
+      .attr('class', 'y-axis-left-label')
+      .attr('transform', 'rotate(-90)')
+      .attr('x', -innerHeight / 2)
+      .attr('y', isPrintMode ? -38 : -40)
+      .attr('text-anchor', 'middle')
+      .attr('fill', isPrintMode ? '#0f172a' : '#cbd5e1')
+      .attr('font-size', isPrintMode ? '9.5px' : '11px')
+      .attr('font-weight', '700')
+      .text('Temperature (°F)');
+
+    // 2. Right Y-Axis Label: Temperature (°C)
+    g.append('text')
+      .attr('class', 'y-axis-right-label')
+      .attr('transform', 'rotate(90)')
+      .attr('x', innerHeight / 2)
+      .attr('y', isPrintMode ? -(innerWidth + 38) : -(innerWidth + 42))
+      .attr('text-anchor', 'middle')
+      .attr('fill', isPrintMode ? '#0f172a' : '#cbd5e1')
+      .attr('font-size', isPrintMode ? '9.5px' : '11px')
+      .attr('font-weight', '700')
+      .text('Temperature (°C)');
+
+    // 3. Bottom X-Axis Label: Observation Timeline
+    g.append('text')
+      .attr('class', 'x-axis-label')
+      .attr('x', innerWidth / 2)
+      .attr('y', innerHeight + (isPrintMode ? 35 : 42))
+      .attr('text-anchor', 'middle')
+      .attr('fill', isPrintMode ? '#0f172a' : '#cbd5e1')
+      .attr('font-size', isPrintMode ? '9.5px' : '11px')
+      .attr('font-weight', '700')
+      .text('Observation Timeline (Date & Time)');
 
     // Area Generator
     const gradId = isPrintMode ? 'print-fever-grad' : 'screen-fever-grad';
@@ -751,7 +821,10 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     if (printSvgRef.current && displayedLogs.length > 0) {
       drawChart(printSvgRef.current, displayedLogs, true);
     }
-    window.print();
+    // Give browser event loop a moment to flush SVG rendering before print snapshot
+    setTimeout(() => {
+      window.print();
+    }, 60);
   };
 
   // D3.js Temperature Graph Renderer
@@ -768,22 +841,50 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md overflow-y-auto print:p-0 print:m-0 print:bg-white print:static print:overflow-visible">
       {/* PRINT-ONLY MEDICAL REPORT */}
-      <div className="hidden print:block fixed inset-0 bg-white text-slate-900 p-4 font-sans z-[9999]">
+      <div id="aura-clinical-print-portal" className="hidden print:block bg-white text-slate-900 p-2 font-sans">
         <style>{`
           @media print {
             @page {
               size: A4 portrait;
               margin: 8mm 10mm;
             }
-            body {
-              -webkit-print-color-adjust: exact;
-              print-color-adjust: exact;
+            html, body {
+              height: auto !important;
+              min-height: 0 !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #0f172a !important;
+              overflow: visible !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+            }
+            /* Hide entire screen UI / background app elements */
+            body * {
+              visibility: hidden;
+            }
+            /* Only display our clinical print report portal */
+            #aura-clinical-print-portal,
+            #aura-clinical-print-portal * {
+              visibility: visible;
+            }
+            #aura-clinical-print-portal {
+              position: absolute !important;
+              left: 0 !important;
+              top: 0 !important;
+              right: 0 !important;
+              width: 100% !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              color: #0f172a !important;
+              display: block !important;
             }
             .page-break-avoid {
-              break-inside: avoid;
-              page-break-inside: avoid;
+              break-inside: avoid !important;
+              page-break-inside: avoid !important;
             }
           }
         `}</style>
@@ -906,7 +1007,7 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
               Red line = 100.4°F Fever Threshold • 'Rx' = Antipyretic Medication Administered
             </span>
           </div>
-          <div className="w-full h-[145px]">
+          <div className="w-full h-[175px]">
             <svg ref={printSvgRef} className="w-full h-full overflow-visible" />
           </div>
         </div>
