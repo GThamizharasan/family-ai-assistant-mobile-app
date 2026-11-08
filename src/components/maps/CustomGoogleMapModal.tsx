@@ -15,7 +15,16 @@ import {
 } from '../../types/mapNavigation.ts';
 
 declare const google: any;
-import { decodePolyline, speakTurnInstruction, cacheRouteLocally, getLocalCachedRoutes, cacheOfflinePackageLocally, getLocalOfflinePackages } from '../../services/offlineMapService.ts';
+import {
+  decodePolyline,
+  speakTurnInstruction,
+  cacheRouteLocally,
+  getLocalCachedRoutes,
+  cacheOfflinePackageLocally,
+  getLocalOfflinePackages,
+  generateOfflineClientRoute,
+} from '../../services/offlineMapService.ts';
+import { getApiUrl } from '../../services/api.ts';
 import { syncRouteToGoogleDrive } from '../../services/mapDriveSync.ts';
 import {
   Car,
@@ -439,7 +448,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
   useEffect(() => {
     async function loadConfig() {
       try {
-        const res = await fetch('/api/maps/client-config');
+        const res = await fetch(getApiUrl('/api/maps/client-config'));
         if (res.ok) {
           const data = await res.json();
           if (data?.apiKey) {
@@ -472,7 +481,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
   useEffect(() => {
     async function loadSavedData() {
       try {
-        const routesRes = await fetch(`/api/maps/routes?userEmail=${encodeURIComponent(userEmail)}`);
+        const routesRes = await fetch(getApiUrl(`/api/maps/routes?userEmail=${encodeURIComponent(userEmail)}`));
         if (routesRes.ok) {
           const data = await routesRes.json();
           if (data.routes && data.routes.length > 0) {
@@ -491,7 +500,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
           setSavedRoutes(getLocalCachedRoutes());
         }
 
-        const pkgRes = await fetch('/api/maps/offline-packages');
+        const pkgRes = await fetch(getApiUrl('/api/maps/offline-packages'));
         if (pkgRes.ok) {
           const pData = await pkgRes.json();
           if (pData.packages && pData.packages.length > 0) {
@@ -519,7 +528,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
     }
   }, [isOpen, userEmail]);
 
-  // Search destination based on user query
+  // Multi-tier Destination Search: Coordinates -> Google Geocoder -> Nominatim -> Google Geocode REST -> Backend API -> Local Presets -> Saved Routes
   const handleSearchDestination = async (query: string, autoSelectFirst = false) => {
     const q = (query || '').trim();
     if (!q) {
@@ -531,84 +540,159 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
     setIsSearchingDest(true);
     setErrorNotice(null);
 
-    try {
-      // 1. Client-side Google Geocoder if loaded
-      if (typeof window !== 'undefined' && (window as any).google?.maps?.Geocoder) {
-        try {
-          const geocoder = new (window as any).google.maps.Geocoder();
-          const geoRes = await new Promise<any>((resolve) => {
-            geocoder.geocode({ address: q }, (res: any, status: string) => {
-              if (status === 'OK' && res && res.length > 0) {
-                resolve(res);
-              } else {
-                resolve(null);
-              }
-            });
-          });
+    const onFound = (places: Array<{ name: string; lat: number; lng: number; formattedAddress?: string }>) => {
+      setDestSearchResults(places);
+      setShowDestSuggestions(true);
+      if (autoSelectFirst && places[0]) {
+        applyDestination(places[0]);
+      }
+      setIsSearchingDest(false);
+      return places;
+    };
 
-          if (geoRes && geoRes.length > 0) {
-            const places = geoRes.slice(0, 5).map((r: any) => ({
-              name: r.formatted_address || q,
-              formattedAddress: r.formatted_address,
-              lat: r.geometry.location.lat(),
-              lng: r.geometry.location.lng(),
-            }));
-            setDestSearchResults(places);
-            setShowDestSuggestions(true);
+    // 0. Direct Coordinate Check (e.g. "13.0827, 80.2755" or "13.08, 80.27")
+    const coordMatch = q.match(/^(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)$/);
+    if (coordMatch) {
+      const parsedLat = parseFloat(coordMatch[1]);
+      const parsedLng = parseFloat(coordMatch[3]);
+      if (!isNaN(parsedLat) && !isNaN(parsedLng) && Math.abs(parsedLat) <= 90 && Math.abs(parsedLng) <= 180) {
+        return onFound([{
+          name: `Location (${parsedLat.toFixed(4)}, ${parsedLng.toFixed(4)})`,
+          formattedAddress: `Coordinates: ${parsedLat}, ${parsedLng}`,
+          lat: parsedLat,
+          lng: parsedLng,
+        }]);
+      }
+    }
 
-            if (autoSelectFirst && places[0]) {
-              applyDestination(places[0]);
-              return places[0];
+    // 1. Client-side Google Geocoder if maps script loaded
+    if (typeof window !== 'undefined' && (window as any).google?.maps?.Geocoder) {
+      try {
+        const geocoder = new (window as any).google.maps.Geocoder();
+        const geoRes = await new Promise<any>((resolve) => {
+          const timer = setTimeout(() => resolve(null), 3000);
+          geocoder.geocode({ address: q }, (res: any, status: string) => {
+            clearTimeout(timer);
+            if (status === 'OK' && res && res.length > 0) {
+              resolve(res);
+            } else {
+              resolve(null);
             }
-            return places;
-          }
-        } catch (e) {
-          console.warn('[Geocode] Client geocoder warning:', e);
+          });
+        });
+
+        if (geoRes && geoRes.length > 0) {
+          const places = geoRes.slice(0, 5).map((r: any) => ({
+            name: r.formatted_address?.split(',')[0] || r.formatted_address || q,
+            formattedAddress: r.formatted_address,
+            lat: r.geometry.location.lat(),
+            lng: r.geometry.location.lng(),
+          }));
+          return onFound(places);
+        }
+      } catch (e) {
+        console.warn('[Geocode] Client geocoder warning:', e);
+      }
+    }
+
+    // 2. Direct OpenStreetMap Nominatim Search (Public HTTPS REST API, works directly on mobile without backend or API key)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=5&addressdetails=1`;
+      const nomRes = await fetch(nomUrl, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (nomRes.ok) {
+        const nomData = await nomRes.json();
+        if (Array.isArray(nomData) && nomData.length > 0) {
+          const places = nomData.map((item: any) => ({
+            name: item.display_name?.split(',')[0] || item.name || q,
+            formattedAddress: item.display_name,
+            lat: parseFloat(item.lat),
+            lng: parseFloat(item.lon),
+          }));
+          return onFound(places);
         }
       }
+    } catch (nomErr) {
+      console.warn('[Geocode] Nominatim search warning:', nomErr);
+    }
 
-      // 2. Server geocoding endpoint
-      const res = await fetch(`/api/maps/geocode?query=${encodeURIComponent(q)}`);
+    // 3. Direct Google Maps Geocoding REST API (if apiKey is available)
+    if (apiKey && apiKey.trim() && !apiKey.includes('MY_GOOGLE')) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const gmpUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${apiKey.trim()}`;
+        const gmpRes = await fetch(gmpUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (gmpRes.ok) {
+          const gmpData = await gmpRes.json();
+          if (gmpData.status === 'OK' && Array.isArray(gmpData.results) && gmpData.results.length > 0) {
+            const places = gmpData.results.slice(0, 5).map((r: any) => ({
+              name: r.formatted_address?.split(',')[0] || r.formatted_address || q,
+              formattedAddress: r.formatted_address,
+              lat: r.geometry.location.lat,
+              lng: r.geometry.location.lng,
+            }));
+            return onFound(places);
+          }
+        }
+      } catch (gmpErr) {
+        console.warn('[Geocode] Google Geocode REST warning:', gmpErr);
+      }
+    }
+
+    // 4. Backend Geocoding Endpoint via getApiUrl
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(getApiUrl(`/api/maps/geocode?query=${encodeURIComponent(q)}`), {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const data = await res.json();
         if (data.success && Array.isArray(data.results) && data.results.length > 0) {
-          setDestSearchResults(data.results);
-          setShowDestSuggestions(true);
-
-          if (autoSelectFirst && data.results[0]) {
-            applyDestination(data.results[0]);
-            return data.results[0];
-          }
-          return data.results;
+          return onFound(data.results);
         }
       }
-
-      // 3. Fallback matching presets
-      const lower = q.toLowerCase();
-      const matched = PRESET_PLACES.filter((p) => p.name.toLowerCase().includes(lower));
-      if (matched.length > 0) {
-        setDestSearchResults(matched);
-        setShowDestSuggestions(true);
-        if (autoSelectFirst && matched[0]) {
-          applyDestination(matched[0]);
-          return matched[0];
-        }
-        return matched;
-      }
-
-      if (autoSelectFirst) {
-        setErrorNotice(`No matching locations found for "${q}". Please check spelling or enter a landmark.`);
-      }
-      return null;
-    } catch (err: any) {
-      console.warn('Destination search error:', err);
-      if (autoSelectFirst) {
-        setErrorNotice('Failed to search target destination.');
-      }
-      return null;
-    } finally {
-      setIsSearchingDest(false);
+    } catch (backendErr) {
+      console.warn('[Geocode] Backend proxy warning:', backendErr);
     }
+
+    // 5. Offline Presets matching
+    const lower = q.toLowerCase();
+    const matchedPresets = PRESET_PLACES.filter(
+      (p) => p.name.toLowerCase().includes(lower) || lower.includes(p.name.toLowerCase().split(' ')[0])
+    );
+    if (matchedPresets.length > 0) {
+      return onFound(matchedPresets);
+    }
+
+    // 6. Local Cached Routes matching
+    try {
+      const localSaved = getLocalCachedRoutes();
+      const matchedSaved = localSaved
+        .filter((r) => r.destinationName.toLowerCase().includes(lower) || r.title.toLowerCase().includes(lower))
+        .map((r) => ({
+          name: r.destinationName,
+          lat: r.destinationLocation.lat,
+          lng: r.destinationLocation.lng,
+        }));
+      if (matchedSaved.length > 0) {
+        return onFound(matchedSaved);
+      }
+    } catch {}
+
+    setIsSearchingDest(false);
+    if (autoSelectFirst) {
+      setErrorNotice(`No matching locations found for "${q}". Please check spelling or enter a landmark.`);
+    }
+    return null;
   };
 
   const handleDestInputChange = (val: string) => {
@@ -647,7 +731,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
     handleComputeRoute(undefined, place);
   };
 
-  // Handle route computation
+  // Handle route computation (with Live API proxy + Offline client fallback)
   const handleComputeRoute = async (
     modeOverride?: TransportMode,
     destinationOverride?: { name: string; lat: number; lng: number }
@@ -670,8 +754,13 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
     setDriveSyncSuccess(null);
     setIsNavigating(false);
 
+    let routeResult: NavigationRoute | null = null;
+
+    // 1. Try Live Route computation via Backend Proxy
     try {
-      const res = await fetch('/api/maps/routes/compute', {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(getApiUrl('/api/maps/routes/compute'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -680,46 +769,56 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
           travelMode: mode,
           userEmail,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
-      if (!res.ok) {
-        throw new Error('Failed to compute route directions.');
-      }
-
-      const data = await res.json();
-      if (data?.route) {
-        const route: NavigationRoute = data.route;
-        const decoded = decodePolyline(route.encodedPolyline);
-        route.decodedPath = decoded;
-
-        setCurrentRoute(route);
-        setDecodedCoordinates(decoded);
-        setSimCurrentLocation(decoded[0] || origin);
-
-        // Cache locally for offline navigation
-        cacheRouteLocally(route);
-
-        // Save to SQLite
-        try {
-          await fetch('/api/maps/routes', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(route),
-          });
-        } catch {}
-
-        if (autoStartNavigation) {
-          startNavigationSimulation(route, decoded);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.route) {
+          routeResult = data.route;
         }
-      } else {
-        setErrorNotice('No valid route could be determined for this mode.');
       }
-    } catch (err: any) {
-      console.warn('Compute route error:', err);
-      setErrorNotice(err.message || 'Routing computation failed.');
-    } finally {
-      setIsComputing(false);
+    } catch (backendErr) {
+      console.warn('[ComputeRoute] Backend unreachable on mobile, using offline client route engine:', backendErr);
     }
+
+    // 2. Intelligent Client-Side Offline Route Fallback if backend is unreachable
+    if (!routeResult) {
+      routeResult = generateOfflineClientRoute(origin, targetDest, mode, userEmail);
+    }
+
+    if (routeResult) {
+      const decoded =
+        routeResult.decodedPath && routeResult.decodedPath.length > 0
+          ? routeResult.decodedPath
+          : decodePolyline(routeResult.encodedPolyline);
+      routeResult.decodedPath = decoded;
+
+      setCurrentRoute(routeResult);
+      setDecodedCoordinates(decoded);
+      setSimCurrentLocation(decoded[0] || origin);
+
+      // Cache locally for offline navigation on mobile
+      cacheRouteLocally(routeResult);
+
+      // Try saving to backend SQLite if available
+      try {
+        await fetch(getApiUrl('/api/maps/routes'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(routeResult),
+        });
+      } catch {}
+
+      if (autoStartNavigation) {
+        startNavigationSimulation(routeResult, decoded);
+      }
+    } else {
+      setErrorNotice('No valid route could be determined for this mode.');
+    }
+
+    setIsComputing(false);
   };
 
   // Automatically compute route on open ONLY IF an explicit initialDestination was provided
@@ -896,7 +995,7 @@ export const CustomGoogleMapModal: React.FC<CustomGoogleMapModalProps> = ({
     setOfflinePackages((prev) => [newPkg, ...prev]);
 
     try {
-      await fetch('/api/maps/offline-packages', {
+      await fetch(getApiUrl('/api/maps/offline-packages'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPkg),
