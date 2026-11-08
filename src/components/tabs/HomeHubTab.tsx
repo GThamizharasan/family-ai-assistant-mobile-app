@@ -54,6 +54,7 @@ import {
   FolderGit2,
   Music,
   Eye,
+  Navigation,
 } from 'lucide-react';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { GitHubSyncModal } from '../GitHubSyncModal';
@@ -679,16 +680,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
               {/* Feature 3: Google Maps Family GPS Radar */}
               <div
-                onClick={() => onNavigate('family')}
+                onClick={() => onNavigate('navigation')}
                 className="cursor-pointer p-3 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-800 hover:border-indigo-500/40 transition-all flex items-center justify-between group shadow-sm"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-500/25 group-hover:scale-105 transition-transform">
-                    <MapPin className="w-4 h-4" />
+                    <Navigation className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1">
-                      <span className="text-xs font-bold text-white truncate">Google Maps & Transit</span>
+                      <span className="text-xs font-bold text-white truncate">Google Navigation</span>
                       <span className="text-[9px] font-mono px-1 rounded bg-emerald-500/20 text-emerald-300">
                         Bus • Train • Car • Cycle
                       </span>
@@ -2210,12 +2211,12 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               iconBg: 'bg-teal-500/20 text-teal-400',
             },
             {
-              key: 'family' as TabKey,
-              title: 'Google Maps & Multi-Modal Navigation',
+              key: 'navigation' as TabKey,
+              title: 'Google Navigation & Offline Maps',
               category: 'Maps & Transit',
-              desc: 'Live multi-modal directions (Bus, Train, Cycle, Car), offline step-by-step guidance, and family radar.',
+              desc: 'Live multi-modal directions (Bus, Train, Cycle, Car), offline step-by-step guidance, and real-time GPS tracking.',
               badge: `TRANSIT & OFFLINE`,
-              icon: MapPin,
+              icon: Navigation,
               accent: 'border-emerald-500/30 hover:border-emerald-400',
               iconBg: 'bg-emerald-500/20 text-emerald-400',
             },

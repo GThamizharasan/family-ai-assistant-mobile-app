@@ -35,6 +35,7 @@ import { RealtimeSttTab } from './components/tabs/RealtimeSttTab';
 import { RealtimeTranslatorTab } from './components/tabs/RealtimeTranslatorTab';
 import { AdobeScannerTab } from './components/tabs/AdobeScannerTab';
 import { ClockTab } from './components/tabs/ClockTab';
+import { NavigationTab } from './components/tabs/NavigationTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
@@ -233,6 +234,8 @@ const AppContent: React.FC = () => {
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
+      case 'navigation':
+        return <NavigationTab onNavigateHome={() => setCurrentTab('home')} />;
       case 'ibooks':
         return <IBooksLibraryTab />;
       case 'music':

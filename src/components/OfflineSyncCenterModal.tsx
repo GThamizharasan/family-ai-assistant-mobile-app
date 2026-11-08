@@ -439,7 +439,7 @@ export const OfflineSyncCenterModal: React.FC<OfflineSyncCenterModalProps> = ({
 
               {/* Custom Google Maps & Multi-Modal Navigation */}
               <div
-                onClick={() => onNavigateTab?.('family')}
+                onClick={() => onNavigateTab?.('navigation')}
                 className="p-3 rounded-2xl bg-slate-950/60 hover:bg-slate-950 border border-slate-800/90 cursor-pointer transition-colors group"
               >
                 <div className="flex items-center justify-between mb-1">

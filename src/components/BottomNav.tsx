@@ -35,11 +35,13 @@ import {
   Database,
   ScanLine,
   Radio,
+  Navigation,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 export type TabKey =
   | 'home'
+  | 'navigation'
   | 'ibooks'
   | 'music'
   | 'memos'
@@ -102,6 +104,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // All Features categorized
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
+    { key: 'navigation', label: 'Navigation', category: 'Core', icon: Navigation, offlineReady: true },
     { key: 'scanner', label: 'Adobe Scanner', category: 'Intelligence', icon: ScanLine, offlineReady: true },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen, offlineReady: true },
     { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music, offlineReady: true },
@@ -130,6 +133,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // Important features on the LEFT of the Active Realtime Voice Assistant
   const leftTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
+    { key: 'navigation', label: 'Navigation', category: 'Core', icon: Navigation, offlineReady: true },
     { key: 'scanner', label: 'Adobe Scan', category: 'Intelligence', icon: ScanLine, offlineReady: true },
     { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen, offlineReady: true },
     { key: 'music', label: 'Music', category: 'Intelligence', icon: Music, offlineReady: true },

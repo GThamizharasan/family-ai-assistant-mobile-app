@@ -5962,6 +5962,97 @@ app.get('/api/maps/client-config', (_req, res) => {
   }
 });
 
+// Geocode & Location Search Endpoint (Google Geocoding API + Nominatim fallback + Local Presets)
+app.get('/api/maps/geocode', async (req, res) => {
+  try {
+    const query = ((req.query.address || req.query.query || '') as string).trim();
+    if (!query) {
+      return res.status(400).json({ error: 'Search query/address is required' });
+    }
+
+    const keys = getHubApiKeysFromSqlite();
+    const keyRecord = keys.find((k) => k.keyName === 'GOOGLE_MAPS_API_KEY');
+    const apiKey =
+      keyRecord?.keyValue ||
+      process.env.GOOGLE_MAPS_API_KEY ||
+      process.env.VITE_GOOGLE_MAPS_API_KEY ||
+      'AIzaSyB2zaNA_vbSdD78UFydYrxswRHhTlOPmbI';
+
+    let results: Array<{ name: string; lat: number; lng: number; formattedAddress?: string }> = [];
+
+    // 1. Google Geocoding API if key is configured
+    if (apiKey && apiKey.trim() && !apiKey.includes('MY_GOOGLE')) {
+      try {
+        const gmpUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(query)}&key=${apiKey.trim()}`;
+        const gmpRes = await fetch(gmpUrl);
+        if (gmpRes.ok) {
+          const gmpData = await gmpRes.json();
+          if (gmpData.status === 'OK' && Array.isArray(gmpData.results) && gmpData.results.length > 0) {
+            results = gmpData.results.slice(0, 5).map((r: any) => ({
+              name: r.formatted_address || query,
+              formattedAddress: r.formatted_address,
+              lat: r.geometry.location.lat,
+              lng: r.geometry.location.lng,
+            }));
+          }
+        }
+      } catch (gmpErr) {
+        console.warn('[Geocode] Google Geocoding API error:', gmpErr);
+      }
+    }
+
+    // 2. OpenStreetMap Nominatim Fallback if needed
+    if (results.length === 0) {
+      try {
+        const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=5&addressdetails=1`;
+        const nomRes = await fetch(nomUrl, {
+          headers: { 'User-Agent': 'AuraFamily-Assistant/2.0' },
+        });
+        if (nomRes.ok) {
+          const nomData = await nomRes.json();
+          if (Array.isArray(nomData) && nomData.length > 0) {
+            results = nomData.map((item: any) => ({
+              name: item.display_name || item.name || query,
+              formattedAddress: item.display_name,
+              lat: parseFloat(item.lat),
+              lng: parseFloat(item.lon),
+            }));
+          }
+        }
+      } catch (nomErr) {
+        console.warn('[Geocode] Nominatim search fallback warning:', nomErr);
+      }
+    }
+
+    // 3. Local Preset Places fallback
+    if (results.length === 0) {
+      const lower = query.toLowerCase();
+      const matchedPresets = [
+        { name: 'Family Home', lat: 13.0827, lng: 80.2707 },
+        { name: 'Chennai Central Station', lat: 13.0823, lng: 80.2755 },
+        { name: 'Chennai International Airport', lat: 12.9941, lng: 80.1709 },
+        { name: 'Tidel Tech Park (OMR)', lat: 12.9892, lng: 80.2505 },
+        { name: 'Apollo Main Hospital', lat: 13.0601, lng: 80.2509 },
+        { name: 'Marina Beach Promenade', lat: 13.0500, lng: 80.2824 },
+        { name: 'Phoenix Marketcity Mall', lat: 12.9918, lng: 80.2173 },
+        { name: 'Anna University Campus', lat: 13.0102, lng: 80.2354 },
+      ].filter((p) => p.name.toLowerCase().includes(lower));
+
+      if (matchedPresets.length > 0) {
+        results = matchedPresets;
+      }
+    }
+
+    res.json({
+      success: true,
+      query,
+      results,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Compute Routes via Google Routes API v2 REST Proxy with Multi-Modal & Transit support
 app.post('/api/maps/routes/compute', async (req, res) => {
   try {

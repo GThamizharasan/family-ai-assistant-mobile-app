@@ -862,6 +862,24 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
+    // 6a. Google Navigation & Offline Maps Tab
+    if (
+      lower === 'open navigation' ||
+      lower === 'open google navigation' ||
+      lower === 'navigation' ||
+      lower === 'google navigation' ||
+      lower === 'open maps' ||
+      lower === 'நேவிகேஷன்'
+    ) {
+      executeVoiceNavigation(
+        'navigation',
+        undefined,
+        'Opening Google Navigation with live GPS and offline maps.',
+        'கூகுள் நேவிகேஷன் மற்றும் வழிகாட்டி திரைக்கு செல்கிறேன்.'
+      );
+      return;
+    }
+
     // 6b. Custom Google Maps & Multi-Modal Offline Navigation (Bus, Train, Cycle, Car, Walk, Two-Wheeler)
     if (
       lower.includes('custom google map') ||
