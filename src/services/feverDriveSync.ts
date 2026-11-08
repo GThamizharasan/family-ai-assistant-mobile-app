@@ -281,7 +281,7 @@ export function getLocalFeverLogs(memberId?: string): FeverLogEntry[] {
     }
 
     if (memberId && memberId.trim() && memberId !== 'all') {
-      return logs.filter((l) => l.memberId === memberId.trim() || l.memberName.toLowerCase() === memberId.trim().toLowerCase());
+      logs = logs.filter((l) => l.memberId === memberId.trim() || l.memberName.toLowerCase() === memberId.trim().toLowerCase());
     }
     return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (err) {
@@ -420,7 +420,9 @@ export async function recordFeverTemperature(
 
   // 1. Save to LocalStorage immediately
   const existing = getLocalFeverLogs();
-  const updated = [newLog, ...existing.filter((item) => item.id !== newLog.id)];
+  const updated = [newLog, ...existing.filter((item) => item.id !== newLog.id)].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+  );
   saveLocalFeverLogs(updated);
 
   // 2. Persist to SQLite

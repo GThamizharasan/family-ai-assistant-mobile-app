@@ -63,6 +63,16 @@ const COMMON_SYMPTOMS = [
 
 const QUICK_TEMPS_F = [98.6, 99.5, 100.4, 101.2, 102.0, 102.8, 103.5];
 
+function getLocalDateTimeString(date: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   isOpen,
   onClose,
@@ -81,6 +91,7 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
   const [driveSyncSuccess, setDriveSyncSuccess] = useState<string | null>(null);
 
   // Form State
+  const [recordedDateTime, setRecordedDateTime] = useState<string>(() => getLocalDateTimeString());
   const [inputTempF, setInputTempF] = useState<number>(initialTempF || 100.4);
   const [inputTempC, setInputTempC] = useState<number>(38.0);
   const [measurementMethod, setMeasurementMethod] = useState<FeverLogEntry['measurementMethod']>('forehead');
@@ -174,6 +185,49 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     setInputTempF(celsiusToFahrenheit(val));
   };
 
+  // Quick offset helper for reading date and time
+  const setQuickTimeOffset = (minutesAgo: number) => {
+    if (minutesAgo === 0) {
+      setRecordedDateTime(getLocalDateTimeString(new Date()));
+    } else {
+      setRecordedDateTime(getLocalDateTimeString(new Date(Date.now() - minutesAgo * 60 * 1000)));
+    }
+  };
+
+  const isPastReading = useMemo(() => {
+    if (!recordedDateTime) return false;
+    const diffMs = Date.now() - new Date(recordedDateTime).getTime();
+    return diffMs > 2 * 60 * 1000;
+  }, [recordedDateTime]);
+
+  const isFutureReading = useMemo(() => {
+    if (!recordedDateTime) return false;
+    const diffMs = new Date(recordedDateTime).getTime() - Date.now();
+    return diffMs > 60 * 1000;
+  }, [recordedDateTime]);
+
+  const timeLabel = useMemo(() => {
+    if (!recordedDateTime) return 'Current Time';
+    const d = new Date(recordedDateTime);
+    if (isNaN(d.getTime())) return 'Invalid date';
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    if (Math.abs(diffMs) < 60 * 1000) return 'Just now (Current Time)';
+    if (diffMs > 0) {
+      const diffMins = Math.round(diffMs / (60 * 1000));
+      if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? 's' : ''} ago`;
+      const diffHours = Math.round(diffMs / (3600 * 1000));
+      if (diffHours < 24 && d.getDate() === now.getDate()) {
+        return `Today at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
+      if (diffHours < 48 && (now.getDate() - d.getDate() === 1 || diffHours >= 18)) {
+        return `Yesterday at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+      }
+      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return `Future scheduled: ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }, [recordedDateTime]);
+
   const toggleSymptom = (sym: string) => {
     setSelectedSymptoms((prev) =>
       prev.includes(sym) ? prev.filter((s) => s !== sym) : [...prev, sym]
@@ -186,19 +240,24 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     setIsSubmitting(true);
 
     try {
+      const selectedTimestamp = recordedDateTime
+        ? new Date(recordedDateTime).toISOString()
+        : new Date().toISOString();
+
       await recordFeverTemperature({
         memberId: activeMember.memberId,
         memberName: activeMember.memberName,
         temperatureF: inputTempF,
         temperatureC: inputTempC,
         measurementMethod,
+        timestamp: selectedTimestamp,
         symptoms: selectedSymptoms,
         medicationGiven:
           medName.trim()
             ? {
                 name: medName.trim(),
                 dose: medDose.trim() || '1 standard dose',
-                givenAt: new Date().toISOString(),
+                givenAt: selectedTimestamp,
               }
             : undefined,
         notes,
@@ -207,6 +266,7 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
 
       // Reset form
       setShowAddForm(false);
+      setRecordedDateTime(getLocalDateTimeString());
       setSelectedSymptoms([]);
       setMedName('');
       setMedDose('');
@@ -795,7 +855,12 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
                 </div>
               </div>
               <button
-                onClick={() => setShowAddForm(!showAddForm)}
+                onClick={() => {
+                  if (!showAddForm) {
+                    setRecordedDateTime(getLocalDateTimeString());
+                  }
+                  setShowAddForm(!showAddForm);
+                }}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -823,6 +888,108 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
               </div>
 
               <form onSubmit={handleSaveEntry} className="space-y-4">
+                {/* Date and Time Selection (Default to current, editable for past readings) */}
+                <div className="bg-slate-900/80 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-rose-400" />
+                      <label className="text-xs font-semibold text-slate-200">
+                        Date & Time of Reading
+                      </label>
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                          isPastReading
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : isFutureReading
+                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        }`}
+                      >
+                        {timeLabel}
+                      </span>
+                    </div>
+
+                    {/* Quick jump to Now */}
+                    <button
+                      type="button"
+                      onClick={() => setQuickTimeOffset(0)}
+                      className="text-[11px] font-medium text-rose-400 hover:text-rose-300 flex items-center gap-1 self-start sm:self-auto px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 transition border border-rose-500/20 cursor-pointer"
+                      title="Reset to current date and time"
+                    >
+                      <Clock className="w-3 h-3" />
+                      <span>Set to Current Time</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {/* HTML5 datetime-local input */}
+                    <div className="relative">
+                      <input
+                        type="datetime-local"
+                        value={recordedDateTime}
+                        onChange={(e) => setRecordedDateTime(e.target.value)}
+                        className="w-full bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-lg px-3 py-2 text-xs font-medium text-white focus:outline-none [color-scheme:dark]"
+                      />
+                    </div>
+
+                    {/* Quick Past Presets */}
+                    <div className="flex flex-wrap items-center gap-1 text-xs">
+                      <span className="text-[10px] text-slate-400 font-medium mr-1">Quick:</span>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(0)}
+                        className={`px-2 py-1 rounded border text-[11px] font-medium transition cursor-pointer ${
+                          !isPastReading && !isFutureReading
+                            ? 'bg-rose-600 text-white border-rose-500'
+                            : 'bg-slate-950 hover:bg-slate-800 border-slate-800 text-slate-300'
+                        }`}
+                      >
+                        Now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(15)}
+                        className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer"
+                        title="15 minutes ago"
+                      >
+                        -15m
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(60)}
+                        className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer"
+                        title="1 hour ago"
+                      >
+                        -1 hr
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(120)}
+                        className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer"
+                        title="2 hours ago"
+                      >
+                        -2 hrs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(240)}
+                        className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer"
+                        title="4 hours ago"
+                      >
+                        -4 hrs
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setQuickTimeOffset(1440)}
+                        className="px-2 py-1 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white text-[11px] font-medium transition cursor-pointer"
+                        title="24 hours ago (Yesterday)"
+                      >
+                        Yesterday
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Quick Presets */}
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-400 mb-1.5">
@@ -1065,8 +1232,11 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
                     No fever temperature logs recorded for {activeMember?.memberName}.
                   </p>
                   <button
-                    onClick={() => setShowAddForm(true)}
-                    className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white"
+                    onClick={() => {
+                      setRecordedDateTime(getLocalDateTimeString());
+                      setShowAddForm(true);
+                    }}
+                    className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-600 text-white cursor-pointer"
                   >
                     Log First Temperature
                   </button>
