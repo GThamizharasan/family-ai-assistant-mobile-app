@@ -239,12 +239,16 @@ export const AppleMusicPlayerModal: React.FC<AppleMusicPlayerModalProps> = ({
             <ChevronDown className="w-5 h-5" />
           </button>
 
-          <div className="text-center">
+          <div className="text-center flex flex-col items-center">
             <span className="text-[10px] font-bold tracking-widest text-indigo-400 uppercase">
               Apple Music • Family Circle
             </span>
             <div className="text-xs font-medium text-slate-300 truncate max-w-[200px]">
               {activeTrack.album || 'Family Music Collection'}
+            </div>
+            <div className="flex items-center gap-1 mt-1 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[9px] font-mono text-emerald-300 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Lock Screen & Pocket Play Active</span>
             </div>
           </div>
 

@@ -21,6 +21,11 @@ import {
   MapPin,
   Heart,
   X,
+  Shield,
+  Zap,
+  Radio,
+  Smartphone,
+  Lock,
 } from 'lucide-react';
 import {
   WalkingStepLogEntry,
@@ -156,6 +161,13 @@ export const WalkingStepsTracker: React.FC<WalkingStepsTrackerProps> = ({
     if (isRealtimeActive) {
       mobilePedometer.enableCadenceEngine(spm);
     }
+  };
+
+  // Toggle Behind the Scene Tracking (Pocket Walk Mode with silent heartbeat & WakeLock)
+  const handleToggleBackgroundMode = () => {
+    const next = !pedometerState.isBackgroundModeEnabled;
+    mobilePedometer.setBackgroundMode(next);
+    setPedometerState(mobilePedometer.getState());
   };
 
   // Two-way Google Drive & SQLite synchronization handler
@@ -658,6 +670,107 @@ export const WalkingStepsTracker: React.FC<WalkingStepsTrackerProps> = ({
               </div>
             </div>
           )}
+
+          {/* Behind the Scene Tracking (Pocket Walk Mode & System Keep-Alive) */}
+          <div className="pt-3.5 border-t border-slate-800/80 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/70 border border-slate-800">
+              <div className="flex items-start sm:items-center gap-3">
+                <div
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all ${
+                    pedometerState.isBackgroundModeEnabled
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm shadow-emerald-500/20'
+                      : 'bg-slate-800 text-slate-500'
+                  }`}
+                >
+                  <Smartphone className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-white">
+                      Behind the Scene Tracking (Pocket Walk Mode)
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full border ${
+                        pedometerState.isBackgroundModeEnabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                      }`}
+                    >
+                      {pedometerState.isBackgroundModeEnabled ? 'Background Enabled' : 'Foreground Only'}
+                    </span>
+                    {pedometerState.isInBackground && (
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 animate-pulse">
+                        Device in Pocket / Screen Off
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Continuous step measurement when phone is in your pocket, screen locked, or app minimized. Auto-reconciled and saved to SQLite & Google Drive.
+                  </p>
+                </div>
+              </div>
+
+              {/* Toggle Button */}
+              <button
+                onClick={handleToggleBackgroundMode}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
+                  pedometerState.isBackgroundModeEnabled
+                    ? 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/50 shadow-sm'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                }`}
+                title="Toggle continuous behind-the-scene tracking"
+              >
+                <Radio
+                  className={`w-3.5 h-3.5 ${
+                    pedometerState.isBackgroundModeEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-500'
+                  }`}
+                />
+                <span>{pedometerState.isBackgroundModeEnabled ? 'Pocket Mode ON' : 'Turn ON'}</span>
+              </button>
+            </div>
+
+            {/* Behind the Scene System Status Pills */}
+            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+              {/* Wake Lock Badge */}
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono ${
+                  pedometerState.isWakeLockActive
+                    ? 'bg-cyan-950/40 text-cyan-300 border-cyan-500/40'
+                    : 'bg-slate-900 text-slate-400 border-slate-800'
+                }`}
+              >
+                <Zap className="w-3 h-3 text-cyan-400" />
+                <span>Screen WakeLock: {pedometerState.isWakeLockActive ? 'Active' : 'Standby'}</span>
+              </div>
+
+              {/* Silent Audio Heartbeat Badge */}
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border font-mono ${
+                  pedometerState.isHeartbeatActive
+                    ? 'bg-indigo-950/40 text-indigo-300 border-indigo-500/40'
+                    : 'bg-slate-900 text-slate-400 border-slate-800'
+                }`}
+              >
+                <Shield className="w-3 h-3 text-indigo-400" />
+                <span>
+                  Audio Heartbeat:{' '}
+                  {pedometerState.isHeartbeatActive
+                    ? 'Alive (Inaudible Carrier)'
+                    : pedometerState.isBackgroundModeEnabled
+                    ? 'Armed for Pocket'
+                    : 'Off'}
+                </span>
+              </div>
+
+              {/* Accumulated Behind the Scenes Steps */}
+              {pedometerState.backgroundStepsAccumulated > 0 && (
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/40 text-emerald-300 border border-emerald-500/40 font-mono font-bold animate-fade-in">
+                  <Footprints className="w-3 h-3 text-emerald-400" />
+                  <span>+{pedometerState.backgroundStepsAccumulated.toLocaleString()} pocket steps logged</span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

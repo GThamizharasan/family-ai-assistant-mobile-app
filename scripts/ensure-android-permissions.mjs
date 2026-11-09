@@ -14,6 +14,12 @@ const requiredPermissions = [
   'android.permission.CAMERA',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_FINE_LOCATION',
+  'android.permission.ACTIVITY_RECOGNITION',
+  'android.permission.BODY_SENSORS',
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_HEALTH',
+  'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+  'android.permission.WAKE_LOCK',
 ];
 
 if (existsSync(manifestPath)) {
@@ -138,6 +144,7 @@ public class MainActivity extends BridgeActivity {
                 WebSettings settings = webView.getSettings();
                 settings.setJavaScriptEnabled(true);
                 settings.setJavaScriptCanOpenWindowsAutomatically(true);
+                settings.setMediaPlaybackRequiresUserGesture(false);
 
                 String ua = settings.getUserAgentString();
                 if (ua != null) {

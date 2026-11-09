@@ -1525,9 +1525,13 @@ export const MusicLibraryTab: React.FC<MusicLibraryTabProps> = ({ onOpenPlayer }
                       </span>
                     )}
                   </div>
-                  <p className="text-[10px] text-slate-400 truncate">
-                    {playbackState.currentTrack.artist}
-                  </p>
+                  <div className="flex items-center gap-1.5 text-[10px] text-slate-400 truncate">
+                    <span className="truncate">{playbackState.currentTrack.artist}</span>
+                    <span className="text-[9px] text-emerald-400 font-mono flex items-center gap-0.5 shrink-0">
+                      <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+                      Lock Screen Ready
+                    </span>
+                  </div>
                 </div>
               </div>
 

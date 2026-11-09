@@ -47,6 +47,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
     return todayLogs.reduce((acc, l) => acc + l.steps, 0);
   });
   const [isActivelyWalking, setIsActivelyWalking] = useState(false);
+  const [isBackgroundActive, setIsBackgroundActive] = useState(false);
 
   useEffect(() => {
     const handleOfflineChanged = (e: any) => {
@@ -57,6 +58,9 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
       if (e.detail?.totalTodaySteps !== undefined) {
         setLiveStepsToday(e.detail.totalTodaySteps);
         setIsActivelyWalking(!!e.detail.isWalking);
+        if (e.detail.isBackgroundActive !== undefined) {
+          setIsBackgroundActive(!!e.detail.isBackgroundActive);
+        }
       }
     };
 
@@ -205,8 +209,11 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
               <div
                 onClick={onOpenWalkingSteps}
                 className="cursor-pointer px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[10px] font-mono text-emerald-300 flex items-center gap-1 hover:border-emerald-400 transition-colors shadow-inner"
-                title="Real-Time Mobile Pedometer (Tap to View)"
+                title={`Real-Time Mobile Pedometer (Tap to View)${isBackgroundActive ? ' · Pocket Mode Active Behind the Scenes' : ''}`}
               >
+                {isBackgroundActive && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" title="Tracking behind the scenes" />
+                )}
                 <Footprints className={`w-3 h-3 text-emerald-400 ${isActivelyWalking ? 'animate-bounce' : ''}`} />
                 <span className="tabular-nums font-semibold">{liveStepsToday.toLocaleString()}</span>
               </div>
