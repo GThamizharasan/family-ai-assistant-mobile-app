@@ -1101,6 +1101,264 @@ export async function deleteFeverLog(id: string): Promise<boolean> {
 }
 
 /**
+ * Pull all Fever Episode and Moment-level records from Google Drive into SQLite and LocalStorage:
+ * 1. Queries Drive folder: Family Circle -> Health And Wellness -> Family Health Record -> Fever Logs
+ * 2. Downloads and parses each JSON file (Fever_Moment_*.json, Fever_Group_Report_*.json, Fever_Timeline_*.json)
+ * 3. Merges records into LocalStorage and dispatches UI update events
+ * 4. Persists records to SQLite (/api/health/fever-groups and /api/health/fever-logs)
+ */
+export async function pullFeverDataFromGoogleDrive(token?: string): Promise<{
+  success: boolean;
+  pulledMoments: number;
+  pulledGroups: number;
+  message?: string;
+}> {
+  const activeToken = token || getGoogleAccessToken();
+  if (!activeToken) {
+    return { success: false, pulledMoments: 0, pulledGroups: 0, message: 'Not authenticated with Google Drive' };
+  }
+
+  try {
+    const folderId = await getOrCreateFeverDriveFolder(activeToken);
+
+    // List all files in the Fever Logs folder
+    const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+      `'${folderId}' in parents and trashed = false`
+    )}&fields=files(id,name,mimeType,webViewLink)&pageSize=1000`;
+
+    const listRes = await fetch(listUrl, {
+      headers: { Authorization: `Bearer ${activeToken}` },
+    });
+
+    if (!listRes.ok) {
+      console.warn('[FeverSync] Could not list Google Drive fever folder:', listRes.status);
+      return { success: false, pulledMoments: 0, pulledGroups: 0, message: 'Could not access Drive folder' };
+    }
+
+    const listData = await listRes.json();
+    const files: Array<{ id: string; name: string; mimeType: string; webViewLink?: string }> = listData.files || [];
+
+    if (files.length === 0) {
+      return { success: true, pulledMoments: 0, pulledGroups: 0 };
+    }
+
+    const existingGroups = getLocalFeverGroups();
+    const groupsMap = new Map<string, FeverReadingGroup>();
+    existingGroups.forEach((g) => groupsMap.set(g.id, g));
+
+    const existingLogs = getLocalFeverLogs();
+    const logsMap = new Map<string, FeverLogEntry>();
+    existingLogs.forEach((l) => logsMap.set(l.id, l));
+
+    let pulledGroupsCount = 0;
+    let pulledMomentsCount = 0;
+
+    for (const file of files) {
+      // Process JSON data files
+      if (!file.name.endsWith('.json')) continue;
+
+      try {
+        const dlRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+          headers: { Authorization: `Bearer ${activeToken}` },
+        });
+
+        if (!dlRes.ok) continue;
+        const data = await dlRes.json();
+        if (!data || typeof data !== 'object') continue;
+
+        // 1. Process Fever Reading Group / Episode manifest file
+        if (file.name.startsWith('Fever_Group_') || data.groupId || (data.title && data.title.includes('Fever Episode Report'))) {
+          const groupId = data.groupId || data.id || file.id;
+          const groupEntry: FeverReadingGroup = {
+            id: groupId,
+            memberId: data.memberId || '',
+            memberName: data.familyMember || data.memberName || 'Family Member',
+            groupName: data.episodeName || data.groupName || 'Fever Episode',
+            startDate: data.startDate || new Date().toISOString(),
+            endDate: data.endDate || undefined,
+            isActive: typeof data.status === 'string' ? data.status.toLowerCase().includes('active') : Boolean(data.isActive),
+            notes: data.notes || '',
+            recordedBy: data.recordedBy || 'AURO Health Assistant',
+            driveFolderId: file.id,
+            driveWebViewLink: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`,
+            driveSyncStatus: 'synced',
+            createdAt: data.syncedAt || data.startDate || new Date().toISOString(),
+          };
+          groupsMap.set(groupId, groupEntry);
+          pulledGroupsCount++;
+
+          // Also extract any nested moments inside the group manifest
+          if (Array.isArray(data.moments)) {
+            for (const m of data.moments) {
+              const mId = m.momentId || m.id || `fever_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const tempF = Number(m.temperatureF ?? (m.temperature?.fahrenheit ?? 98.6));
+              const tempC = Number(m.temperatureC ?? (m.temperature?.celsius ?? fahrenheitToCelsius(tempF)));
+              const logEntry: FeverLogEntry = {
+                id: mId,
+                memberId: groupEntry.memberId,
+                memberName: groupEntry.memberName,
+                readingGroupId: groupEntry.id,
+                readingGroupName: groupEntry.groupName,
+                timestamp: m.timestamp || new Date().toISOString(),
+                temperatureF: Number(tempF.toFixed(1)),
+                temperatureC: Number(tempC.toFixed(1)),
+                measurementMethod: m.measurementMethod || m.method || 'forehead',
+                severity: m.severity || calculateFeverSeverity(tempF),
+                symptoms: Array.isArray(m.symptoms) ? m.symptoms : [],
+                medicationGiven: m.medicationGiven || m.medication || undefined,
+                notes: m.notes || '',
+                recordedBy: m.recordedBy || m.observer || groupEntry.recordedBy,
+                driveFileId: m.driveFileId || file.id,
+                driveWebViewLink: m.driveWebViewLink || file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`,
+                driveSyncStatus: 'synced',
+                createdAt: m.timestamp || new Date().toISOString(),
+              };
+              logsMap.set(mId, logEntry);
+              pulledMomentsCount++;
+            }
+          }
+        }
+        // 2. Process Individual Fever Moment file
+        else if (file.name.startsWith('Fever_Moment_') || data.recordId || (data.title && data.title.includes('Observation Moment'))) {
+          const logId = data.recordId || data.id || file.id;
+          const tempF = Number(data.temperature?.fahrenheit ?? data.temperatureF ?? 98.6);
+          const tempC = Number(data.temperature?.celsius ?? data.temperatureC ?? fahrenheitToCelsius(tempF));
+
+          const logEntry: FeverLogEntry = {
+            id: logId,
+            memberId: data.memberId || '',
+            memberName: data.familyMember || data.memberName || 'Family Member',
+            readingGroupId: data.readingGroupId || undefined,
+            readingGroupName: data.readingGroupName || undefined,
+            timestamp: data.momentTimestamp || data.timestamp || new Date().toISOString(),
+            temperatureF: Number(tempF.toFixed(1)),
+            temperatureC: Number(tempC.toFixed(1)),
+            measurementMethod: data.measurementSite || data.measurementMethod || 'forehead',
+            severity: data.temperature?.severity || data.severity || calculateFeverSeverity(tempF),
+            symptoms: Array.isArray(data.symptomsAtMoment)
+              ? data.symptomsAtMoment
+              : (Array.isArray(data.symptoms) ? data.symptoms : []),
+            medicationGiven: data.medicationAtMoment || data.medicationGiven || undefined,
+            notes: data.notes || '',
+            recordedBy: data.clinicalObserver || data.recordedBy || 'AURO Health Assistant',
+            driveFileId: file.id,
+            driveWebViewLink: file.webViewLink || `https://drive.google.com/file/d/${file.id}/view`,
+            driveSyncStatus: 'synced',
+            createdAt: data.syncedAt || data.momentTimestamp || new Date().toISOString(),
+          };
+          logsMap.set(logId, logEntry);
+          pulledMomentsCount++;
+        }
+        // 3. Process Master Fever Timeline file
+        else if (file.name.startsWith('Fever_Timeline_') && Array.isArray(data.moments)) {
+          const memberName = data.familyMember || 'Family Member';
+          for (const m of data.moments) {
+            const mId = m.momentId || m.id || `fever_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            if (!logsMap.has(mId)) {
+              const tempF = Number(m.temperatureF ?? 98.6);
+              const tempC = Number(m.temperatureC ?? fahrenheitToCelsius(tempF));
+              const logEntry: FeverLogEntry = {
+                id: mId,
+                memberId: '',
+                memberName,
+                timestamp: m.timestamp || new Date().toISOString(),
+                temperatureF: Number(tempF.toFixed(1)),
+                temperatureC: Number(tempC.toFixed(1)),
+                measurementMethod: m.method || 'forehead',
+                severity: m.severity || calculateFeverSeverity(tempF),
+                symptoms: Array.isArray(m.symptoms) ? m.symptoms : [],
+                medicationGiven: m.medication || undefined,
+                notes: '',
+                recordedBy: m.observer || 'AURO Health Assistant',
+                driveFileId: m.driveFileId || file.id,
+                driveWebViewLink: m.driveWebViewLink || file.webViewLink,
+                driveSyncStatus: 'synced',
+                createdAt: m.timestamp || new Date().toISOString(),
+              };
+              logsMap.set(mId, logEntry);
+              pulledMomentsCount++;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[FeverSync] Error parsing Drive file:', file.name, err);
+      }
+    }
+
+    // Update LocalStorage
+    const finalGroups = Array.from(groupsMap.values()).sort(
+      (a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+    );
+    saveLocalFeverGroups(finalGroups);
+
+    const finalLogs = Array.from(logsMap.values()).sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    saveLocalFeverLogs(finalLogs);
+
+    // Save and persist all pulled records to SQLite
+    for (const group of finalGroups) {
+      try {
+        await fetch(getApiUrl('/api/health/fever-groups'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(group),
+        });
+      } catch (e) {
+        console.warn('[FeverSync] SQLite group save error during Drive pull:', e);
+      }
+    }
+
+    for (const log of finalLogs) {
+      try {
+        await fetch(getApiUrl('/api/health/fever-logs'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: log.id,
+            memberId: log.memberId,
+            memberName: log.memberName,
+            readingGroupId: log.readingGroupId,
+            readingGroupName: log.readingGroupName,
+            timestamp: log.timestamp,
+            temperatureF: log.temperatureF,
+            temperatureC: log.temperatureC,
+            measurementMethod: log.measurementMethod,
+            severity: log.severity,
+            symptoms: log.symptoms,
+            symptomsJson: JSON.stringify(log.symptoms || []),
+            medicationGiven: log.medicationGiven,
+            medicationGivenJson: log.medicationGiven ? JSON.stringify(log.medicationGiven) : '',
+            notes: log.notes,
+            recordedBy: log.recordedBy,
+            driveFileId: log.driveFileId,
+            driveWebViewLink: log.driveWebViewLink,
+            driveSyncStatus: log.driveSyncStatus,
+            createdAt: log.createdAt,
+          }),
+        });
+      } catch (e) {
+        console.warn('[FeverSync] SQLite log save error during Drive pull:', e);
+      }
+    }
+
+    return {
+      success: true,
+      pulledMoments: pulledMomentsCount,
+      pulledGroups: pulledGroupsCount,
+    };
+  } catch (err: any) {
+    console.error('[FeverSync] Drive pull error:', err);
+    return {
+      success: false,
+      pulledMoments: 0,
+      pulledGroups: 0,
+      message: err.message,
+    };
+  }
+}
+
+/**
  * Bidirectionally synchronize local fever groups and fever logs with SQLite:
  * 1. Pushes any local fever groups to SQLite (INSERT OR REPLACE)
  * 2. Fetches all fever groups from SQLite and updates local store
@@ -1173,7 +1431,28 @@ export async function syncFeverDataWithSqlite(): Promise<{
         await fetch(getApiUrl('/api/health/fever-logs'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(log),
+          body: JSON.stringify({
+            id: log.id,
+            memberId: log.memberId,
+            memberName: log.memberName,
+            readingGroupId: log.readingGroupId,
+            readingGroupName: log.readingGroupName,
+            timestamp: log.timestamp,
+            temperatureF: log.temperatureF,
+            temperatureC: log.temperatureC,
+            measurementMethod: log.measurementMethod,
+            severity: log.severity,
+            symptoms: log.symptoms,
+            symptomsJson: JSON.stringify(log.symptoms || []),
+            medicationGiven: log.medicationGiven,
+            medicationGivenJson: log.medicationGiven ? JSON.stringify(log.medicationGiven) : '',
+            notes: log.notes,
+            recordedBy: log.recordedBy,
+            driveFileId: log.driveFileId,
+            driveWebViewLink: log.driveWebViewLink,
+            driveSyncStatus: log.driveSyncStatus,
+            createdAt: log.createdAt,
+          }),
         });
       } catch (err) {
         console.warn('[FeverSync] Error pushing log to SQLite:', log.id, err);
@@ -1246,25 +1525,30 @@ export async function syncFeverDataWithSqlite(): Promise<{
 
 /**
  * Sync fever logs with Google Drive & SQLite:
- * 1. Synchronizes SQLite and LocalStorage bidirectionally
- * 2. Synchronizes each fever reading group manifest in
- *    "Family Circle / Health And Wellness / Family Health Record / Fever Logs"
- * 3. Synchronizes each fever moment as its own file in Google Drive
- * 4. Also updates the master member timeline JSON summary
- * 5. Patches SQLite records with Drive File IDs and Web Links
+ * 1. Pulls all existing fever moments and episodes from Google Drive into SQLite and LocalStorage
+ * 2. Synchronizes SQLite and LocalStorage bidirectionally
+ * 3. Synchronizes each fever reading group manifest to Google Drive
+ * 4. Synchronizes each individual fever moment as its own file in Google Drive
+ * 5. Updates the master member timeline JSON summary in Google Drive
+ * 6. Patches SQLite records with Drive File IDs and Web Links
  */
 export async function syncFeverLogsWithGoogleDrive(token?: string): Promise<{
   success: boolean;
   syncedCount: number;
   groupCount: number;
+  pulledMoments: number;
+  pulledGroups: number;
 }> {
   const activeToken = token || getGoogleAccessToken();
   if (!activeToken) {
-    return { success: false, syncedCount: 0, groupCount: 0 };
+    return { success: false, syncedCount: 0, groupCount: 0, pulledMoments: 0, pulledGroups: 0 };
   }
 
   try {
-    // 0. Ensure SQLite and LocalStorage are unified first
+    // 1. Pull all existing fever moments and groups from Google Drive into SQLite & LocalStorage first!
+    const pullRes = await pullFeverDataFromGoogleDrive(activeToken);
+
+    // 2. Ensure SQLite and LocalStorage are unified
     await syncFeverDataWithSqlite();
 
     const folderId = await getOrCreateFeverDriveFolder(activeToken);
@@ -1272,13 +1556,19 @@ export async function syncFeverLogsWithGoogleDrive(token?: string): Promise<{
     const groups = getLocalFeverGroups();
     const logs = getLocalFeverLogs();
     if (logs.length === 0 && groups.length === 0) {
-      return { success: true, syncedCount: 0, groupCount: 0 };
+      return {
+        success: true,
+        syncedCount: 0,
+        groupCount: 0,
+        pulledMoments: pullRes.pulledMoments || 0,
+        pulledGroups: pullRes.pulledGroups || 0,
+      };
     }
 
     let totalGroupsSynced = 0;
     let totalMomentsSynced = 0;
 
-    // 1. Sync every fever reading group manifest to Drive
+    // 3. Sync every fever reading group manifest to Drive
     for (const group of groups) {
       const logsInGroup = logs.filter((l) => l.readingGroupId === group.id);
       const res = await syncFeverGroupToGoogleDrive(group, logsInGroup, activeToken);
@@ -1287,7 +1577,7 @@ export async function syncFeverLogsWithGoogleDrive(token?: string): Promise<{
       }
     }
 
-    // 2. Maintain each individual moment in Google Drive & SQLite
+    // 4. Maintain each individual moment in Google Drive & SQLite
     for (const log of logs) {
       const res = await syncSingleFeverLogToGoogleDrive(log, activeToken);
       if (res.success) {
@@ -1295,7 +1585,7 @@ export async function syncFeverLogsWithGoogleDrive(token?: string): Promise<{
       }
     }
 
-    // 3. Maintain master timeline report for each family member
+    // 5. Maintain master timeline report for each family member
     const memberLogsMap = new Map<string, FeverLogEntry[]>();
     logs.forEach((log) => {
       const list = memberLogsMap.get(log.memberName) || [];
@@ -1386,10 +1676,16 @@ export async function syncFeverLogsWithGoogleDrive(token?: string): Promise<{
       });
     }
 
-    return { success: true, syncedCount: totalMomentsSynced, groupCount: totalGroupsSynced };
+    return {
+      success: true,
+      syncedCount: totalMomentsSynced,
+      groupCount: totalGroupsSynced,
+      pulledMoments: pullRes.pulledMoments || 0,
+      pulledGroups: pullRes.pulledGroups || 0,
+    };
   } catch (err) {
     console.warn('[FeverSync] Google Drive sync error:', err);
-    return { success: false, syncedCount: 0, groupCount: 0 };
+    return { success: false, syncedCount: 0, groupCount: 0, pulledMoments: 0, pulledGroups: 0 };
   }
 }
 

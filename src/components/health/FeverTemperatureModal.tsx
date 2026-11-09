@@ -40,6 +40,7 @@ import {
   syncFeverLogsWithGoogleDrive,
   syncSingleFeverLogToGoogleDrive,
   syncFeverDataWithSqlite,
+  pullFeverDataFromGoogleDrive,
   fetchFeverLogsFromSqlite,
   getLocalFeverGroups,
   fetchFeverGroupsFromSqlite,
@@ -159,6 +160,17 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     fetchFeverGroupsFromSqlite().then((groups) => {
       if (groups && groups.length > 0) setFeverGroups(groups);
     });
+
+    // If authenticated with Google Drive, pull Drive records in background so existing Drive logs sync to SQLite & UI
+    const token = getGoogleAccessToken();
+    if (token) {
+      pullFeverDataFromGoogleDrive(token).then((res) => {
+        if (res.success && (res.pulledMoments > 0 || res.pulledGroups > 0)) {
+          setFeverLogs(getLocalFeverLogs());
+          setFeverGroups(getLocalFeverGroups());
+        }
+      }).catch((e) => console.warn('[FeverModal] Background Drive pull error:', e));
+    }
 
     if (initialTempF) {
       setInputTempF(initialTempF);
@@ -448,20 +460,24 @@ export const FeverTemperatureModal: React.FC<FeverTemperatureModalProps> = ({
     setIsSyncingDrive(true);
     setDriveSyncSuccess(null);
     try {
-      // 1. Sync SQLite and LocalStorage bidirectionally
-      const sqliteRes = await syncFeverDataWithSqlite();
-
-      // 2. Sync with Google Drive (folders, groups, moments, timeline)
+      // 1. Sync with Google Drive (pulls Drive records into SQLite & pushes local updates to Drive)
       const driveRes = await syncFeverLogsWithGoogleDrive();
 
-      // 3. Refresh reactive view state
+      // 2. Ensure SQLite and LocalStorage are unified
+      const sqliteRes = await syncFeverDataWithSqlite();
+
+      // 3. Refresh reactive view state immediately
       setFeverLogs(getLocalFeverLogs());
       setFeverGroups(getLocalFeverGroups());
 
       const token = getGoogleAccessToken();
       if (driveRes.success && token) {
+        const pullInfo =
+          (driveRes.pulledMoments > 0 || driveRes.pulledGroups > 0)
+            ? `Pulled ${driveRes.pulledMoments} moments & ${driveRes.pulledGroups} episodes from Drive. `
+            : '';
         setDriveSyncSuccess(
-          `Synced! SQLite (${sqliteRes.syncedLogs} moments, ${sqliteRes.syncedGroups} episodes) + Google Drive (${driveRes.syncedCount} moments, ${driveRes.groupCount} episodes) updated.`
+          `Synced! ${pullInfo}SQLite (${sqliteRes.syncedLogs} moments, ${sqliteRes.syncedGroups} episodes) + Google Drive up to date.`
         );
       } else if (sqliteRes.success) {
         setDriveSyncSuccess(
