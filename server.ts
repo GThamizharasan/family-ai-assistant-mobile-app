@@ -128,12 +128,17 @@ import {
   getHydrationLogsFromSqlite,
   deleteHydrationLogFromSqlite,
   updateHydrationLogDriveSyncInSqlite,
+  saveWalkingStepLogToSqlite,
+  getWalkingStepLogsFromSqlite,
+  deleteWalkingStepLogFromSqlite,
+  updateWalkingStepLogDriveSyncInSqlite,
   type CustomMapRouteRecord,
   type OfflineMapPackageRecord,
   type FeverReadingGroupRecord,
   type FeverLogRecord,
   type MedicationDoseLogRecord,
   type HydrationLogRecord,
+  type WalkingStepLogRecord,
   getSqlite3GbStorageQuotaStats,
   MAX_SQLITE_STORAGE_BYTES,
   getSqliteDbStats,
@@ -4241,6 +4246,95 @@ app.patch('/api/health/hydration-logs/:id/drive-sync', (req, res) => {
   try {
     const { driveFileId, driveWebViewLink } = req.body;
     const success = updateHydrationLogDriveSyncInSqlite(
+      req.params.id,
+      driveFileId || '',
+      driveWebViewLink || ''
+    );
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Family Health: Walking Steps Tracker & Pedometer Endpoints
+app.get('/api/health/walking-steps', (req, res) => {
+  try {
+    const memberId = (req.query.memberId as string || '').trim();
+    const userEmail = (req.query.userEmail as string || '').trim();
+    const logs = getWalkingStepLogsFromSqlite(memberId, userEmail);
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/api/health/walking-steps', (req, res) => {
+  try {
+    const {
+      id = 'steps_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+      userEmail = 'chinna.tamil2000@gmail.com',
+      memberId,
+      memberName,
+      timestamp = new Date().toISOString(),
+      steps = 0,
+      distanceMeters = 0,
+      durationMinutes = 0,
+      caloriesBurned = 0,
+      walkType = 'brisk_walking',
+      cadenceAvg = 100,
+      dailyStepGoal = 10000,
+      notes = '',
+      loggedBy = 'Auro AI',
+      driveFileId = '',
+      driveWebViewLink = '',
+      driveSyncStatus = 'local_only',
+      createdAt = new Date().toISOString(),
+    } = req.body;
+
+    if (!memberId || !memberName) {
+      return res.status(400).json({ success: false, error: 'memberId and memberName are required' });
+    }
+
+    const saved = saveWalkingStepLogToSqlite({
+      id,
+      userEmail,
+      memberId,
+      memberName,
+      timestamp,
+      steps: Number(steps),
+      distanceMeters: Number(distanceMeters),
+      durationMinutes: Number(durationMinutes),
+      caloriesBurned: Number(caloriesBurned),
+      walkType,
+      cadenceAvg: Number(cadenceAvg),
+      dailyStepGoal: Number(dailyStepGoal),
+      notes,
+      loggedBy,
+      driveFileId,
+      driveWebViewLink,
+      driveSyncStatus,
+      createdAt,
+    });
+
+    res.json({ success: true, log: saved });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.delete('/api/health/walking-steps/:id', (req, res) => {
+  try {
+    const success = deleteWalkingStepLogFromSqlite(req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.patch('/api/health/walking-steps/:id/drive-sync', (req, res) => {
+  try {
+    const { driveFileId, driveWebViewLink } = req.body;
+    const success = updateWalkingStepLogDriveSyncInSqlite(
       req.params.id,
       driveFileId || '',
       driveWebViewLink || ''

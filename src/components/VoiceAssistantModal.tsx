@@ -70,6 +70,10 @@ import {
   logHydrationIntake,
   getTodayHydrationSummary,
 } from '../services/hydrationDriveSync';
+import {
+  logWalkingSteps,
+  getTodayStepsSummary,
+} from '../services/walkingStepsDriveSync';
 import { TransportMode } from '../types/mapNavigation';
 
 interface VoiceAssistantModalProps {
@@ -2137,6 +2141,117 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         emotion: 'refreshing & encouraging',
         actionSuggestion: 'View Circular Hydration Ring',
+      });
+      speakWithAuro(reply);
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: WALKING STEPS QUERY
+    // =========================================================================
+    const isStepsQueryIntent =
+      /\b(how\s+many\s+steps|step\s+(count|goal|status|tracking)|check.*(steps|walking)|walking.*(steps|today|distance))\b/i.test(lower) ||
+      /(நடந்த\s*அடிகள்|எத்தனை\s*அடிகள்|ஸ்டெப்ஸ்\s*எண்ணிக்கை)/i.test(lower);
+
+    if (isStepsQueryIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      }
+
+      const summary = getTodayStepsSummary(targetMember.memberId);
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்கள் இன்று ${summary.totalSteps.toLocaleString()} அடிகள் நடந்துள்ளார்கள். இலக்கு: ${summary.dailyStepGoal.toLocaleString()} (${summary.progressPercent}%). தூரம்: ${summary.totalDistanceKm} கி.மீ, எரிந்த கலோரிகள்: ${summary.totalCaloriesBurned} kcal.`
+        : `For ${targetMember.memberName}, you have logged ${summary.totalSteps.toLocaleString()} steps today toward your ${summary.dailyStepGoal.toLocaleString()} goal (${summary.progressPercent}%). Distance covered is ${summary.totalDistanceKm} km with ${summary.totalCaloriesBurned} kcal burned.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'active & encouraging',
+        actionSuggestion: 'Open Steps Tracker',
+      });
+      speakWithAuro(reply);
+
+      if (onNavigateTab) {
+        onNavigateTab('wellness', 'steps');
+      }
+      return;
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: LOG WALKING STEPS VIA VOICE
+    // =========================================================================
+    const isLogStepsIntent =
+      /\b(log.*(steps|walk|walking)|walked.*(steps|km|miles)|add.*(steps|walk))\b/i.test(lower) ||
+      /(அடிகள்\s*நடந்தேன்|அடிகள்\s*(பதிவு|சேர்)|ஸ்டெப்ஸ்\s*பதிவு)/i.test(lower);
+
+    if (isLogStepsIntent) {
+      setIsThinking(false);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const healthRecords = getLocalHealthRecords();
+
+      let targetMember = healthRecords[0];
+      if (lower.includes('mithran') || lower.includes('மித்ரன்')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('mithran')) || targetMember;
+      } else if (lower.includes('maaran') || lower.includes('மாறன்') || lower.includes('son')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('maaran')) || targetMember;
+      } else if (lower.includes('selvi') || lower.includes('செல்வி') || lower.includes('wife')) {
+        targetMember = healthRecords.find((r) => r.memberName.toLowerCase().includes('selvi')) || targetMember;
+      }
+
+      // Parse step count
+      let stepsToAdd = 2000;
+      const stepMatch = lower.match(/(\d{2,6})\s*(?:steps|அடிகள்|ஸ்டெப்ஸ்)/i);
+      const kMatch = lower.match(/(\d(?:\.\d)?)\s*k\s*(?:steps|walk)?/i);
+
+      if (stepMatch) {
+        stepsToAdd = parseInt(stepMatch[1], 10);
+      } else if (kMatch) {
+        stepsToAdd = Math.round(parseFloat(kMatch[1]) * 1000);
+      } else {
+        // Look for any 3-5 digit number in the string
+        const anyNumberMatch = lower.match(/\b(\d{3,5})\b/);
+        if (anyNumberMatch) {
+          stepsToAdd = parseInt(anyNumberMatch[1], 10);
+        }
+      }
+
+      // Detect walk type
+      let walkType: any = 'brisk_walking';
+      if (lower.includes('stroll') || lower.includes('slow')) walkType = 'casual_stroll';
+      else if (lower.includes('power') || lower.includes('fast')) walkType = 'power_walk';
+      else if (lower.includes('hike') || lower.includes('trail')) walkType = 'hiking';
+      else if (lower.includes('treadmill')) walkType = 'treadmill';
+
+      // Log steps
+      logWalkingSteps({
+        memberId: targetMember.memberId,
+        memberName: targetMember.memberName,
+        steps: stepsToAdd,
+        walkType,
+        loggedBy: 'Auro AI Voice',
+      });
+
+      const updatedSummary = getTodayStepsSummary(targetMember.memberId);
+      const reply = isTamil
+        ? `${targetMember.memberName} அவர்களுக்கு ${stepsToAdd.toLocaleString()} அடிகள் வெற்றிகரமாக பதிவு செய்யப்பட்டது. இன்றைய மொத்த அடிகள்: ${updatedSummary.totalSteps.toLocaleString()} (${updatedSummary.progressPercent}%). தூரம்: ${updatedSummary.totalDistanceKm} கி.மீ. SQLite மற்றும் Google Drive-ல் சேமிக்கப்பட்டது.`
+        : `Logged ${stepsToAdd.toLocaleString()} walking steps for ${targetMember.memberName}! Today's cumulative total is now ${updatedSummary.totalSteps.toLocaleString()} steps (${updatedSummary.progressPercent}% of ${updatedSummary.dailyStepGoal.toLocaleString()} goal), covering ${updatedSummary.totalDistanceKm} km. Saved to SQLite and synchronized to Google Drive.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'invigorating & supportive',
+        actionSuggestion: 'View Steps Dashboard',
       });
       speakWithAuro(reply);
       return;

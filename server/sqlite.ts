@@ -879,9 +879,31 @@ export async function initSqliteDb(): Promise<Database> {
       drive_sync_status TEXT DEFAULT 'local_only',
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS family_walking_steps_logs (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      member_name TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      steps INTEGER NOT NULL,
+      distance_meters INTEGER NOT NULL,
+      duration_minutes INTEGER NOT NULL,
+      calories_burned INTEGER NOT NULL,
+      walk_type TEXT DEFAULT 'brisk_walking',
+      cadence_avg INTEGER DEFAULT 100,
+      daily_step_goal INTEGER DEFAULT 10000,
+      notes TEXT,
+      logged_by TEXT DEFAULT 'Auro AI',
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      drive_sync_status TEXT DEFAULT 'local_only',
+      created_at TEXT NOT NULL
+    );
   `);
 
   // Run safe schema migrations for existing SQLite database
+  try { db.run('ALTER TABLE family_walking_steps_logs ADD COLUMN cadence_avg INTEGER DEFAULT 100;'); } catch { }
   try { db.run('ALTER TABLE voice_recordings ADD COLUMN transcription_summary TEXT;'); } catch { }
   try { db.run('ALTER TABLE voice_recordings ADD COLUMN detected_language TEXT DEFAULT "en-US";'); } catch { }
   try { db.run('ALTER TABLE google_drive_files ADD COLUMN folder_id TEXT;'); } catch { }
@@ -6175,6 +6197,152 @@ export function updateHydrationLogDriveSyncInSqlite(id: string, driveFileId: str
     return false;
   }
 }
+
+// -------------------------------------------------------------
+// WALKING STEPS LOGS & PEDOMETER TRACKING
+// -------------------------------------------------------------
+export interface WalkingStepLogRecord {
+  id: string;
+  userEmail: string;
+  memberId: string;
+  memberName: string;
+  timestamp: string;
+  steps: number;
+  distanceMeters: number;
+  durationMinutes: number;
+  caloriesBurned: number;
+  walkType: string;
+  cadenceAvg?: number;
+  dailyStepGoal: number;
+  notes?: string;
+  loggedBy: string;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: string;
+  createdAt: string;
+}
+
+export function saveWalkingStepLogToSqlite(log: WalkingStepLogRecord): WalkingStepLogRecord {
+  if (!db) return log;
+  try {
+    db.run(
+      `INSERT OR REPLACE INTO family_walking_steps_logs (
+        id, user_email, member_id, member_name, timestamp,
+        steps, distance_meters, duration_minutes, calories_burned,
+        walk_type, cadence_avg, daily_step_goal, notes, logged_by,
+        drive_file_id, drive_web_view_link, drive_sync_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.id,
+        log.userEmail || '',
+        log.memberId,
+        log.memberName,
+        log.timestamp || new Date().toISOString(),
+        log.steps,
+        log.distanceMeters,
+        log.durationMinutes,
+        log.caloriesBurned,
+        log.walkType || 'brisk_walking',
+        log.cadenceAvg || 100,
+        log.dailyStepGoal || 10000,
+        log.notes || '',
+        log.loggedBy || 'Auro AI',
+        log.driveFileId || '',
+        log.driveWebViewLink || '',
+        log.driveSyncStatus || 'local_only',
+        log.createdAt || new Date().toISOString(),
+      ]
+    );
+    scheduleSave();
+    return log;
+  } catch (err) {
+    console.warn('Error saving walking step log to SQLite:', err);
+    return log;
+  }
+}
+
+export function getWalkingStepLogsFromSqlite(memberId?: string, userEmail?: string): WalkingStepLogRecord[] {
+  if (!db) return [];
+  try {
+    let query = `SELECT * FROM family_walking_steps_logs`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (memberId && memberId.trim() && memberId !== 'all') {
+      conditions.push(`member_id = ?`);
+      params.push(memberId.trim());
+    }
+    if (userEmail && userEmail.trim()) {
+      conditions.push(`(user_email = ? OR user_email = '')`);
+      params.push(userEmail.trim());
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ` + conditions.join(' AND ');
+    }
+    query += ` ORDER BY timestamp DESC`;
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+
+    const logs: WalkingStepLogRecord[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject();
+      logs.push({
+        id: String(row.id),
+        userEmail: String(row.user_email || ''),
+        memberId: String(row.member_id || ''),
+        memberName: String(row.member_name || ''),
+        timestamp: String(row.timestamp || ''),
+        steps: Number(row.steps || 0),
+        distanceMeters: Number(row.distance_meters || 0),
+        durationMinutes: Number(row.duration_minutes || 0),
+        caloriesBurned: Number(row.calories_burned || 0),
+        walkType: String(row.walk_type || 'brisk_walking'),
+        cadenceAvg: Number(row.cadence_avg || 100),
+        dailyStepGoal: Number(row.daily_step_goal || 10000),
+        notes: row.notes ? String(row.notes) : '',
+        loggedBy: String(row.logged_by || 'Auro AI'),
+        driveFileId: row.drive_file_id ? String(row.drive_file_id) : '',
+        driveWebViewLink: row.drive_web_view_link ? String(row.drive_web_view_link) : '',
+        driveSyncStatus: String(row.drive_sync_status || 'local_only'),
+        createdAt: String(row.created_at || ''),
+      });
+    }
+    stmt.free();
+    return logs;
+  } catch (err) {
+    console.warn('Error fetching walking step logs from SQLite:', err);
+    return [];
+  }
+}
+
+export function deleteWalkingStepLogFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`DELETE FROM family_walking_steps_logs WHERE id = ?`, [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function updateWalkingStepLogDriveSyncInSqlite(id: string, driveFileId: string, driveWebViewLink?: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`UPDATE family_walking_steps_logs SET drive_file_id = ?, drive_web_view_link = ?, drive_sync_status = 'synced' WHERE id = ?`, [
+      driveFileId,
+      driveWebViewLink || '',
+      id,
+    ]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 
 
 

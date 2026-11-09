@@ -49,7 +49,7 @@ export default defineConfig(() => {
         },
         workbox: {
           navigateFallbackDenylist: [/^\/oauth-mobile-callback/],
-          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
         },
       }),
     ],

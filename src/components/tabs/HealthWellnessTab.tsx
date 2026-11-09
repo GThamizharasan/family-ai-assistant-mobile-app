@@ -29,6 +29,7 @@ import {
   Users,
   TrendingUp,
   Thermometer,
+  Footprints,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getWellnessPlanApi, getApiUrl } from '../../services/api';
@@ -53,13 +54,14 @@ import { FamilyHealthTrendsDashboard } from '../health/FamilyHealthTrendsDashboa
 import { FeverTemperatureModal } from '../health/FeverTemperatureModal';
 import { SmartMedicationTracker } from '../health/SmartMedicationTracker';
 import { HydrationTracker } from '../health/HydrationTracker';
+import { WalkingStepsTracker } from '../health/WalkingStepsTracker';
 
 export const HealthWellnessTab: React.FC = () => {
   const { biometrics, user, googleAccessToken } = useApp();
 
   // Top Section Navigation
   const [activeSubSection, setActiveSubSection] = useState<
-    'records' | 'trends' | 'medications' | 'hydration' | 'vitals' | 'meditation' | 'nutrition' | 'wearables'
+    'records' | 'trends' | 'medications' | 'hydration' | 'steps' | 'vitals' | 'meditation' | 'nutrition' | 'wearables'
   >('records');
 
   // Family Health Records State
@@ -382,6 +384,18 @@ export const HealthWellnessTab: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSubSection('steps')}
+            className={`px-3.5 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 ${
+              activeSubSection === 'steps'
+                ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 text-white shadow-md shadow-emerald-600/30'
+                : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+            }`}
+          >
+            <Footprints className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Walking Steps Tracker</span>
+          </button>
+
+          <button
             onClick={() => setIsFeverModalOpen(true)}
             className="px-3.5 py-2 rounded-2xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-rose-300 hover:text-white border border-rose-500/30 shadow-sm"
           >
@@ -555,6 +569,14 @@ export const HealthWellnessTab: React.FC = () => {
                   >
                     <Pill className="w-4 h-4" />
                     <span>Smart Meds</span>
+                  </button>
+
+                  <button
+                    onClick={() => setActiveSubSection('steps')}
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-3.5 py-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 transition-all"
+                  >
+                    <Footprints className="w-4 h-4" />
+                    <span>Walking Steps</span>
                   </button>
 
                   <button
@@ -984,6 +1006,13 @@ export const HealthWellnessTab: React.FC = () => {
       {/* ========================================================================= */}
       {activeSubSection === 'hydration' && (
         <HydrationTracker initialMemberId={selectedMemberId} />
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUB-SECTION: SMART WALKING STEPS TRACKER                                  */}
+      {/* ========================================================================= */}
+      {activeSubSection === 'steps' && (
+        <WalkingStepsTracker initialMemberId={selectedMemberId} />
       )}
 
       {/* ========================================================================= */}

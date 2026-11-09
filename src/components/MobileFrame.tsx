@@ -12,10 +12,12 @@ import {
   LogOut,
   Eye,
   Database,
+  Footprints,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isOfflineModeSimulated } from '../services/offlineSyncService';
+import { getLocalWalkingStepLogs } from '../services/walkingStepsDriveSync';
 
 interface MobileFrameProps {
   children: ReactNode;
@@ -23,6 +25,7 @@ interface MobileFrameProps {
   onOpenVision?: () => void;
   onOpenInstallerHub: () => void;
   onOpenOfflineSyncCenter?: () => void;
+  onOpenWalkingSteps?: () => void;
   onGoHome: () => void;
 }
 
@@ -32,17 +35,47 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   onOpenVision,
   onOpenInstallerHub,
   onOpenOfflineSyncCenter,
+  onOpenWalkingSteps,
   onGoHome,
 }) => {
   const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, signOutGoogle } = useApp();
   const [offlineSimulated, setOfflineSimulated] = useState(() => isOfflineModeSimulated());
+  const [liveStepsToday, setLiveStepsToday] = useState<number>(() => {
+    const logs = getLocalWalkingStepLogs();
+    const todayStr = new Date().toISOString().split('T')[0];
+    const todayLogs = logs.filter((l) => l.timestamp.startsWith(todayStr));
+    return todayLogs.reduce((acc, l) => acc + l.steps, 0);
+  });
+  const [isActivelyWalking, setIsActivelyWalking] = useState(false);
 
   useEffect(() => {
     const handleOfflineChanged = (e: any) => {
       setOfflineSimulated(!!e.detail?.active);
     };
+
+    const handleStepTick = (e: any) => {
+      if (e.detail?.totalTodaySteps !== undefined) {
+        setLiveStepsToday(e.detail.totalTodaySteps);
+        setIsActivelyWalking(!!e.detail.isWalking);
+      }
+    };
+
+    const handleLogsChanged = () => {
+      const logs = getLocalWalkingStepLogs();
+      const todayStr = new Date().toISOString().split('T')[0];
+      const todayLogs = logs.filter((l) => l.timestamp.startsWith(todayStr));
+      setLiveStepsToday(todayLogs.reduce((acc, l) => acc + l.steps, 0));
+    };
+
     window.addEventListener('aura_offline_mode_changed', handleOfflineChanged);
-    return () => window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
+    window.addEventListener('aura_realtime_step_tick', handleStepTick);
+    window.addEventListener('aura_steps_logs_changed', handleLogsChanged);
+
+    return () => {
+      window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
+      window.removeEventListener('aura_realtime_step_tick', handleStepTick);
+      window.removeEventListener('aura_steps_logs_changed', handleLogsChanged);
+    };
   }, []);
 
   const currentTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -82,6 +115,19 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             >
               <Database className="w-3.5 h-3.5 text-amber-400" />
               <span>3GB Store</span>
+            </button>
+          )}
+
+          {/* Real-time Mobile Walking Steps Pedometer */}
+          {onOpenWalkingSteps && (
+            <button
+              onClick={onOpenWalkingSteps}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              title="Realtime Walking Steps (Device Motion Pedometer & SQLite/Drive Sync)"
+              aria-label="Open Realtime Walking Steps"
+            >
+              <Footprints className={`w-3.5 h-3.5 text-emerald-400 ${isActivelyWalking ? 'animate-bounce' : ''}`} />
+              <span className="tabular-nums font-mono">{liveStepsToday.toLocaleString()}</span>
             </button>
           )}
 
@@ -145,13 +191,25 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             <span>{currentTime}</span>
 
             {/* Dynamic Island Pill */}
-            <div
-              onClick={onOpenVoice}
-              className="cursor-pointer group px-3.5 py-1 rounded-full bg-black border border-slate-800 text-[11px] font-medium text-slate-300 flex items-center gap-1.5 hover:border-indigo-500/50 transition-colors shadow-inner"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[10px] text-indigo-300 font-mono">Aura AI</span>
-              <Mic className="w-3 h-3 text-indigo-400 group-hover:scale-110 transition-transform" />
+            <div className="flex items-center gap-1.5">
+              <div
+                onClick={onOpenVoice}
+                className="cursor-pointer group px-3.5 py-1 rounded-full bg-black border border-slate-800 text-[11px] font-medium text-slate-300 flex items-center gap-1.5 hover:border-indigo-500/50 transition-colors shadow-inner"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-[10px] text-indigo-300 font-mono">Aura AI</span>
+                <Mic className="w-3 h-3 text-indigo-400 group-hover:scale-110 transition-transform" />
+              </div>
+
+              {/* Real-Time Live Steps Pill */}
+              <div
+                onClick={onOpenWalkingSteps}
+                className="cursor-pointer px-2.5 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[10px] font-mono text-emerald-300 flex items-center gap-1 hover:border-emerald-400 transition-colors shadow-inner"
+                title="Real-Time Mobile Pedometer (Tap to View)"
+              >
+                <Footprints className={`w-3 h-3 text-emerald-400 ${isActivelyWalking ? 'animate-bounce' : ''}`} />
+                <span className="tabular-nums font-semibold">{liveStepsToday.toLocaleString()}</span>
+              </div>
             </div>
 
             <div className="flex items-center gap-1.5 text-slate-400">

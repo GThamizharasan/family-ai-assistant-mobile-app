@@ -168,6 +168,36 @@ export interface HydrationLogEntry {
   createdAt: string;
 }
 
+export type StepWalkType =
+  | 'brisk_walking'
+  | 'casual_stroll'
+  | 'power_walk'
+  | 'treadmill'
+  | 'hiking'
+  | 'interval';
+
+export interface WalkingStepLogEntry {
+  id: string;
+  userEmail?: string;
+  memberId: string;
+  memberName: string;
+  timestamp: string; // ISO string
+  steps: number; // e.g. 3500
+  distanceMeters: number; // e.g. 2625 (meters)
+  durationMinutes: number; // e.g. 35 (mins)
+  caloriesBurned: number; // e.g. 145 (kcal)
+  walkType: StepWalkType;
+  cadenceAvg?: number; // steps per minute (e.g. 105 spm)
+  dailyStepGoal: number; // e.g. 10000 steps
+  notes?: string;
+  loggedBy: string; // e.g. "Auro AI Voice" | "Apple Watch / Health Connect" | "Pedometer" | "Manual"
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  driveSyncStatus?: 'synced' | 'local_only' | 'pending';
+  createdAt: string;
+}
+
+
 export interface VaccinationEntry {
   id: string;
   vaccineName: string;

@@ -310,6 +310,7 @@ const AppContent: React.FC = () => {
       onOpenVision={() => setIsVisionOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
       onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
+      onOpenWalkingSteps={() => setCurrentTab('wellness')}
       onGoHome={() => setCurrentTab('home')}
     >
       {renderActiveTab()}
