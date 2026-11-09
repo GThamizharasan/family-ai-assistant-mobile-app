@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+
 import {
   Droplets,
   Plus,
@@ -288,11 +289,10 @@ export const HydrationTracker: React.FC<HydrationTrackerProps> = ({
               <button
                 key={m.id}
                 onClick={() => setSelectedMemberId(m.memberId)}
-                className={`p-3 rounded-2xl border transition-all flex items-center gap-3 min-w-[170px] text-left shrink-0 ${
-                  isSelected
+                className={`p-3 rounded-2xl border transition-all flex items-center gap-3 min-w-[170px] text-left shrink-0 ${isSelected
                     ? 'bg-gradient-to-br from-cyan-950/80 to-blue-950/80 border-cyan-500/60 shadow-lg shadow-cyan-950/40'
                     : 'bg-slate-900 border-slate-800 hover:border-slate-700'
-                }`}
+                  }`}
               >
                 {m.avatar ? (
                   <img
@@ -399,19 +399,18 @@ export const HydrationTracker: React.FC<HydrationTrackerProps> = ({
                 )}
               </span>
               <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                  summary.progressPercent >= 100
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${summary.progressPercent >= 100
                     ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                     : summary.progressPercent >= 60
-                    ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                }`}
+                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  }`}
               >
                 {summary.progressPercent >= 100
                   ? 'SUPER HYDRATED'
                   : summary.progressPercent >= 60
-                  ? 'ON TRACK'
-                  : 'NEEDS WATER'}
+                    ? 'ON TRACK'
+                    : 'NEEDS WATER'}
               </span>
             </div>
           </div>
@@ -466,11 +465,10 @@ export const HydrationTracker: React.FC<HydrationTrackerProps> = ({
                       <div className="w-full bg-slate-950 rounded-xl overflow-hidden h-16 flex items-end">
                         <div
                           style={{ height: `${heightPercent}%` }}
-                          className={`w-full rounded-xl transition-all duration-500 ${
-                            bucket.amountMl > 0
+                          className={`w-full rounded-xl transition-all duration-500 ${bucket.amountMl > 0
                               ? 'bg-gradient-to-t from-cyan-600 to-blue-500 shadow-md shadow-cyan-500/20'
                               : 'bg-slate-800/40'
-                          }`}
+                            }`}
                         />
                       </div>
                       <span className="text-[9px] font-semibold text-slate-400 text-center whitespace-nowrap">
@@ -623,11 +621,10 @@ export const HydrationTracker: React.FC<HydrationTrackerProps> = ({
                       key={b.id}
                       type="button"
                       onClick={() => setCustomBeverage(b.id)}
-                      className={`p-2 rounded-xl border text-xs font-semibold text-left flex items-center gap-2 transition ${
-                        customBeverage === b.id
+                      className={`p-2 rounded-xl border text-xs font-semibold text-left flex items-center gap-2 transition ${customBeverage === b.id
                           ? 'bg-cyan-600/30 text-white border-cyan-500'
                           : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'
-                      }`}
+                        }`}
                     >
                       <span>{b.icon}</span>
                       <span>{b.label}</span>
@@ -694,11 +691,10 @@ export const HydrationTracker: React.FC<HydrationTrackerProps> = ({
                     key={g}
                     type="button"
                     onClick={() => setEditingGoalMl(g)}
-                    className={`p-2 rounded-xl border text-xs font-bold ${
-                      editingGoalMl === g
+                    className={`p-2 rounded-xl border text-xs font-bold ${editingGoalMl === g
                         ? 'bg-cyan-600 text-white border-cyan-500'
                         : 'bg-slate-950 text-slate-300 border-slate-800'
-                    }`}
+                      }`}
                   >
                     {g} mL
                   </button>
