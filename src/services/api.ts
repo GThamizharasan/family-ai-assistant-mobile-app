@@ -202,20 +202,48 @@ export async function sendChatMessage(payload: {
 export async function transcribeAudioApi(
   audioBase64: string,
   mimeType = 'audio/webm',
-  language = 'auto'
-): Promise<{ success?: boolean; text?: string; error?: string }> {
+  language = 'auto',
+  provider?: 'gemini' | 'nvidia' | string,
+  model?: string
+): Promise<{ success?: boolean; text?: string; error?: string; modelUsed?: string; providerUsed?: string }> {
+  const selectedProvider =
+    provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+  const selectedModel =
+    model ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      : null) ||
+    (selectedProvider === 'nvidia' ? 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' : 'gemini-3.8-flash');
+
   return safeFetchJson('/api/ai/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mimeType, language }),
+    body: JSON.stringify({
+      audioBase64,
+      mimeType,
+      language,
+      provider: selectedProvider,
+      model: selectedModel,
+    }),
   });
 }
 
-export async function synthesizeSpeechApi(text: string, voiceName = 'Kore') {
+export async function synthesizeSpeechApi(
+  text: string,
+  voiceName = 'Kore',
+  provider?: 'gemini' | 'nvidia' | string
+) {
+  const selectedProvider =
+    provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+
   return safeFetchJson('/api/ai/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voiceName }),
+    body: JSON.stringify({ text, voiceName, provider: selectedProvider }),
   });
 }
 

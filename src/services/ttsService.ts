@@ -238,13 +238,19 @@ export async function fetchTtsMemos(
 }
 
 /**
- * Generate speech audio from text via server endpoint
+ * Generate speech audio from text via server endpoint (NVIDIA Speech or Gemini TTS)
  */
 export async function generateTtsAudio(
   text: string,
   voiceType: TtsVoiceType = 'male',
-  voiceName?: string
-): Promise<{ audioBase64: string; mimeType: string; voiceName: string }> {
+  voiceName?: string,
+  provider?: 'gemini' | 'nvidia' | string
+): Promise<{ audioBase64: string; mimeType: string; voiceName: string; modelUsed?: string }> {
+  const activeProvider =
+    provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+
   const res = await fetch(getApiUrl('/api/tts/generate'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -252,6 +258,7 @@ export async function generateTtsAudio(
       text,
       voiceType,
       voiceName,
+      provider: activeProvider,
     }),
   });
 
@@ -265,6 +272,7 @@ export async function generateTtsAudio(
     audioBase64: data.audioBase64,
     mimeType: data.mimeType || 'audio/wav',
     voiceName: data.voiceName || (voiceType === 'female' ? 'Kore' : voiceType === 'child' ? 'Puck' : 'Fenrir'),
+    modelUsed: data.modelUsed,
   };
 }
 

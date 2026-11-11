@@ -113,18 +113,35 @@ export async function blobToBase64(blob: Blob | null | undefined): Promise<strin
   });
 }
 
-// 1. Audio Transcription using gemini-3.5-transcribe
+// 1. Audio Transcription using Gemini or NVIDIA NIM
 export async function transcribeAudio(
   audioBlob: Blob,
-  prompt?: string
+  prompt?: string,
+  provider?: 'gemini' | 'nvidia' | string,
+  model?: string
 ): Promise<{ text: string; modelUsed: string; timestamp: string }> {
   const audioBase64 = await blobToBase64(audioBlob);
   const mimeType = audioBlob.type || 'audio/webm';
+  const selectedProvider =
+    provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+  const selectedModel =
+    model ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      : null);
 
   const res = await fetch(getApiUrl('/api/ai/transcribe'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audioBase64, mimeType, prompt }),
+    body: JSON.stringify({
+      audioBase64,
+      mimeType,
+      prompt,
+      provider: selectedProvider,
+      model: selectedModel,
+    }),
   });
 
   if (!res.ok) {

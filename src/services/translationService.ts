@@ -168,19 +168,23 @@ export async function fetchTranslations(
 }
 
 /**
- * Execute real-time translation using Gemini server route
+ * Execute real-time translation using Gemini or NVIDIA NIM server route
  */
 export async function executeTranslation(
   text: string,
   sourceLang: string = 'en',
   targetLang: string = 'ta',
-  tone: string = 'natural conversational'
+  tone: string = 'natural conversational',
+  provider?: 'gemini' | 'nvidia' | string,
+  model?: string
 ): Promise<{
   translatedText: string;
   phonetics?: string;
   detectedSourceLang: string;
   targetLang: string;
   notes?: string;
+  modelUsed?: string;
+  providerUsed?: string;
 }> {
   const cleanInput = text.trim();
   if (!cleanInput) {
@@ -193,7 +197,17 @@ export async function executeTranslation(
     };
   }
 
-  // 1. Try server translation endpoint
+  const activeProvider =
+    provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+  const activeModel =
+    model ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem(activeProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      : null);
+
+  // 1. Try server translation endpoint (NVIDIA NIM or Gemini)
   try {
     const res = await fetch(getApiUrl('/api/translate'), {
       method: 'POST',
@@ -203,6 +217,8 @@ export async function executeTranslation(
         sourceLang,
         targetLang,
         tone,
+        provider: activeProvider,
+        model: activeModel,
       }),
     });
 
@@ -222,6 +238,8 @@ export async function executeTranslation(
           detectedSourceLang: data.detectedSourceLang || sourceLang,
           targetLang: data.targetLang || targetLang,
           notes: data.notes || '',
+          modelUsed: data.modelUsed,
+          providerUsed: data.providerUsed,
         };
       }
     }

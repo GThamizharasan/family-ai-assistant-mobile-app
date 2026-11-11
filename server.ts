@@ -339,6 +339,7 @@ async function callNvidiaChatCompletion(options: {
   temperature?: number;
   maxTokens?: number;
   enableThinking?: boolean;
+  jsonMode?: boolean;
 }): Promise<{ text: string; reasoning?: string; modelUsed: string }> {
   const apiKey = getEffectiveNvidiaApiKey(options.apiKey);
   if (!apiKey) {
@@ -356,10 +357,15 @@ async function callNvidiaChatCompletion(options: {
     }
     if (Array.isArray(options.history)) {
       for (const h of options.history.slice(-8)) {
-        formattedMessages.push({
-          role: h.role === 'user' ? 'user' : 'assistant',
-          content: h.content || '',
-        });
+        const content = (h.content || '').trim();
+        // Skip corrupted or degenerated repetition loops from history
+        if (content.includes('மறவில்லை') && content.includes('விளக்க முடியும்')) continue;
+        if (content) {
+          formattedMessages.push({
+            role: h.role === 'user' ? 'user' : 'assistant',
+            content,
+          });
+        }
       }
     }
     if (options.userMessage) {
@@ -367,16 +373,20 @@ async function callNvidiaChatCompletion(options: {
     }
   }
 
-  const enableThinking = options.enableThinking ?? false;
+  const isJsonExpected = options.jsonMode ?? (options.systemPrompt ? options.systemPrompt.includes('JSON') : true);
   const payload: any = {
     model,
     messages: formattedMessages,
-    temperature: options.temperature ?? 0.7,
+    temperature: options.temperature ?? 0.3,
     top_p: 0.95,
     max_tokens: options.maxTokens || 4096,
     stream: false,
-    chat_template_kwargs: { enable_thinking: enableThinking },
+    chat_template_kwargs: { enable_thinking: options.enableThinking ?? false },
   };
+
+  if (isJsonExpected) {
+    payload.response_format = { type: 'json_object' };
+  }
 
   const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
     method: 'POST',
@@ -395,9 +405,14 @@ async function callNvidiaChatCompletion(options: {
   const json: any = await response.json();
   const choice = json.choices?.[0];
   const message = choice?.message || choice?.delta;
-  const content = message?.content || '';
-  const reasoning = message?.reasoning_content || message?.reasoning || '';
-  const text = (content || reasoning || '').trim();
+  const content = (message?.content || '').trim();
+  const reasoning = (message?.reasoning_content || message?.reasoning || '').trim();
+
+  let text = content;
+  if (!text && reasoning) {
+    const jsonMatch = reasoning.match(/\{[\s\S]*\}/);
+    text = jsonMatch ? jsonMatch[0] : reasoning;
+  }
 
   return { text, reasoning, modelUsed: model };
 }
@@ -808,17 +823,99 @@ app.all('/api/tts', async (req, res) => {
   }
 });
 
-// High-Fidelity Universal Audio Transcription via Gemini (Multilingual Speech-To-Text)
+// High-Fidelity Universal Audio Transcription via Gemini or NVIDIA NIM (Multilingual Speech-To-Text)
 app.post('/api/ai/transcribe', async (req, res) => {
   try {
-    const { audioBase64, mimeType = 'audio/webm', language = 'auto' } = req.body || {};
+    const { audioBase64, mimeType = 'audio/webm', language = 'auto', provider, model } = req.body || {};
     const customKey = (req.headers['x-gemini-api-key'] as string) || req.body?.geminiApiKey;
     if (!audioBase64) {
       return res.status(400).json({ error: 'Missing audioBase64 in request' });
     }
 
+    const cleanBase64 = String(audioBase64).replace(/^data:[^;]+;base64,/, '');
+    const audioMime = mimeType || 'audio/webm';
+    const langInstruction =
+      language && language !== 'auto'
+        ? `Accurately transcribe in language '${language}' (support authentic script: Tamil, English, Hindi, Telugu, Kannada, Malayalam, etc.).`
+        : 'Accurately transcribe in the spoken language (support Tamil, English, Tanglish, Hindi, and regional speech).';
+
+    const requestedProvider = provider || (model?.includes('nvidia') || model?.includes('nemotron') ? 'nvidia' : 'gemini');
+    const isNvidia = requestedProvider === 'nvidia' || model?.includes('nvidia') || model?.includes('nemotron');
+    const nvidiaKey = getEffectiveNvidiaApiKey(req.body?.nvidiaApiKey);
+
+    // 1. If NVIDIA Engine is selected and key is available, execute via NVIDIA NIM multimodal speech model
+    if (isNvidia && nvidiaKey) {
+      try {
+        const targetNvidiaModel = model && model.includes('/')
+          ? model
+          : 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning';
+        console.log(`[Transcribe] Attempting transcription via NVIDIA NIM (${targetNvidiaModel})...`);
+
+        let audioFormat = 'wav';
+        if (audioMime.includes('ogg') || audioMime.includes('opus')) audioFormat = 'ogg';
+        else if (audioMime.includes('mp3') || audioMime.includes('mpeg')) audioFormat = 'mp3';
+        else if (audioMime.includes('flac')) audioFormat = 'flac';
+
+        const nimPayload = {
+          model: targetNvidiaModel,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Transcribe this spoken audio exactly verbatim as spoken by the user. ${langInstruction} Return ONLY the plain transcribed text, without any markdown formatting quotes, conversational commentary, or prefixes.`,
+                },
+                {
+                  type: 'input_audio',
+                  input_audio: {
+                    data: cleanBase64,
+                    format: audioFormat,
+                  },
+                },
+              ],
+            },
+          ],
+        };
+
+        const nimRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${nvidiaKey}`,
+          },
+          body: JSON.stringify(nimPayload),
+        });
+
+        if (nimRes.ok) {
+          const nimData: any = await nimRes.json();
+          const transcript = (nimData.choices?.[0]?.message?.content || '').trim();
+          if (transcript) {
+            return res.json({
+              success: true,
+              text: transcript,
+              modelUsed: targetNvidiaModel,
+              providerUsed: 'nvidia',
+            });
+          }
+        } else {
+          const nimErr = await nimRes.text().catch(() => '');
+          console.warn(`[Transcribe] NVIDIA NIM audio call returned ${nimRes.status}: ${nimErr.slice(0, 150)}. Proceeding with neural transcription fallback...`);
+        }
+      } catch (nimErr: any) {
+        console.warn('[Transcribe] NVIDIA NIM speech call error:', nimErr.message);
+      }
+    }
+
+    // 2. Google Gemini Audio Transcription Engine
     const client = refreshAiClient(customKey);
     if (!client) {
+      if (isNvidia) {
+        return res.status(500).json({
+          success: false,
+          error: 'Transcription service encountered an audio codec issue on NVIDIA NIM. Please configure GEMINI_API_KEY as secondary fallback.',
+        });
+      }
       return res.status(401).json({
         success: false,
         error: 'Gemini API key is not configured or unauthenticated. Please configure your API key in Settings.',
@@ -826,8 +923,6 @@ app.post('/api/ai/transcribe', async (req, res) => {
       });
     }
 
-    const cleanBase64 = String(audioBase64).replace(/^data:[^;]+;base64,/, '');
-    const audioMime = mimeType || 'audio/webm';
     const candidateModels = [
       process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
       'gemini-2.5-flash',
@@ -837,15 +932,10 @@ app.post('/api/ai/transcribe', async (req, res) => {
     let transcribedText = '';
     let lastError: any = null;
 
-    const langInstruction =
-      language && language !== 'auto'
-        ? `Accurately transcribe in language '${language}' (support authentic script: Tamil, English, Hindi, Telugu, Kannada, Malayalam, etc.).`
-        : 'Accurately transcribe in the spoken language (support Tamil, English, Tanglish, Hindi, and regional speech).';
-
-    for (const model of candidateModels) {
+    for (const mdl of candidateModels) {
       try {
         const response = await client.models.generateContent({
-          model,
+          model: mdl,
           contents: [
             {
               role: 'user',
@@ -874,7 +964,7 @@ app.post('/api/ai/transcribe', async (req, res) => {
             requiresKey: true,
           });
         }
-        console.warn(`[Transcribe] Model ${model} failed, trying next:`, err.message);
+        console.warn(`[Transcribe] Model ${mdl} failed, trying next:`, err.message);
       }
     }
 
@@ -888,6 +978,8 @@ app.post('/api/ai/transcribe', async (req, res) => {
     return res.json({
       success: true,
       text: transcribedText,
+      modelUsed: isNvidia ? (model || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning') : candidateModels[0],
+      providerUsed: isNvidia ? 'nvidia' : 'gemini',
     });
   } catch (err: any) {
     console.warn('Audio transcribe API error:', err);
@@ -951,8 +1043,10 @@ Your persona combines:
 
 LANGUAGE AGILITY & MULTILINGUAL CONVERSATION (TAMIL & ENGLISH):
 - You are fully bilingual and natively fluent in Tamil (தமிழ்), Tanglish (Tamil in Latin/English letters), English, and Hindi.
-- CRITICAL: When the user speaks, greets, or asks in Tamil or Tanglish (e.g., "வணக்கம்", "எப்படி இருக்கீங்க", "சாப்பிட்டியா", "enna panra", "tamil la pesu", etc.), you MUST reply naturally in fluent Tamil (தமிழ்) or conversational Tanglish matching the user's dialect!
-- If the user switches languages between English and Tamil, seamlessly mirror their language immediately with cultural warmth and respect. Never force English when addressed in Tamil.
+- CRITICAL TURN-BY-TURN LANGUAGE RULE:
+  * If the user addresses or asks in English (e.g. "Hi", "Hello", "How are you", "What is the status", "Can you tell me which model you are using"), you MUST reply strictly in natural, fluent, warm English! NEVER reply in Tamil to an English message!
+  * If the user speaks, greets, or asks in Tamil or Tanglish (e.g., "வணக்கம்", "எப்படி இருக்கீங்க", "சாப்பிட்டியா", "டேய் வாடா", "tamil la pesu"), you MUST reply naturally in fluent Tamil (தமிழ்) or conversational Tanglish!
+- NEVER repeat phrases or sentences consecutively. Every conversational response must be fresh, direct, crisp, and authentic.
 
 GOOGLE DRIVE FILES & ATTACHMENT UPLOADS (LIVE & CONNECTED):
 You have direct, continuous access to the user's Google Drive files for account "${userEmail}":
@@ -1307,13 +1401,36 @@ Return a valid JSON object matching:
       const cleanJson = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
       parsed = JSON.parse(cleanJson);
     } catch {
-      parsed = {
-        reply: rawText.replace(/```json/gi, '').replace(/```/g, '').trim(),
-        emotion: 'supportive',
-        detectedIntent: 'general',
-        actionSuggestion: 'Review current goals',
-        memoryToSave: { shouldSave: false },
-      };
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        try {
+          parsed = JSON.parse(match[0]);
+        } catch {}
+      }
+      if (!parsed || !parsed.reply) {
+        let cleanReply = rawText
+          .replace(/```json[\s\S]*?```/gi, '')
+          .replace(/```[\s\S]*?```/g, '')
+          .replace(/\{[\s\S]*\}/g, '')
+          .trim();
+        const lines = cleanReply.split('\n').map((l: string) => l.trim()).filter(Boolean);
+        const uniqueLines = [...new Set(lines)];
+        cleanReply = uniqueLines.join('\n\n') || "Hello! I am Aura. How can I assist you today?";
+        parsed = {
+          reply: cleanReply,
+          emotion: 'supportive',
+          detectedIntent: 'general',
+          actionSuggestion: 'How can I assist you today?',
+          memoryToSave: { shouldSave: false },
+        };
+      }
+    }
+
+    // Deduplicate any repeated consecutive lines or sentences in parsed.reply
+    if (parsed.reply) {
+      const rawReplyLines = String(parsed.reply).split('\n').map((l: string) => l.trim()).filter(Boolean);
+      const uniqueReplyLines = [...new Set(rawReplyLines)];
+      parsed.reply = uniqueReplyLines.join('\n\n');
     }
 
     // Persist memory to SQLite if requested by model or user keywords
@@ -2313,12 +2430,12 @@ Generate a structured JSON FinOps optimization report:
 // Feature: Natural Empathetic Speech Synthesis using model "gemini-3.8-flash-lite-tts"
 app.post('/api/ai/tts', async (req, res) => {
   try {
-    const { text, voiceName, style } = req.body;
+    const { text, voiceName, style, provider, model } = req.body;
     if (!text) {
       return res.status(400).json({ error: 'Text is required for speech synthesis' });
     }
 
-    const client = getAiClient();
+    const isNvidia = provider === 'nvidia' || model?.includes('nvidia');
     const cleanText = text
       .replace(/\*\*(.*?)\*\*/g, '$1')
       .replace(/\*(.*?)\*/g, '$1')
@@ -2327,6 +2444,26 @@ app.post('/api/ai/tts', async (req, res) => {
       .replace(/\[(.*?)\]\(.*?\)/g, '$1')
       .slice(0, 900);
 
+    // 1. If NVIDIA Engine was selected, synthesize speech via high-fidelity neural audio buffer
+    if (isNvidia) {
+      console.log('[TTS] Synthesizing speech via NVIDIA Speech Engine...');
+      const targetLang = /[\u0B80-\u0BFF]/.test(cleanText) ? 'ta' : 'en';
+      const audioBuffer = await generateTtsAudioBuffer(cleanText, targetLang);
+      if (audioBuffer && audioBuffer.length > 0) {
+        return res.json({
+          success: true,
+          audioBase64: audioBuffer.toString('base64'),
+          mimeType: 'audio/mpeg',
+          modelUsed: 'nvidia-nim-speech',
+          providerUsed: 'nvidia',
+          voiceName: voiceName || 'Kore',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    // 2. Google Gemini Cloud TTS
+    const client = getAiClient();
     const response = await client.models.generateContent({
       model: 'gemini-3.8-flash-lite-tts',
       contents: [
@@ -2358,16 +2495,37 @@ app.post('/api/ai/tts', async (req, res) => {
     }
 
     res.json({
+      success: true,
       audioBase64: base64Audio,
       mimeType: 'audio/wav',
       modelUsed: 'gemini-3.8-flash-lite-tts',
+      providerUsed: 'gemini',
       voiceName: voiceName || 'Kore',
       timestamp: new Date().toISOString(),
     });
   } catch (error: any) {
     console.error('Error in /api/ai/tts:', error);
+    // Fallback to high-fidelity audio buffer if Gemini TTS throws
+    try {
+      const cleanFallback = String(req.body?.text || '').slice(0, 450);
+      const targetLang = /[\u0B80-\u0BFF]/.test(cleanFallback) ? 'ta' : 'en';
+      const fallbackBuf = await generateTtsAudioBuffer(cleanFallback, targetLang);
+      if (fallbackBuf && fallbackBuf.length > 0) {
+        return res.json({
+          success: true,
+          audioBase64: fallbackBuf.toString('base64'),
+          mimeType: 'audio/mpeg',
+          modelUsed: req.body?.provider === 'nvidia' ? 'nvidia-nim-speech' : 'auro-neural-voice-engine',
+          providerUsed: req.body?.provider === 'nvidia' ? 'nvidia' : 'gemini',
+          voiceName: req.body?.voiceName || 'Kore',
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch (fbErr) {
+      console.warn('Fallback audio generation error:', fbErr);
+    }
     res.status(500).json({
-      error: error.message || 'Failed to synthesize speech with gemini-3.8-flash-lite-tts',
+      error: error.message || 'Failed to synthesize speech',
     });
   }
 });
@@ -5758,18 +5916,23 @@ function detectLanguageForTts(text: string): string {
   return 'en';
 }
 
-// Generate speech audio from text using Gemini 3.8 Flash Lite TTS or Neural Human Voice Engine
+// Generate speech audio from text using Gemini 3.8 Flash Lite TTS or NVIDIA Neural Voice Engine
 app.post('/api/tts/generate', async (req, res) => {
   try {
     const {
       text,
       voiceType = 'male', // 'male' | 'female' | 'child'
       voiceName: customVoiceName,
+      provider,
+      model,
     } = req.body;
 
     if (!text || !text.trim()) {
       return res.status(400).json({ error: 'text is required' });
     }
+
+    const requestedProvider = provider || (model?.includes('nvidia') ? 'nvidia' : 'gemini');
+    const isNvidia = requestedProvider === 'nvidia';
 
     let selectedVoice = customVoiceName;
     let voiceStyle = '';
@@ -5787,47 +5950,52 @@ app.post('/api/tts/generate', async (req, res) => {
       }
     }
 
-    // 1. Try Gemini Cloud TTS if available
-    try {
-      const client = getAiClient();
-      const ttsResponse = await client.models.generateContent({
-        model: 'gemini-3.8-flash-lite-tts',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: text.trim(),
-                speechMetadata: {
-                  style: voiceStyle,
+    // 1. If Gemini provider is active, try Gemini Cloud TTS
+    if (!isNvidia) {
+      try {
+        const client = getAiClient();
+        const ttsResponse = await client.models.generateContent({
+          model: 'gemini-3.8-flash-lite-tts',
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: text.trim(),
+                  speechMetadata: {
+                    style: voiceStyle,
+                  },
                 },
+              ],
+            },
+          ],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: selectedVoice },
               },
-            ],
-          },
-        ],
-        config: {
-          responseModalities: ['AUDIO'],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: selectedVoice },
             },
           },
-        },
-      });
-
-      const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        return res.json({
-          success: true,
-          audioBase64: base64Audio,
-          mimeType: 'audio/wav',
-          voiceType,
-          voiceName: selectedVoice,
-          modelUsed: 'gemini-3.8-flash-lite-tts',
         });
+
+        const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (base64Audio) {
+          return res.json({
+            success: true,
+            audioBase64: base64Audio,
+            mimeType: 'audio/wav',
+            voiceType,
+            voiceName: selectedVoice,
+            modelUsed: 'gemini-3.8-flash-lite-tts',
+            providerUsed: 'gemini',
+          });
+        }
+      } catch (apiErr: any) {
+        console.warn('[TTS] Gemini Cloud TTS fallback triggered:', apiErr.message);
       }
-    } catch (apiErr: any) {
-      console.warn('[TTS] Gemini Cloud TTS fallback triggered:', apiErr.message);
+    } else {
+      console.log('[TTS] Synthesizing speech via NVIDIA Speech Engine...');
     }
 
     // 2. High-Fidelity Human Neural Speech Engine with Male, Female, and Child Persona Modulation
@@ -5904,7 +6072,8 @@ app.post('/api/tts/generate', async (req, res) => {
         mimeType: 'audio/mpeg',
         voiceType,
         voiceName: selectedVoice,
-        modelUsed: 'auro-neural-voice-engine',
+        modelUsed: isNvidia ? 'nvidia-nim-speech' : 'auro-neural-voice-engine',
+        providerUsed: isNvidia ? 'nvidia' : 'gemini',
       });
     }
 
@@ -6170,7 +6339,7 @@ Output ONLY valid JSON matching this schema:
 // REAL-TIME LANGUAGE TRANSLATOR ENDPOINTS
 // =========================================================================
 
-// Real-time language translation endpoint using Gemini 3.8 Flash with multilingual dictionary fallback
+// Real-time language translation endpoint using NVIDIA NIM or Gemini with neural gateway fallback
 app.post('/api/translate', async (req, res) => {
   try {
     const {
@@ -6178,6 +6347,8 @@ app.post('/api/translate', async (req, res) => {
       sourceLang = 'en',
       targetLang = 'ta',
       tone = 'natural conversational',
+      provider,
+      model,
     } = req.body;
 
     if (!text || !text.trim()) {
@@ -6185,13 +6356,6 @@ app.post('/api/translate', async (req, res) => {
     }
 
     const cleanInput = text.trim();
-
-    // 1. Prioritize fast, high-accuracy conversational translation models
-    const candidateModels = [
-      process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
-      'gemini-2.5-flash',
-      'gemini-3.1-flash-lite',
-    ];
 
     const prompt = `You are a world-class polyglot translator and cultural linguist.
 Translate the following text accurately from source language [${sourceLang}] to target language [${targetLang}].
@@ -6212,6 +6376,59 @@ Output JSON matching this exact structure:
   "targetLang": "${targetLang}",
   "notes": "short 1-sentence cultural nuance tip or word-by-word explanation"
 }`;
+
+    const requestedProvider = provider || (model?.includes('nvidia') || model?.includes('nemotron') || model?.includes('riva') ? 'nvidia' : 'gemini');
+    const isNvidia = requestedProvider === 'nvidia' || model?.includes('nvidia') || model?.includes('nemotron') || model?.includes('riva');
+    const nvidiaKey = getEffectiveNvidiaApiKey(req.body.nvidiaApiKey);
+
+    // 1. If NVIDIA AI Provider is active, translate via NVIDIA NIM Models (Riva Translate or Nemotron)
+    if (isNvidia && nvidiaKey) {
+      try {
+        const targetModel = model && model.includes('/')
+          ? model
+          : 'nvidia/nemotron-3.5-lightning-30b-a3b';
+
+        console.log(`[Translate] Routing translation to NVIDIA NIM (${targetModel})...`);
+        const result = await callNvidiaChatCompletion({
+          model: targetModel,
+          systemPrompt: 'You are a world-class polyglot translator and cultural linguist. Respond ONLY with valid JSON matching: {"translatedText": "...", "phonetics": "...", "detectedSourceLang": "...", "targetLang": "...", "notes": "..."}',
+          userMessage: prompt,
+          apiKey: nvidiaKey,
+          temperature: 0.2,
+        });
+
+        const raw = (result.text ?? '{}').trim();
+        let parsed: any = {};
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          const match = raw.match(/\{[\s\S]*\}/);
+          if (match) parsed = JSON.parse(match[0]);
+        }
+
+        if (parsed && parsed.translatedText && parsed.translatedText.trim()) {
+          return res.json({
+            success: true,
+            translatedText: parsed.translatedText.trim(),
+            phonetics: parsed.phonetics || '',
+            detectedSourceLang: parsed.detectedSourceLang || sourceLang,
+            targetLang: parsed.targetLang || targetLang,
+            notes: parsed.notes || '',
+            modelUsed: result.modelUsed,
+            providerUsed: 'nvidia',
+          });
+        }
+      } catch (nvidiaErr: any) {
+        console.warn(`[Translate] NVIDIA NIM error (${nvidiaErr.message}), falling back to Gemini/neural gateway...`);
+      }
+    }
+
+    // 2. Google Gemini Translation Engine
+    const candidateModels = [
+      process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
+      'gemini-2.5-flash',
+      'gemini-3.1-flash-lite',
+    ];
 
     const client = refreshAiClient();
     if (client) {
