@@ -30,7 +30,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { AVAILABLE_GEMINI_MODELS } from '../types';
+import { AVAILABLE_GEMINI_MODELS, AVAILABLE_NVIDIA_MODELS } from '../types';
 import {
   getApiUrl,
   safeFetchJson,
@@ -115,6 +115,9 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
 
   // Keys form state
   const [geminiKey, setGeminiKey] = useState('');
+  const [nvidiaKey, setNvidiaKey] = useState('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');
+  const [activeAiProvider, setActiveAiProvider] = useState<'gemini' | 'nvidia'>('gemini');
+  const [selectedNvidiaModel, setSelectedNvidiaModel] = useState<string>('nvidia/nemotron-3.5-lightning-30b-a3b');
   const [googleMapsKey, setGoogleMapsKey] = useState('');
   const [googleClientId, setGoogleClientId] = useState('');
   const [whatsAppToken, setWhatsAppToken] = useState('');
@@ -126,6 +129,8 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [geminiTestStatus, setGeminiTestStatus] = useState<string | null>(null);
   const [isTestingGemini, setIsTestingGemini] = useState(false);
+  const [nvidiaTestStatus, setNvidiaTestStatus] = useState<string | null>(null);
+  const [isTestingNvidia, setIsTestingNvidia] = useState(false);
 
   // SQLite stats & communications
   const [sqliteStats, setSqliteStats] = useState<any>(null);
@@ -153,6 +158,13 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
         '600050762948-bqe3traltdnne31fmu99p1hn9n1ubgb8.apps.googleusercontent.com'
     );
     setGeminiKey(localStorage.getItem('aura_gemini_key') || (import.meta.env.VITE_GEMINI_API_KEY as string) || '');
+    setNvidiaKey(
+      localStorage.getItem('aura_nvidia_key') ||
+        (import.meta.env.VITE_NVIDIA_API_KEY as string) ||
+        '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'
+    );
+    setActiveAiProvider((localStorage.getItem('aura_ai_provider') as 'gemini' | 'nvidia') || 'gemini');
+    setSelectedNvidiaModel(localStorage.getItem('aura_nvidia_model') || 'nvidia/nemotron-3.5-lightning-30b-a3b');
     setWhatsAppToken(localStorage.getItem('aura_wa_token') || '');
     setWhatsAppPhoneId(localStorage.getItem('aura_wa_phone_id') || '104859203958172');
     setGcpProjectId(localStorage.getItem('aura_gcp_project_id') || 'gen-lang-client-094624825225');
@@ -164,6 +176,18 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
           const gKey = data.keys.find((k: any) => k.keyName === 'GEMINI_API_KEY');
           if (gKey && !geminiKey) {
             // Keep masked or configured indicator
+          }
+          const nKey = data.keys.find((k: any) => k.keyName === 'NVIDIA_API_KEY');
+          if (nKey && nKey.keyValue) {
+            setNvidiaKey((prev) => prev || nKey.keyValue);
+          }
+          const pKey = data.keys.find((k: any) => k.keyName === 'DEFAULT_AI_PROVIDER');
+          if (pKey && pKey.keyValue) {
+            setActiveAiProvider(pKey.keyValue as 'gemini' | 'nvidia');
+          }
+          const nmKey = data.keys.find((k: any) => k.keyName === 'DEFAULT_NVIDIA_MODEL');
+          if (nmKey && nmKey.keyValue) {
+            setSelectedNvidiaModel(nmKey.keyValue);
           }
         }
       })
@@ -225,6 +249,9 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       localStorage.setItem('aura_google_maps_key', googleMapsKey.trim());
       localStorage.setItem('aura_google_client_id', googleClientId.trim());
       localStorage.setItem('aura_gemini_key', geminiKey.trim());
+      localStorage.setItem('aura_nvidia_key', nvidiaKey.trim());
+      localStorage.setItem('aura_ai_provider', activeAiProvider);
+      localStorage.setItem('aura_nvidia_model', selectedNvidiaModel);
       localStorage.setItem('aura_wa_token', whatsAppToken.trim());
       localStorage.setItem('aura_wa_phone_id', whatsAppPhoneId.trim());
       localStorage.setItem('aura_gcp_project_id', gcpProjectId.trim());
@@ -233,7 +260,10 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       const keysToSave = [
         { keyName: 'GOOGLE_MAPS_API_KEY', keyValue: googleMapsKey.trim(), description: 'Google Maps GPS & Geocoding Key' },
         { keyName: 'GEMINI_API_KEY', keyValue: geminiKey.trim(), description: 'Google Gemini 3.8 AI & Live Voice API Key' },
+        { keyName: 'NVIDIA_API_KEY', keyValue: nvidiaKey.trim(), description: 'NVIDIA AI Foundation Model (NIM) API Key' },
+        { keyName: 'DEFAULT_AI_PROVIDER', keyValue: activeAiProvider, description: 'Default AI Engine Provider (gemini or nvidia)' },
         { keyName: 'DEFAULT_GEMINI_MODEL', keyValue: selectedVoiceModel, description: 'Default Gemini Model for Voice Assistant' },
+        { keyName: 'DEFAULT_NVIDIA_MODEL', keyValue: selectedNvidiaModel, description: 'Default NVIDIA NIM Model for AI & Voice' },
         { keyName: 'GOOGLE_CLIENT_ID', keyValue: googleClientId.trim(), description: 'Google Identity OAuth Client ID' },
         { keyName: 'WHATSAPP_API_TOKEN', keyValue: whatsAppToken.trim(), description: 'Meta WhatsApp Cloud API Token' },
         { keyName: 'WHATSAPP_PHONE_ID', keyValue: whatsAppPhoneId.trim(), description: 'WhatsApp Business Sender Phone Number ID' },
@@ -248,7 +278,17 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
         });
       }
 
-      setSaveMessage('All API keys & Backend URL saved to SQLite store & applied immediately!');
+      // Notify server of active AI provider & model
+      await safeFetchJson('/api/ai/set-provider', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: activeAiProvider,
+          model: activeAiProvider === 'nvidia' ? selectedNvidiaModel : selectedVoiceModel,
+        }),
+      }).catch(() => {});
+
+      setSaveMessage('All API keys, NVIDIA models & Backend URL saved to SQLite store & applied immediately!');
       setTimeout(() => setSaveMessage(null), 4000);
       loadSqliteData();
     } catch (err: any) {
@@ -288,6 +328,8 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: 'Ping from Hub API Key Diagnostic Test',
+          provider: 'gemini',
+          model: selectedVoiceModel,
           userProfile: { email: user.email },
         }),
       });
@@ -303,6 +345,48 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
       setGeminiTestStatus(`Gemini test notice: ${err.message}`);
     } finally {
       setIsTestingGemini(false);
+    }
+  };
+
+  const handleTestNvidiaKey = async () => {
+    setIsTestingNvidia(true);
+    setNvidiaTestStatus(null);
+    try {
+      if (backendUrl.trim()) {
+        setApiBaseUrl(backendUrl.trim());
+      }
+
+      // Persist key to SQLite first if entered
+      if (nvidiaKey.trim()) {
+        await safeFetchJson('/api/config/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            keyName: 'NVIDIA_API_KEY',
+            keyValue: nvidiaKey.trim(),
+            description: 'NVIDIA AI Foundation Model (NIM) API Key',
+          }),
+        }).catch(() => {});
+      }
+
+      const data = await safeFetchJson('/api/ai/test-nvidia', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: nvidiaKey.trim() || undefined,
+          model: selectedNvidiaModel,
+        }),
+      });
+
+      if (data.success) {
+        setNvidiaTestStatus(`✅ NVIDIA Verified (${data.model}): "${(data.reply || '').slice(0, 90)}..."`);
+      } else {
+        setNvidiaTestStatus(`❌ NVIDIA Failed: ${data.error || 'Check key and network'}`);
+      }
+    } catch (err: any) {
+      setNvidiaTestStatus(`NVIDIA test notice: ${err.message}`);
+    } finally {
+      setIsTestingNvidia(false);
     }
   };
 
@@ -534,6 +618,70 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                 </p>
               </div>
 
+              {/* Primary AI Provider Toggle Banner */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-purple-950/40 via-slate-900 to-emerald-950/40 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-4 h-4 text-emerald-400" />
+                    <span className="font-semibold text-white text-xs">Active AI Engine / Foundation Provider</span>
+                  </div>
+                  <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-mono font-bold uppercase tracking-wider ${
+                    activeAiProvider === 'nvidia'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                  }`}>
+                    {activeAiProvider === 'nvidia' ? '⚡ NVIDIA NIM Engine' : '✨ Google Gemini 3.8'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveAiProvider('gemini');
+                      setSaveMessage('Switched to Google Gemini engine');
+                      setTimeout(() => setSaveMessage(null), 3000);
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      activeAiProvider === 'gemini'
+                        ? 'bg-purple-900/30 border-purple-500 ring-1 ring-purple-400/50 shadow-md shadow-purple-950/40'
+                        : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                        Google Gemini
+                      </span>
+                      {activeAiProvider === 'gemini' && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Gemini 3.8 Flash, 3.1 Pro & 4 Argon</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveAiProvider('nvidia');
+                      setSaveMessage('Switched to NVIDIA NIM AI Foundation Models');
+                      setTimeout(() => setSaveMessage(null), 3000);
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      activeAiProvider === 'nvidia'
+                        ? 'bg-emerald-900/30 border-emerald-500 ring-1 ring-emerald-400/50 shadow-md shadow-emerald-950/40'
+                        : 'bg-slate-900/70 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-white text-xs flex items-center gap-1.5">
+                        <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                        NVIDIA NIM (Your Key)
+                      </span>
+                      {activeAiProvider === 'nvidia' && <Check className="w-3.5 h-3.5 text-emerald-400" />}
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">Nemotron 70B, Llama 3.3, SD 3 & DeepSeek</p>
+                  </button>
+                </div>
+              </div>
+
               {/* Gemini API Key Card */}
               <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between">
@@ -606,6 +754,92 @@ export const HubKeysAndSqliteModal: React.FC<HubKeysAndSqliteModalProps> = ({
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+              </div>
+
+              {/* NVIDIA NIM API Key & Models Card */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-950 via-emerald-950/20 to-slate-950 border border-emerald-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>NVIDIA AI Foundation Model (NIM) API Key</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleTestNvidiaKey}
+                    disabled={isTestingNvidia}
+                    className="text-[10px] px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-medium transition-colors border border-emerald-500/30 flex items-center gap-1"
+                  >
+                    <RefreshCw className={`w-2.5 h-2.5 ${isTestingNvidia ? 'animate-spin' : ''}`} />
+                    <span>{isTestingNvidia ? 'Testing...' : 'Test NVIDIA Model'}</span>
+                  </button>
+                </div>
+                <input
+                  type="password"
+                  placeholder="nvapi-..."
+                  value={nvidiaKey}
+                  onChange={(e) => setNvidiaKey(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-emerald-500 text-xs"
+                />
+                {nvidiaTestStatus && (
+                  <p className="text-[11px] text-emerald-300 bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">
+                    {nvidiaTestStatus}
+                  </p>
+                )}
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Enter your NVIDIA API key (<code className="text-emerald-300">nvapi-...</code>) from the NVIDIA build portal. Stored securely in SQLite (<code className="text-emerald-300">hub_api_keys</code>). Powers Voice Assistant, Multi-Turn Chat, and Stable Diffusion 3 Image generation directly on NVIDIA GPU clusters.
+                </p>
+
+                {/* Default NVIDIA Model Selection Grid */}
+                <div className="pt-3 border-t border-slate-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+                      <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Default NVIDIA NIM Model:</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-bold">
+                      {AVAILABLE_NVIDIA_MODELS.find((m) => m.id === selectedNvidiaModel)?.name || selectedNvidiaModel}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {AVAILABLE_NVIDIA_MODELS.map((m) => {
+                      const isSelected = selectedNvidiaModel === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedNvidiaModel(m.id);
+                            setSaveMessage(`NVIDIA model set to ${m.name}!`);
+                            setTimeout(() => setSaveMessage(null), 3000);
+                          }}
+                          className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-emerald-600/30 border-emerald-500 ring-1 ring-emerald-400/50 shadow-md shadow-emerald-950/50'
+                              : 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-800/60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-white text-xs truncate">{m.name}</span>
+                            <span className="text-[8px] px-1 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono font-bold">
+                              {m.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 truncate mt-1">{m.speed}</p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="pt-2">
+                    <label className="text-[10px] text-slate-400 block mb-1">Or custom model identifier (from NVIDIA NIM catalog):</label>
+                    <input
+                      type="text"
+                      placeholder="nvidia/nemotron-3.5-lightning-30b-a3b"
+                      value={selectedNvidiaModel}
+                      onChange={(e) => setSelectedNvidiaModel(e.target.value.trim())}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono text-xs focus:outline-none focus:border-emerald-500"
+                    />
                   </div>
                 </div>
               </div>

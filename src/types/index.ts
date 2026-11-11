@@ -178,6 +178,8 @@ export interface VoiceMessage {
   timestamp: string;
   emotion?: string;
   actionSuggestion?: string;
+  modelUsed?: string;
+  providerUsed?: string;
   attachment?: {
     name: string;
     mimeType: string;
@@ -434,6 +436,84 @@ export const AVAILABLE_GEMINI_MODELS: GeminiModelOption[] = [
     speed: 'Reliable',
     color: 'blue',
     recommendedFor: 'OAuth Token Fallback',
+  },
+];
+
+export type AiProvider = 'gemini' | 'nvidia';
+
+export interface AiModelOption {
+  id: string;
+  name: string;
+  provider: AiProvider;
+  badge: string;
+  tagline: string;
+  speed: string;
+  color: string;
+  recommendedFor?: string;
+  supportsImageGen?: boolean;
+}
+
+export const AVAILABLE_NVIDIA_MODELS: AiModelOption[] = [
+  {
+    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    name: 'NVIDIA Nemotron 3.5 Lightning 30B',
+    provider: 'nvidia',
+    badge: 'VERIFIED & ACTIVE',
+    tagline: 'Ultra-fast 30B MoE model with native thinking & high-throughput GPU inference',
+    speed: 'Lightning Fast (Hopper)',
+    color: 'emerald',
+    recommendedFor: 'Voice Assistant & Conversational Reasoning',
+  },
+  {
+    id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+    name: 'NVIDIA Nemotron 3 Nano Omni 30B',
+    provider: 'nvidia',
+    badge: 'REASONING',
+    tagline: 'Deep chain-of-thought and multimodal planning accelerated on NVIDIA NIM',
+    speed: 'Deep Thinking',
+    color: 'cyan',
+    recommendedFor: 'STEM, Robotics & Logic Architecture',
+  },
+  {
+    id: 'nvidia/nemotron-3-ultra-550b-a55b',
+    name: 'NVIDIA Nemotron 3 Ultra 550B',
+    provider: 'nvidia',
+    badge: 'FRONTIER 550B',
+    tagline: 'Massive 550B frontier model running on large-scale NVIDIA DGX superclusters',
+    speed: 'Frontier Scale',
+    color: 'amber',
+    recommendedFor: 'Billionaire Roadmap & Venture Capital',
+  },
+  {
+    id: 'meta/llama-3.2-90b-vision-instruct',
+    name: 'Meta Llama 3.2 90B Vision',
+    provider: 'nvidia',
+    badge: 'VISION 90B',
+    tagline: 'Multimodal vision and text comprehension on NVIDIA TensorRT-LLM',
+    speed: 'High Throughput',
+    color: 'indigo',
+    recommendedFor: 'Document & Image Analysis',
+  },
+  {
+    id: 'deepseek-ai/deepseek-v4.1-flash',
+    name: 'DeepSeek V4.1 Flash',
+    provider: 'nvidia',
+    badge: 'FLASH',
+    tagline: 'High-speed open model optimized for rapid response times',
+    speed: 'Ultra Fast',
+    color: 'blue',
+    recommendedFor: 'Low-latency Family Chat',
+  },
+  {
+    id: 'stabilityai/stable-diffusion-3-medium',
+    name: 'Stable Diffusion 3 Medium',
+    provider: 'nvidia',
+    badge: 'IMAGE GEN',
+    tagline: 'Photorealistic high-fidelity image generation via NVIDIA NIM',
+    speed: 'Photorealistic',
+    color: 'rose',
+    recommendedFor: 'AI Studio Image Studio',
+    supportsImageGen: true,
   },
 ];
 

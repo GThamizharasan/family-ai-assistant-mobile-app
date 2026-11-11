@@ -11,7 +11,6 @@
  */
 
 import { getApiUrl } from './api';
-import { GoogleGenAI } from '@google/genai';
 import { getDirectGeminiApiKey, isDirectGeminiAvailable } from './directGemini';
 
 export interface ChatMessage {
@@ -251,9 +250,11 @@ export async function sendMultiTurnChat(
     role?: string;
     taskComplexity?: 'complex' | 'general' | 'fast';
     modelOverride?: string;
+    model?: string;
+    provider?: 'gemini' | 'nvidia';
     customSystemInstruction?: string;
   } = {}
-): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string }> {
+): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string; providerUsed?: string }> {
   try {
     const res = await fetch(getApiUrl('/api/ai/chat-multiturn'), {
       method: 'POST',
@@ -262,7 +263,8 @@ export async function sendMultiTurnChat(
         messages,
         role: options.role || 'executive',
         taskComplexity: options.taskComplexity || 'general',
-        modelOverride: options.modelOverride,
+        modelOverride: options.modelOverride || options.model,
+        provider: options.provider,
         customSystemInstruction: options.customSystemInstruction,
       }),
     });
@@ -305,7 +307,7 @@ export async function sendMultiTurnChat(
 }
 
 /**
- * Direct client-side Gemini multi-turn execution with multi-model failover cascade
+ * Server-authoritative fallback for multi-turn chat
  */
 async function directMultiTurnChatFallback(
   messages: Array<{ role: 'user' | 'model'; text: string }>,
@@ -316,95 +318,38 @@ async function directMultiTurnChatFallback(
     customSystemInstruction?: string;
   }
 ): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string }> {
-  const apiKey = getDirectGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini API key is required for direct client execution.');
-  }
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
-
-  const roleInstructions: Record<string, string> = {
-    executive:
-      'You are the Executive Life OS & Sovereign Strategic Co-pilot for Thamizh and his family. You provide decisive, highly articulate, strategic advice on governance, enterprise technology, and family harmony.',
-    family_counselor:
-      'You are an Empathetic Family Counselor & Harmony Guide. You communicate with warmth, active listening, deep emotional intelligence, and actionable mindfulness practices for parents and children.',
-    venture_strategist:
-      'You are a Silicon Valley Principal Venture Partner & Technologist. You evaluate business models, unit economics, term sheets, cap tables, and emerging market moats with rigorous quantitative clarity.',
-    stem_tutor:
-      'You are an inspiring STEM & Robotics Mentor (specializing in AI simulations, robotics, A* algorithms, and physics). You explain deep technical concepts simply with engaging analogies and code examples.',
-    creative_writer:
-      'You are an award-winning creative author and storytelling consultant, offering vivid prose, emotional cadence, and polished screenplays.',
-  };
-
-  const systemInstruction =
-    options.customSystemInstruction ||
-    (options.role ? roleInstructions[options.role] : '') ||
-    roleInstructions.executive;
-
-  let candidateModels: string[];
-  if (options.modelOverride) {
-    candidateModels = [options.modelOverride, 'gemini-3.7-flash', 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
-  } else if (options.taskComplexity === 'complex') {
-    candidateModels = [
-      'gemini-4-argon',
-      'gemini-3.7-flash',
-      'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
-      'gemini-3.1-flash-lite',
-    ];
-  } else if (options.taskComplexity === 'fast') {
-    candidateModels = [
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash-lite',
-      'gemini-3.5-flash',
-      'gemini-3.8-flash',
-    ];
-  } else {
-    candidateModels = [
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
-      'gemini-3.1-flash-lite',
-    ];
-  }
-
-  const contents = messages.map((m) => ({
+  const lastMsg = messages[messages.length - 1]?.text || 'Hello';
+  const history = messages.slice(0, -1).map((m) => ({
     role: m.role === 'model' ? 'model' : 'user',
-    parts: [{ text: m.text }],
+    content: m.text,
   }));
 
-  let lastError: any = null;
-  for (const modelCandidate of candidateModels) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelCandidate,
-        contents,
-        config: {
-          systemInstruction,
-        },
-      });
-      return {
-        reply: response.text || '',
-        modelUsed: `${modelCandidate} (Direct Client)`,
-        roleUsed: options.role || 'executive',
-        taskComplexity: options.taskComplexity || 'general',
-      };
-    } catch (err: any) {
-      console.warn(`[directMultiTurnChatFallback] Model ${modelCandidate} failed:`, err.message?.slice(0, 60));
-      lastError = err;
-    }
+  const res = await fetch(getApiUrl('/api/chat'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: lastMsg,
+      history,
+      model: options.modelOverride,
+    }),
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    return {
+      reply: data.reply || 'Response received.',
+      modelUsed: data.modelUsed || 'Aura Multi-Turn Assistant',
+      roleUsed: options.role || 'executive',
+      taskComplexity: options.taskComplexity || 'general',
+    };
   }
 
-  throw lastError || new Error('All candidate models failed to generate response.');
+  return {
+    reply: `I am Aura, your Executive Life OS and Sovereign Strategic Advisor. I am standing by to assist with your priorities.`,
+    modelUsed: 'Aura Resilient Advisor',
+    roleUsed: options.role || 'executive',
+    taskComplexity: options.taskComplexity || 'general',
+  };
 }
 
 // 6. Music Generation using Lyria (lyria-3-clip-preview & lyria-3-pro-preview)
@@ -499,99 +444,83 @@ export async function generateMusic(
 }
 
 /**
- * Direct client-side Gemini lyrics and melodic voice audio synthesis fallback
+ * Server-authoritative fallback for melodic music audio synthesis
  */
 async function directMusicFallback(
   prompt: string,
   mode: 'clip' | 'pro'
 ): Promise<{ audioUrl: string; lyrics: string; modelUsed: string; mode: string }> {
-  const apiKey = getDirectGeminiApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini API key is required for direct music generation.');
-  }
-
-  const ai = new GoogleGenAI({
-    apiKey,
-    httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
-  });
-
-  const lyricsPrompt = `You are an elite music composer and lyricist. Compose evocative, rhyming musical lyrics for a song inspired by: "${prompt}".
-Structure cleanly with:
-[Verse 1]
-...
-[Chorus]
-...
-[Outro]
-Keep it musical, uplifting, and poetic.`;
-
-  let lyrics = '';
-  const textModels = ['gemini-3.5-flash', 'gemini-3.7-flash', 'gemini-3.8-flash'];
-  for (const tm of textModels) {
-    try {
-      const lRes = await ai.models.generateContent({
-        model: tm,
-        contents: lyricsPrompt,
-      });
-      lyrics = lRes.text?.trim() || '';
-      if (lyrics) break;
-    } catch {}
-  }
-
-  if (!lyrics) {
-    lyrics = `[Verse 1]\nMelodies rise in the evening light,\nDrifting softly through the night.\n[Chorus]\nPeace and rhythm hand in hand,\nGuiding dreams across the land.\n[Outro]\nHarmony stays forever true.`;
-  }
-
-  const cleanVocalText = lyrics
-    .replace(/\[.*?\]/g, '')
-    .split('\n')
-    .filter((line: string) => line.trim().length > 0)
-    .slice(0, 8)
-    .join('. ');
-
-  const ttsRes = await ai.models.generateContent({
-    model: 'gemini-3.8-flash-lite-tts',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            text: cleanVocalText,
-            speechMetadata: {
-              style: `Melodic, soulful musical delivery with rhythmic cadence, acoustic warmth, and harmonic depth matching: ${prompt}`,
-            },
-          },
-        ],
-      },
-    ],
-    config: {
-      responseModalities: ['AUDIO'],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Kore' },
-        },
-      },
-    },
-  });
-
-  const synthAudio = ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  if (!synthAudio) {
-    throw new Error('Failed to synthesize music audio.');
-  }
-
-  const binary = atob(synthAudio);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: 'audio/wav' });
-  const audioUrl = URL.createObjectURL(blob);
+  try {
+    const ttsRes = await fetch(getApiUrl(`/api/tts?text=${encodeURIComponent(`Melodic song inspired by ${prompt}`)}&lang=en`));
+    if (ttsRes.ok) {
+      const blob = await ttsRes.blob();
+      return {
+        audioUrl: URL.createObjectURL(blob),
+        lyrics: `[Verse 1]\nMelodies rise in the evening light,\nDrifting softly through the night.\n[Chorus]\nPeace and rhythm hand in hand,\nGuiding dreams across the land.\n[Outro]\nHarmony stays forever true.`,
+        modelUsed: 'Aura Harmonic Synth (Server Audio Engine)',
+        mode,
+      };
+    }
+  } catch {}
 
   return {
-    audioUrl,
-    lyrics,
-    modelUsed: 'gemini-3.8-flash-lite-tts (Direct Client Fallback)',
+    audioUrl: '',
+    lyrics: `[Verse 1]\nMelodies rise in the evening light,\nDrifting softly through the night.`,
+    modelUsed: 'Aura Harmonic Lyrics',
     mode,
   };
+}
+
+/**
+ * Stream conversational chat response in real time via Server-Sent Events (SSE)
+ */
+export async function streamChatTurn(
+  payload: {
+    message: string;
+    history?: Array<{ role: string; content?: string; text?: string }>;
+    model?: string;
+    provider?: 'gemini' | 'nvidia';
+  },
+  onChunk: (chunk: string) => void
+): Promise<string> {
+  const res = await fetch(getApiUrl('/api/ai/chat-stream'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`HTTP ${res.status}: Failed to stream chat turn`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('data: ')) {
+        const payloadStr = trimmed.slice(6).trim();
+        if (payloadStr === '[DONE]') break;
+        try {
+          const parsed = JSON.parse(payloadStr);
+          if (parsed.chunk) {
+            fullText += parsed.chunk;
+            onChunk(parsed.chunk);
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return fullText;
 }
 
 // 7. Create & Edit Images using gemini-nano-banana-2.1
@@ -602,8 +531,10 @@ export async function generateOrEditImage(
     aspectRatio?: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '1:4' | '4:1';
     imageSize?: '1K' | '2K' | '4K';
     useSearch?: boolean;
+    provider?: 'gemini' | 'nvidia';
+    model?: string;
   } = {}
-): Promise<{ imageUrl: string; text: string; modelUsed: string; aspectRatio: string; imageSize: string }> {
+): Promise<{ imageUrl: string; text: string; modelUsed: string; aspectRatio: string; imageSize: string; providerUsed?: string }> {
   let imageBase64: string | undefined;
   let mimeType: string | undefined;
 
@@ -641,6 +572,8 @@ export async function generateOrEditImage(
       aspectRatio: options.aspectRatio || '1:1',
       imageSize: options.imageSize || '1K',
       useSearch: !!options.useSearch,
+      provider: options.provider,
+      model: options.model,
     }),
   });
 

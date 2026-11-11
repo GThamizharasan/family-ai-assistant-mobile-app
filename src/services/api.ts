@@ -125,6 +125,7 @@ export async function sendChatMessage(payload: {
   currentLanguage?: string;
   googleAccessToken?: string | null;
   model?: string;
+  provider?: 'gemini' | 'nvidia' | string;
   attachment?: {
     name: string;
     mimeType: string;
@@ -142,14 +143,22 @@ export async function sendChatMessage(payload: {
     payload.googleAccessToken ||
     (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
 
+  const selectedProvider =
+    payload.provider ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+    'gemini';
+
   const selectedModel =
     payload.model ||
-    (typeof window !== 'undefined' ? localStorage.getItem('aura_voice_model') : null) ||
-    'gemini-3.8-flash';
+    (typeof window !== 'undefined'
+      ? localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      : null) ||
+    (selectedProvider === 'nvidia' ? 'nvidia/llama-3.1-nemotron-70b-instruct' : 'gemini-3.8-flash');
 
   const completePayload = {
     ...payload,
     googleAccessToken: token,
+    provider: selectedProvider,
     model: selectedModel,
   };
 

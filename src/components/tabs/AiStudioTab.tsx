@@ -35,8 +35,10 @@ import {
   Share2,
   HardDrive,
   FolderArchive,
+  Cpu,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { AVAILABLE_NVIDIA_MODELS } from '../../types';
 import { AiCreationsHistoryDashboard } from '../ai/AiCreationsHistoryDashboard';
 import { registerAiCreation } from '../../services/aiDriveSync';
 import {
@@ -252,13 +254,25 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   // ----------------------------------------------------
   // 3. Multi-Turn Chatbot State
   // ----------------------------------------------------
+  const [chatAiProvider, setChatAiProvider] = useState<'gemini' | 'nvidia'>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('aura_ai_provider') as 'gemini' | 'nvidia') || 'gemini';
+    }
+    return 'gemini';
+  });
+  const [chatNvidiaModel, setChatNvidiaModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('aura_nvidia_model') || 'nvidia/nemotron-3.5-lightning-30b-a3b';
+    }
+    return 'nvidia/nemotron-3.5-lightning-30b-a3b';
+  });
   const [selectedRole, setSelectedRole] = useState('executive');
   const [taskComplexity, setTaskComplexity] = useState<'complex' | 'general' | 'fast'>('complex');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: 'init-1',
       role: 'model',
-      text: `Greetings ${user?.name || 'Thamizh'}. I am your Sovereign Gemini Strategic AI engine, powered by Gemini 4 Argon, Flash 3.8, and Flash Lite 3.1. How may I assist your life governance, venture roadmap, or family clarity today?`,
+      text: `Greetings ${user?.name || 'Thamizh'}. I am your Sovereign AI engine, powered by Google Gemini and NVIDIA AI Foundation Models (NIM). How may I assist your life governance, venture roadmap, or family clarity today?`,
       modelUsed: 'gemini-4-argon',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     },
@@ -287,6 +301,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   // ----------------------------------------------------
   // 7. Banana Image Studio & Editor State
   // ----------------------------------------------------
+  const [imageAiProvider, setImageAiProvider] = useState<'gemini' | 'nvidia'>('gemini');
   const [imagePrompt, setImagePrompt] = useState('');
   const [imageAspectRatio, setImageAspectRatio] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4'>('1:1');
   const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K');
@@ -554,6 +569,8 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       const res = await sendMultiTurnChat(messagesForApi, {
         role: selectedRole,
         taskComplexity,
+        provider: chatAiProvider,
+        model: chatAiProvider === 'nvidia' ? chatNvidiaModel : undefined,
       });
 
       const modelMsg: ChatMessage = {
@@ -687,6 +704,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
         aspectRatio: imageAspectRatio,
         imageSize: imageSize,
         useSearch: useSearchGrounding,
+        provider: imageAiProvider,
       });
       setImageResult(res);
       if (res?.imageUrl) {
@@ -1867,37 +1885,92 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       {/* ==================================================== */}
       {activeTab === 'chat' && (
         <div className="rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400">
                 <Brain className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">Dynamic Model Routing Chat</h2>
-                <p className="text-xs text-slate-400">gemini-4-argon / gemini-3.8-flash / gemini-3.1-flash-lite</p>
+                <h2 className="text-base font-bold text-white">Dynamic AI Model Chat</h2>
+                <p className="text-xs text-slate-400">
+                  {chatAiProvider === 'nvidia'
+                    ? `NVIDIA NIM • ${AVAILABLE_NVIDIA_MODELS.find((m) => m.id === chatNvidiaModel)?.name || chatNvidiaModel}`
+                    : 'Google Gemini 4 Argon / 3.8 Flash / 3.1 Lite'}
+                </p>
               </div>
             </div>
 
-            {/* Complexity & Model Router */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <span className="text-slate-400 text-[11px]">Reasoning:</span>
-              {(['complex', 'general', 'fast'] as const).map((lvl) => (
+            {/* Provider & Model Router */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Provider Switcher */}
+              <div className="flex items-center rounded-xl bg-slate-950 p-1 border border-slate-800">
                 <button
-                  key={lvl}
-                  onClick={() => setTaskComplexity(lvl)}
-                  className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase transition-all ${
-                    taskComplexity === lvl
-                      ? lvl === 'complex'
-                        ? 'bg-amber-500 text-slate-950 font-black'
-                        : lvl === 'general'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-emerald-600 text-white'
-                      : 'bg-slate-950 text-slate-400 border border-slate-800'
+                  type="button"
+                  onClick={() => setChatAiProvider('gemini')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all ${
+                    chatAiProvider === 'gemini'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  {lvl === 'complex' ? 'Argon 4' : lvl === 'general' ? 'Flash 3.8' : 'Lite 3.1'}
+                  <Sparkles className="w-3 h-3 text-purple-300" />
+                  Gemini
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setChatAiProvider('nvidia')}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all ${
+                    chatAiProvider === 'nvidia'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Cpu className="w-3 h-3 text-emerald-300" />
+                  NVIDIA NIM
+                </button>
+              </div>
+
+              {/* Model selection based on provider */}
+              {chatAiProvider === 'gemini' ? (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-slate-400 text-[11px]">Reasoning:</span>
+                  {(['complex', 'general', 'fast'] as const).map((lvl) => (
+                    <button
+                      key={lvl}
+                      onClick={() => setTaskComplexity(lvl)}
+                      className={`px-2.5 py-1 rounded-lg font-bold text-[10px] uppercase transition-all ${
+                        taskComplexity === lvl
+                          ? lvl === 'complex'
+                            ? 'bg-amber-500 text-slate-950 font-black'
+                            : lvl === 'general'
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-emerald-600 text-white'
+                          : 'bg-slate-950 text-slate-400 border border-slate-800'
+                      }`}
+                    >
+                      {lvl === 'complex' ? 'Argon 4' : lvl === 'general' ? 'Flash 3.8' : 'Lite 3.1'}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-slate-400 text-[11px]">Model:</span>
+                  <select
+                    value={chatNvidiaModel}
+                    onChange={(e) => {
+                      setChatNvidiaModel(e.target.value);
+                      localStorage.setItem('aura_nvidia_model', e.target.value);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-emerald-500/40 text-emerald-300 text-[11px] font-medium font-mono focus:outline-none"
+                  >
+                    {AVAILABLE_NVIDIA_MODELS.filter((m) => !m.supportsImageGen).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.badge})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2198,6 +2271,40 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
             )}
           </div>
 
+          {/* AI Engine Provider Toggle */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs">
+            <span className="font-semibold text-slate-300 flex items-center gap-1.5">
+              <Brain className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Image Foundation Engine:</span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setImageAiProvider('gemini')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 ${
+                  imageAiProvider === 'gemini'
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50 ring-1 ring-purple-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                <span>Google Imagen 3</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setImageAiProvider('nvidia')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 ${
+                  imageAiProvider === 'nvidia'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50 ring-1 ring-emerald-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5 text-emerald-300" />
+                <span>NVIDIA SD 3 Medium</span>
+              </button>
+            </div>
+          </div>
+
           {/* Aspect Ratio, Resolution & Grounding Settings */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div>
@@ -2248,17 +2355,25 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           <button
             onClick={handleGenerateOrEditImage}
             disabled={!imagePrompt.trim() || isGeneratingImage}
-            className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+            className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
           >
             {isGeneratingImage ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Rendering High-Resolution Image...</span>
+                <span>
+                  {imageAiProvider === 'nvidia'
+                    ? 'Rendering via NVIDIA NIM Stable Diffusion 3 Medium...'
+                    : 'Rendering High-Resolution Image via Google Imagen 3...'}
+                </span>
               </>
             ) : (
               <>
-                <ImageIcon className="w-4 h-4" />
-                <span>Generate / Edit with Banana 2.1</span>
+                {imageAiProvider === 'nvidia' ? <Cpu className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
+                <span>
+                  {imageAiProvider === 'nvidia'
+                    ? 'Generate Artwork via NVIDIA NIM (SD 3 Medium)'
+                    : 'Generate / Edit with Google Imagen 3'}
+                </span>
               </>
             )}
           </button>

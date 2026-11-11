@@ -35,10 +35,11 @@ import {
   Scan,
   Copy,
   ExternalLink,
+  Cpu,
 } from 'lucide-react';
 import { syncAnyAiOutputToDrive } from '../services/guidedLearningService';
 import { useApp } from '../context/AppContext';
-import { AVAILABLE_GEMINI_MODELS } from '../types';
+import { AVAILABLE_GEMINI_MODELS, AVAILABLE_NVIDIA_MODELS } from '../types';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
@@ -2873,6 +2874,12 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         includeSpeechAudio: !isMuted,
         currentLanguage: voiceLanguage.startsWith('ta') ? 'ta' : 'en',
         model: selectedVoiceModel,
+        provider:
+          selectedVoiceModel.startsWith('nvidia/') ||
+          selectedVoiceModel.startsWith('meta/') ||
+          selectedVoiceModel.startsWith('deepseek-ai/')
+            ? 'nvidia'
+            : (localStorage.getItem('aura_ai_provider') || 'gemini'),
         attachment: attachmentPayload,
       });
 
@@ -3171,27 +3178,97 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               )}
             </div>
 
-            {/* Gemini Model Selector Dropdown */}
+            {/* AI Model / Engine Selector Dropdown (Gemini & NVIDIA NIM) */}
             <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowModelMenu(!showModelMenu)}
-                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30 cursor-pointer"
-                title="Change Voice Assistant Gemini Model"
-              >
-                <Sparkles className="w-3 h-3 text-purple-400" />
-                <span className="font-mono text-[11px] truncate max-w-[100px] sm:max-w-none">
-                  {AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel)?.name.replace('Gemini ', '') || '3.8 Flash'}
-                </span>
-              </button>
+              {(() => {
+                const isNvidia =
+                  selectedVoiceModel.startsWith('nvidia/') ||
+                  selectedVoiceModel.startsWith('meta/') ||
+                  selectedVoiceModel.startsWith('deepseek-ai/');
+                const currentGemini = AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel);
+                const currentNvidia = AVAILABLE_NVIDIA_MODELS.find((m) => m.id === selectedVoiceModel);
+                const displayName = currentNvidia
+                  ? currentNvidia.name
+                  : currentGemini
+                  ? currentGemini.name.replace('Gemini ', '')
+                  : selectedVoiceModel;
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setShowModelMenu(!showModelMenu)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                      isNvidia
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                        : 'bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30'
+                    }`}
+                    title="Change AI Engine & Model (Google Gemini or NVIDIA NIM)"
+                  >
+                    {isNvidia ? (
+                      <Cpu className="w-3 h-3 text-emerald-400" />
+                    ) : (
+                      <Sparkles className="w-3 h-3 text-purple-400" />
+                    )}
+                    <span className="font-mono text-[11px] truncate max-w-[110px] sm:max-w-none">
+                      {displayName}
+                    </span>
+                  </button>
+                );
+              })()}
 
               {showModelMenu && (
-                <div className="absolute right-0 mt-1.5 w-64 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-1.5 z-50">
-                  <div className="px-3 py-1 flex items-center justify-between border-b border-slate-800">
-                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-                      Gemini Voice Model
+                <div className="absolute right-0 mt-1.5 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto">
+                  {/* NVIDIA AI Foundation Models */}
+                  <div className="px-3 py-1 flex items-center justify-between border-b border-slate-800 bg-slate-950/40">
+                    <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider flex items-center gap-1">
+                      <Cpu className="w-3 h-3" />
+                      NVIDIA AI Models (NIM)
                     </span>
-                    <span className="text-[9px] text-purple-400 font-mono">SQLite Synced</span>
+                    <span className="text-[8px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-mono">
+                      GPU Clusters
+                    </span>
+                  </div>
+                  {AVAILABLE_NVIDIA_MODELS.filter((m) => !m.supportsImageGen).map((modelOpt) => {
+                    const isSelected = selectedVoiceModel === modelOpt.id;
+                    return (
+                      <button
+                        key={modelOpt.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedVoiceModel(modelOpt.id);
+                          localStorage.setItem('aura_ai_provider', 'nvidia');
+                          localStorage.setItem('aura_nvidia_model', modelOpt.id);
+                          setShowModelMenu(false);
+                        }}
+                        className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
+                          isSelected
+                            ? 'bg-emerald-600/30 text-emerald-200 font-bold'
+                            : 'text-slate-300 hover:bg-slate-800'
+                        }`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-white text-xs">{modelOpt.name}</span>
+                            <span className="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[9px] font-mono font-bold">
+                              {modelOpt.badge}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
+                        </div>
+                        {isSelected && <span className="text-emerald-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                      </button>
+                    );
+                  })}
+
+                  {/* Google Gemini Models */}
+                  <div className="px-3 py-1.5 mt-2 flex items-center justify-between border-y border-slate-800 bg-slate-950/40">
+                    <span className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" />
+                      Google Gemini
+                    </span>
+                    <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono">
+                      Native
+                    </span>
                   </div>
                   {AVAILABLE_GEMINI_MODELS.map((modelOpt) => {
                     const isSelected = selectedVoiceModel === modelOpt.id;
@@ -3201,6 +3278,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedVoiceModel(modelOpt.id);
+                          localStorage.setItem('aura_ai_provider', 'gemini');
                           setShowModelMenu(false);
                         }}
                         className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
@@ -3218,7 +3296,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                           </div>
                           <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
                         </div>
-                        {isSelected && <span className="text-emerald-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                        {isSelected && <span className="text-purple-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
                       </button>
                     );
                   })}
