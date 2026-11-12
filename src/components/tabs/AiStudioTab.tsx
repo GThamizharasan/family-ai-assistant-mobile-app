@@ -25,6 +25,7 @@ import {
   Wand2,
   ChevronRight,
   ExternalLink,
+  Cloud,
   Bot,
   Brain,
   Zap,
@@ -47,7 +48,8 @@ import {
 } from '../../services/aiConfig';
 import { AiModelConfigModal } from '../AiModelConfigModal';
 import { AiCreationsHistoryDashboard } from '../ai/AiCreationsHistoryDashboard';
-import { registerAiCreation } from '../../services/aiDriveSync';
+import { registerAiCreation, uploadAiCreationToGoogleDrive } from '../../services/aiDriveSync';
+import { AiStudioCreation } from '../../types/aiCreation';
 import {
   transcribeAudio,
   generateVideoFromText,
@@ -237,8 +239,20 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   const audioChunksRef = useRef<Blob[]>([]);
 
   // ----------------------------------------------------
-  // 2. Veo 3 Video from Text State
+  // 2. Video from Text State (Google Veo & NVIDIA NIM)
   // ----------------------------------------------------
+  const [videoAiProvider, setVideoAiProvider] = useState<'gemini' | 'nvidia'>(() => {
+    return getActiveAiProvider() === 'nvidia' ? 'nvidia' : 'gemini';
+  });
+  const [videoNvidiaModel, setVideoNvidiaModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aura_nvidia_video_model') || localStorage.getItem('aura_nvidia_model');
+      if (saved && (saved.includes('video') || saved.includes('cosmos') || saved.includes('svd'))) {
+        return saved;
+      }
+    }
+    return 'nvidia/cosmos-1.0-diffusion-7b';
+  });
   const [veoPrompt, setVeoPrompt] = useState('');
   const [veoAspectRatio, setVeoAspectRatio] = useState<'16:9' | '9:16'>('16:9');
   const [veoResolution, setVeoResolution] = useState<'720p' | '1080p'>('720p');
@@ -273,6 +287,20 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       if (e.detail?.provider) {
         setStudioAiProvider(e.detail.provider);
         setStudioAiModel(e.detail.model);
+        if (e.detail.provider === 'nvidia') {
+          setImageAiProvider('nvidia');
+          setMusicAiProvider('nvidia');
+          setVideoAiProvider('nvidia');
+          if (e.detail.model && (e.detail.model.includes('diffusion') || e.detail.model.includes('flux') || e.detail.model.includes('stability'))) {
+            setImageNvidiaModel(e.detail.model);
+          }
+          if (e.detail.model && (e.detail.model.includes('nemotron') || e.detail.model.includes('llama'))) {
+            setMusicNvidiaModel(e.detail.model);
+          }
+          if (e.detail.model && (e.detail.model.includes('video') || e.detail.model.includes('cosmos') || e.detail.model.includes('svd'))) {
+            setVideoNvidiaModel(e.detail.model);
+          }
+        }
       }
     };
     window.addEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
@@ -297,8 +325,20 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
 
   // ----------------------------------------------------
-  // 6. Lyria Music Generation State
+  // 6. Lyria & NVIDIA NIM Music Generation State
   // ----------------------------------------------------
+  const [musicAiProvider, setMusicAiProvider] = useState<'gemini' | 'nvidia'>(() => {
+    return getActiveAiProvider() === 'nvidia' ? 'nvidia' : 'gemini';
+  });
+  const [musicNvidiaModel, setMusicNvidiaModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aura_nvidia_music_model') || localStorage.getItem('aura_nvidia_model');
+      if (saved && (saved.includes('nemotron') || saved.includes('llama'))) {
+        return saved;
+      }
+    }
+    return 'nvidia/nemotron-3.5-lightning-30b-a3b';
+  });
   const [musicPrompt, setMusicPrompt] = useState('');
   const [musicMode, setMusicMode] = useState<'clip' | 'pro'>('clip');
   const [musicImageFile, setMusicImageFile] = useState<File | null>(null);
@@ -316,7 +356,18 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   // ----------------------------------------------------
   // 7. Banana Image Studio & Editor State
   // ----------------------------------------------------
-  const [imageAiProvider, setImageAiProvider] = useState<'gemini' | 'nvidia'>('gemini');
+  const [imageAiProvider, setImageAiProvider] = useState<'gemini' | 'nvidia'>(() => {
+    return getActiveAiProvider() === 'nvidia' ? 'nvidia' : 'gemini';
+  });
+  const [imageNvidiaModel, setImageNvidiaModel] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('aura_nvidia_image_model') || localStorage.getItem('aura_nvidia_model');
+      if (saved && (saved.includes('diffusion') || saved.includes('flux') || saved.includes('stability'))) {
+        return saved;
+      }
+    }
+    return 'black-forest-labs/flux.1-schnell';
+  });
   const [imagePrompt, setImagePrompt] = useState('');
   const [imageAspectRatio, setImageAspectRatio] = useState<'1:1' | '16:9' | '9:16' | '4:3' | '3:4'>('1:1');
   const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K');
@@ -324,6 +375,56 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   const [sourceImageFile, setSourceImageFile] = useState<File | null>(null);
   const [sourceImagePreview, setSourceImagePreview] = useState<string | null>(null);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  // Active AI Studio Creations & Drive Upload states
+  const [activeImageCreation, setActiveImageCreation] = useState<AiStudioCreation | null>(null);
+  const [activeMusicCreation, setActiveMusicCreation] = useState<AiStudioCreation | null>(null);
+  const [activeVeoCreation, setActiveVeoCreation] = useState<AiStudioCreation | null>(null);
+  const [activeAnimateCreation, setActiveAnimateCreation] = useState<AiStudioCreation | null>(null);
+  const [activeTranscribeCreation, setActiveTranscribeCreation] = useState<AiStudioCreation | null>(null);
+  const [uploadingDriveId, setUploadingDriveId] = useState<string | null>(null);
+  const [driveUploadNotice, setDriveUploadNotice] = useState<string | null>(null);
+
+  const handleUploadCreationToDrive = async (creation: AiStudioCreation, typeLabel: string) => {
+    let token = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token') : null);
+    if (!token) {
+      setDriveUploadNotice('Connecting Google Account for Family Circle Drive upload...');
+      const authed = await signInWithGoogleOAuth();
+      if (authed) {
+        token = (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token') : null) || googleAccessToken;
+      }
+    }
+    if (!token) {
+      setDriveUploadNotice('Google Drive sign-in required to save directly into Family Circle folder.');
+      setTimeout(() => setDriveUploadNotice(null), 5000);
+      return;
+    }
+    setUploadingDriveId(creation.id);
+    setDriveUploadNotice(`Uploading ${typeLabel} to Family Circle / AI Studio Creations...`);
+    try {
+      const meta = await uploadAiCreationToGoogleDrive(creation, token, user?.email || 'chinna.tamil2000@gmail.com');
+      if (meta) {
+        const updated: AiStudioCreation = {
+          ...creation,
+          driveFileId: meta.driveFileId,
+          driveWebViewLink: meta.driveWebViewLink,
+          driveSyncStatus: 'synced',
+        };
+        if (creation.type === 'image') setActiveImageCreation(updated);
+        else if (creation.type === 'music') setActiveMusicCreation(updated);
+        else if (creation.type === 'video') {
+          if (creation.tags?.includes('veo-animate')) setActiveAnimateCreation(updated);
+          else setActiveVeoCreation(updated);
+        } else if (creation.type === 'transcript') setActiveTranscribeCreation(updated);
+        setDriveUploadNotice(`✓ ${typeLabel} saved to Google Drive under "${creation.driveFolderPath || 'Family Circle / AI Studio Creations'}"!`);
+        setTimeout(() => setDriveUploadNotice(null), 5000);
+      }
+    } catch (err: any) {
+      setDriveUploadNotice(`Upload error: ${err.message || 'Failed to upload to Google Drive'}`);
+      setTimeout(() => setDriveUploadNotice(null), 5000);
+    } finally {
+      setUploadingDriveId(null);
+    }
+  };
   const [imageResult, setImageResult] = useState<{
     imageUrl: string;
     text: string;
@@ -407,7 +508,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
     try {
       const res = await transcribeAudio(transcribeAudioBlob, transcribePrompt || undefined, studioAiProvider, studioAiModel);
       setTranscribeResult(res);
-      void registerAiCreation({
+      const item = await registerAiCreation({
         title: transcribePrompt ? `Transcript: ${transcribePrompt.slice(0, 36)}` : 'Voice Audio Transcription',
         type: 'transcript',
         modelUsed: res.modelUsed || 'gemini-2.5-flash',
@@ -419,6 +520,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
         drivePath: 'Family Circle / AI Studio Creations / Transcripts',
         tags: ['transcription', 'audio', 'speech-to-text'],
       });
+      setActiveTranscribeCreation(item);
     } catch (err: any) {
       alert(`Transcription error: ${err.message}`);
     } finally {
@@ -434,44 +536,60 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
     setIsGeneratingVeo(true);
     setVeoError(null);
     setVeoVideoUrl(null);
-    setVeoProgressMsg('Initializing Veo 3 generation pipeline...');
+    setVeoProgressMsg(
+      videoAiProvider === 'nvidia'
+        ? `Initializing NVIDIA NIM Video Engine (${videoNvidiaModel})...`
+        : 'Initializing Google Veo 3 generation pipeline...'
+    );
 
     try {
-      const init = await generateVideoFromText(veoPrompt, veoAspectRatio, veoResolution);
+      const init = await generateVideoFromText(veoPrompt, veoAspectRatio, veoResolution, {
+        provider: videoAiProvider,
+        model: videoAiProvider === 'nvidia' ? videoNvidiaModel : undefined,
+      });
       setVeoOperationName(init.operationName);
-      setVeoProgressMsg('Synthesizing high-fidelity cinematic frames. Polling progress...');
+      setVeoProgressMsg(
+        videoAiProvider === 'nvidia'
+          ? 'Rendering photorealistic keyframes and camera dynamics via NVIDIA GPU...'
+          : 'Synthesizing high-fidelity cinematic frames. Polling progress...'
+      );
 
       // Polling loop
       let done = false;
       let attempts = 0;
       while (!done && attempts < 40) {
         attempts++;
-        await new Promise((r) => setTimeout(r, 6000));
+        await new Promise((r) => setTimeout(r, 4000));
         setVeoProgressMsg(
-          `Rendering frames (${attempts * 5}% est). Veo 3 physics & light transport solving...`
+          videoAiProvider === 'nvidia'
+            ? `Synthesizing NVIDIA video stream (${Math.min(attempts * 10, 95)}% est)...`
+            : `Rendering frames (${attempts * 5}% est). Veo 3 physics & light transport solving...`
         );
         const status = await pollVideoOperation(init.operationName);
         if (status.done) {
           done = true;
           if (status.error) {
-            throw new Error(status.error.message || 'Veo generation returned an error');
+            throw new Error(status.error.message || 'Video generation returned an error');
           }
           setVeoProgressMsg('Assembling final MP4 stream...');
           const videoBlobUrl = await fetchCompletedVideoBlob(init.operationName);
           setVeoVideoUrl(videoBlobUrl);
           setVeoProgressMsg('Cinematic video generated successfully!');
-          void registerAiCreation({
-            title: `Veo 3: ${veoPrompt.slice(0, 36)}`,
+          const titlePrefix = videoAiProvider === 'nvidia' ? 'NVIDIA Video' : 'Veo 3';
+          const modelUsed = init.modelUsed || (videoAiProvider === 'nvidia' ? videoNvidiaModel : 'veo-3.1-lite');
+          const item = await registerAiCreation({
+            title: `${titlePrefix}: ${veoPrompt.slice(0, 36)}`,
             type: 'video',
-            modelUsed: 'veo-3.1-lite',
-            model: 'veo-3.1-lite',
+            modelUsed,
+            model: modelUsed,
             prompt: veoPrompt,
             mediaUrl: videoBlobUrl,
             mimeType: 'video/mp4',
             drivePath: 'Family Circle / AI Studio Creations / Videos',
             aspectRatio: veoAspectRatio,
-            tags: ['veo-3', 'cinematic', 'video-generation', veoAspectRatio],
+            tags: [videoAiProvider === 'nvidia' ? 'nvidia-video' : 'veo-3', 'cinematic', 'video-generation', veoAspectRatio],
           });
+          setActiveVeoCreation(item);
           break;
         }
       }
@@ -479,7 +597,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
         throw new Error('Video generation timed out. Please check back shortly.');
       }
     } catch (err: any) {
-      console.error('Veo video generation error:', err);
+      console.error('Video generation error:', err);
       setVeoError(err.message || 'Failed to generate video');
     } finally {
       setIsGeneratingVeo(false);
@@ -509,46 +627,64 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
     setIsAnimatingImage(true);
     setAnimateError(null);
     setAnimateVideoUrl(null);
-    setAnimateProgressMsg('Analyzing image composition, lighting depth, and motion vectors...');
+    setAnimateProgressMsg(
+      videoAiProvider === 'nvidia'
+        ? `Analyzing photo depth & motion trajectory with NVIDIA NIM (${videoNvidiaModel})...`
+        : 'Analyzing image composition, lighting depth, and motion vectors...'
+    );
 
     try {
       const source = animateImageFile || (animateImagePreview as string);
-      const init = await animateImageToVideo(source, animatePrompt || undefined);
+      const init = await animateImageToVideo(source, animatePrompt || undefined, '16:9', '720p', {
+        provider: videoAiProvider,
+        model: videoAiProvider === 'nvidia' ? videoNvidiaModel : undefined,
+      });
       setAnimateOpName(init.operationName);
-      setAnimateProgressMsg('Generating natural physical motion with Veo 3. Polling progress...');
+      setAnimateProgressMsg(
+        videoAiProvider === 'nvidia'
+          ? 'Generating camera motion vectors and temporal interpolation with NVIDIA...'
+          : 'Generating natural physical motion with Veo 3. Polling progress...'
+      );
 
       let done = false;
       let attempts = 0;
       while (!done && attempts < 40) {
         attempts++;
-        await new Promise((r) => setTimeout(r, 6000));
-        setAnimateProgressMsg(`Interpolating temporal coherence (${attempts * 5}% est)...`);
+        await new Promise((r) => setTimeout(r, 4000));
+        setAnimateProgressMsg(
+          videoAiProvider === 'nvidia'
+            ? `Synthesizing motion dynamics (${Math.min(attempts * 10, 95)}% est)...`
+            : `Interpolating temporal coherence (${attempts * 5}% est)...`
+        );
         const status = await pollVideoOperation(init.operationName);
         if (status.done) {
           done = true;
           if (status.error) {
-            throw new Error(status.error.message || 'Veo image animation failed');
+            throw new Error(status.error.message || 'Image animation failed');
           }
           setAnimateProgressMsg('Compiling video stream...');
           const videoBlobUrl = await fetchCompletedVideoBlob(init.operationName);
           setAnimateVideoUrl(videoBlobUrl);
           setAnimateProgressMsg('Photo brought to life successfully!');
-          void registerAiCreation({
-            title: animatePrompt ? `Animate: ${animatePrompt.slice(0, 32)}` : 'Animated Photo Motion',
+          const titlePrefix = videoAiProvider === 'nvidia' ? 'NVIDIA Motion' : 'Veo Animate';
+          const modelUsed = init.modelUsed || (videoAiProvider === 'nvidia' ? videoNvidiaModel : 'veo-3.1-lite');
+          const item = await registerAiCreation({
+            title: animatePrompt ? `${titlePrefix}: ${animatePrompt.slice(0, 32)}` : `${titlePrefix} Photo Motion`,
             type: 'video',
-            modelUsed: 'veo-3.1-lite',
-            model: 'veo-3.1-lite',
+            modelUsed,
+            model: modelUsed,
             prompt: animatePrompt || 'Motion photo animation',
             mediaUrl: videoBlobUrl,
             mimeType: 'video/mp4',
             drivePath: 'Family Circle / AI Studio Creations / Videos',
-            tags: ['veo-animate', 'photo-motion', 'video'],
+            tags: [videoAiProvider === 'nvidia' ? 'nvidia-motion' : 'veo-animate', 'photo-motion', 'video'],
           });
+          setActiveAnimateCreation(item);
           break;
         }
       }
       if (!done) {
-        throw new Error('Veo animation timed out. Please check back shortly.');
+        throw new Error('Video animation timed out. Please check back shortly.');
       }
     } catch (err: any) {
       console.error('Animate image error:', err);
@@ -646,20 +782,26 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
 
     try {
       const imgSource = musicImageFile || (musicImagePreview as string) || undefined;
-      const res = await generateMusic(musicPrompt, musicMode, imgSource);
+      const res = await generateMusic(musicPrompt, musicMode, imgSource, {
+        provider: musicAiProvider,
+        model: musicAiProvider === 'nvidia' ? musicNvidiaModel : undefined,
+      });
       setMusicResult(res);
       if (res?.audioUrl) {
-        void registerAiCreation({
-          title: `Lyria: ${musicPrompt.slice(0, 32)}`,
+        const titlePrefix = musicAiProvider === 'nvidia' ? 'NVIDIA NIM' : 'Lyria';
+        const modelIdentifier = res.modelUsed || (musicAiProvider === 'nvidia' ? musicNvidiaModel : 'google/lyria-music-2.5');
+        const item = await registerAiCreation({
+          title: `${titlePrefix}: ${musicPrompt.slice(0, 32)}`,
           type: 'music',
-          modelUsed: 'google/lyria-music-2.5',
-          model: 'google/lyria-music-2.5',
+          modelUsed: modelIdentifier,
+          model: modelIdentifier,
           prompt: musicPrompt,
           mediaUrl: res.audioUrl,
           mimeType: 'audio/mp3',
           drivePath: 'Family Circle / AI Studio Creations / Music',
-          tags: ['lyria', 'song', 'music-generation', musicMode],
+          tags: [musicAiProvider === 'nvidia' ? 'nvidia' : 'lyria', 'song', 'music-generation', musicMode],
         });
+        setActiveMusicCreation(item);
       }
     } catch (err: any) {
       let friendlyError = err.message || 'Failed to generate music';
@@ -714,27 +856,30 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
 
     try {
       const source = sourceImageFile || (sourceImagePreview as string) || undefined;
+      const chosenModel = imageAiProvider === 'nvidia' ? imageNvidiaModel : 'gemini-nano-banana-2.1';
       const res = await generateOrEditImage(imagePrompt, {
         imageSource: source,
         aspectRatio: imageAspectRatio,
         imageSize: imageSize,
         useSearch: useSearchGrounding,
         provider: imageAiProvider,
+        model: chosenModel,
       });
       setImageResult(res);
       if (res?.imageUrl) {
-        void registerAiCreation({
-          title: `Banana: ${imagePrompt.slice(0, 32)}`,
+        const item = await registerAiCreation({
+          title: `${imageAiProvider === 'nvidia' ? 'NVIDIA' : 'Imagen'}: ${imagePrompt.slice(0, 32)}`,
           type: 'image',
-          modelUsed: res.modelUsed || 'imagen-3.0-generate-002',
-          model: res.modelUsed || 'imagen-3.0-generate-002',
+          modelUsed: res.modelUsed || chosenModel,
+          model: res.modelUsed || chosenModel,
           prompt: imagePrompt,
           mediaUrl: res.imageUrl,
           mimeType: 'image/png',
           drivePath: 'Family Circle / AI Studio Creations / Images',
           aspectRatio: imageAspectRatio,
-          tags: ['imagen', 'banana-studio', 'visual-art', imageAspectRatio],
+          tags: ['imagen', 'visual-art', imageAiProvider, chosenModel, imageAspectRatio],
         });
+        setActiveImageCreation(item);
       }
     } catch (err: any) {
       alert(`Image Studio error: ${err.message}`);
@@ -1634,24 +1779,120 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       )}
 
       {/* ==================================================== */}
-      {/* 2. VEO 3 VIDEO GENERATOR (veo-3.1-lite / generate) */}
+      {/* 2. VIDEO GENERATOR (Google Veo & NVIDIA NIM) */}
       {/* ==================================================== */}
       {activeTab === 'veo-video' && (
         <div className="rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
                 <Video className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">Veo 3 Video Generator</h2>
-                <p className="text-xs text-slate-400">Model: veo-3.1-lite-generate-preview</p>
+                <h2 className="text-base font-bold text-white">AI Video Generator</h2>
+                <p className="text-xs text-slate-400">
+                  {videoAiProvider === 'nvidia'
+                    ? `NVIDIA NIM: ${videoNvidiaModel}`
+                    : 'Google Veo 3.1 (veo-3.1-lite-generate-preview)'}
+                </p>
               </div>
             </div>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300">
               Cinematic Engine
             </span>
           </div>
+
+          {/* AI Engine Selector: Google Veo vs NVIDIA NIM */}
+          <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Cpu className="w-4 h-4 text-indigo-400" />
+              <span>Video Foundation Engine:</span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setVideoAiProvider('gemini')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  videoAiProvider === 'gemini'
+                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/50 ring-1 ring-indigo-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
+                <span>Google Veo 3.1</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setVideoAiProvider('nvidia')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  videoAiProvider === 'nvidia'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50 ring-1 ring-emerald-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5 text-emerald-300" />
+                <span>NVIDIA NIM</span>
+              </button>
+            </div>
+          </div>
+
+          {/* NVIDIA NIM Video Model Selector */}
+          {videoAiProvider === 'nvidia' && (
+            <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Chosen NVIDIA Video Model:</span>
+                </span>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30 font-mono">
+                  ACTIVE
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  {
+                    id: 'nvidia/cosmos-1.0-diffusion-7b',
+                    name: 'NVIDIA Cosmos 1.0 Diffusion',
+                    tag: 'World-foundation physical dynamics & photorealistic video generation',
+                  },
+                  {
+                    id: 'nvidia/nemotron-video-director-30b',
+                    name: 'NVIDIA Nemotron Video Director 30B',
+                    tag: 'High-throughput cinematic camera sweeps, pans & lighting transport',
+                  },
+                  {
+                    id: 'stabilityai/stable-video-diffusion-img2vid-xt',
+                    name: 'Stable Video Diffusion XT',
+                    tag: 'Temporal motion synthesis & cinematic frame interpolation on NVIDIA NIM',
+                  },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setVideoNvidiaModel(m.id);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('aura_nvidia_video_model', m.id);
+                      }
+                    }}
+                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
+                      videoNvidiaModel === m.id
+                        ? 'bg-emerald-900/40 border-emerald-500/60 text-white ring-1 ring-emerald-400/50'
+                        : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>{m.name}</span>
+                      {videoNvidiaModel === m.id && (
+                        <span className="text-[10px] font-bold text-emerald-400">âœ“ Selected</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{m.tag}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -1746,17 +1987,29 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           <button
             onClick={handleGenerateVeoVideo}
             disabled={!veoPrompt.trim() || isGeneratingVeo}
-            className="w-full py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/30 transition-all"
+            className={`w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 text-white ${
+              videoAiProvider === 'nvidia'
+                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
+                : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/30'
+            }`}
           >
             {isGeneratingVeo ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Generating Cinematic Video with Veo 3...</span>
+                <span>
+                  {videoAiProvider === 'nvidia'
+                    ? `Generating Cinematic Video via NVIDIA (${videoNvidiaModel.split('/')[1] || videoNvidiaModel})...`
+                    : 'Generating Cinematic Video with Veo 3...'}
+                </span>
               </>
             ) : (
               <>
-                <Video className="w-4 h-4" />
-                <span>Generate Video with Veo 3</span>
+                {videoAiProvider === 'nvidia' ? <Cpu className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+                <span>
+                  {videoAiProvider === 'nvidia'
+                    ? `Generate Video via NVIDIA (${videoNvidiaModel.split('/')[1] || videoNvidiaModel})`
+                    : 'Generate Video with Veo 3'}
+                </span>
               </>
             )}
           </button>
@@ -1802,21 +2055,115 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       )}
 
       {/* ==================================================== */}
-      {/* 4. VEO ANIMATE IMAGE TO VIDEO */}
+      {/* 4. ANIMATE IMAGE TO VIDEO (Google Veo & NVIDIA NIM) */}
       {/* ==================================================== */}
       {activeTab === 'veo-animate' && (
         <div className="rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
                 <Wand2 className="w-5 h-5" />
               </div>
               <div>
                 <h2 className="text-base font-bold text-white">Animate Photo to Video</h2>
-                <p className="text-xs text-slate-400">Model: veo-3.1-lite-generate-preview</p>
+                <p className="text-xs text-slate-400">
+                  {videoAiProvider === 'nvidia'
+                    ? `NVIDIA NIM: ${videoNvidiaModel}`
+                    : 'Google Veo 3.1 (veo-3.1-lite-generate-preview)'}
+                </p>
               </div>
             </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300">
+              Photo Dynamics
+            </span>
           </div>
+
+          {/* AI Engine Selector: Google Veo vs NVIDIA NIM */}
+          <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Cpu className="w-4 h-4 text-purple-400" />
+              <span>Motion Foundation Engine:</span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setVideoAiProvider('gemini')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  videoAiProvider === 'gemini'
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50 ring-1 ring-purple-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-purple-300" />
+                <span>Google Veo 3.1</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setVideoAiProvider('nvidia')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  videoAiProvider === 'nvidia'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50 ring-1 ring-emerald-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5 text-emerald-300" />
+                <span>NVIDIA NIM</span>
+              </button>
+            </div>
+          </div>
+
+          {/* NVIDIA NIM Motion Model Selector */}
+          {videoAiProvider === 'nvidia' && (
+            <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Chosen NVIDIA Motion Model:</span>
+                </span>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30 font-mono">
+                  ACTIVE
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  {
+                    id: 'stabilityai/stable-video-diffusion-img2vid-xt',
+                    name: 'Stable Video Diffusion XT',
+                    tag: 'Cinematic image-to-video motion dynamics & smooth camera pan/zoom',
+                  },
+                  {
+                    id: 'nvidia/cosmos-1.0-diffusion-7b',
+                    name: 'NVIDIA Cosmos 1.0 Diffusion',
+                    tag: 'Generative physical world simulation & realistic environmental animation',
+                  },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setVideoNvidiaModel(m.id);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('aura_nvidia_video_model', m.id);
+                      }
+                    }}
+                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
+                      videoNvidiaModel === m.id
+                        ? 'bg-emerald-900/40 border-emerald-500/60 text-white ring-1 ring-emerald-400/50'
+                        : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>{m.name}</span>
+                      {videoNvidiaModel === m.id && (
+                        <span className="text-[10px] font-bold text-emerald-400">âœ“ Selected</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{m.tag}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Upload Image Section */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1864,17 +2211,29 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           <button
             onClick={handleAnimateImageToVideo}
             disabled={!animateImagePreview || isAnimatingImage}
-            className="w-full py-3 rounded-2xl bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-600/30 transition-all"
+            className={`w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 text-white ${
+              videoAiProvider === 'nvidia'
+                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
+                : 'bg-purple-600 hover:bg-purple-500 shadow-purple-600/30'
+            }`}
           >
             {isAnimatingImage ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Animating Photo with Veo 3...</span>
+                <span>
+                  {videoAiProvider === 'nvidia'
+                    ? `Animating Photo via NVIDIA (${videoNvidiaModel.split('/')[1] || videoNvidiaModel})...`
+                    : 'Animating Photo with Veo 3...'}
+                </span>
               </>
             ) : (
               <>
-                <Wand2 className="w-4 h-4" />
-                <span>Animate Photo into Motion Video</span>
+                {videoAiProvider === 'nvidia' ? <Cpu className="w-4 h-4" /> : <Wand2 className="w-4 h-4" />}
+                <span>
+                  {videoAiProvider === 'nvidia'
+                    ? `Animate Photo via NVIDIA (${videoNvidiaModel.split('/')[1] || videoNvidiaModel})`
+                    : 'Animate Photo into Motion Video'}
+                </span>
               </>
             )}
           </button>
@@ -2090,18 +2449,22 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       )}
 
       {/* ==================================================== */}
-      {/* 6. LYRIA MUSIC STUDIO (lyria-3-clip / pro) */}
+      {/* 6. MUSIC STUDIO (Google Lyria & NVIDIA NIM) */}
       {/* ==================================================== */}
       {activeTab === 'music' && (
         <div className="rounded-3xl p-5 bg-slate-900/80 border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-pink-500/10 text-pink-400">
                 <Music className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white">Lyria AI Music Studio</h2>
-                <p className="text-xs text-slate-400">lyria-3-clip-preview & lyria-3-pro-preview</p>
+                <h2 className="text-base font-bold text-white">AI Music Studio</h2>
+                <p className="text-xs text-slate-400">
+                  {musicAiProvider === 'nvidia'
+                    ? `NVIDIA NIM: ${musicNvidiaModel}`
+                    : 'Google Lyria 3 (clip-preview & pro-preview)'}
+                </p>
               </div>
             </div>
 
@@ -2125,6 +2488,93 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
               </button>
             </div>
           </div>
+
+          {/* AI Engine Selector: Google Lyria vs NVIDIA NIM */}
+          <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
+            <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Cpu className="w-4 h-4 text-pink-400" />
+              <span>Music Engine:</span>
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setMusicAiProvider('gemini')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  musicAiProvider === 'gemini'
+                    ? 'bg-pink-600 text-white shadow-md shadow-pink-950/50 ring-1 ring-pink-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-pink-300" />
+                <span>Google Lyria 3</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMusicAiProvider('nvidia')}
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
+                  musicAiProvider === 'nvidia'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50 ring-1 ring-emerald-400'
+                    : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                <Cpu className="w-3.5 h-3.5 text-emerald-300" />
+                <span>NVIDIA NIM</span>
+              </button>
+            </div>
+          </div>
+
+          {/* NVIDIA NIM Music Model Selector */}
+          {musicAiProvider === 'nvidia' && (
+            <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Chosen NVIDIA Model:</span>
+                </span>
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/30 font-mono">
+                  ACTIVE
+                </span>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  {
+                    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+                    name: 'NVIDIA Nemotron 3.5 Lightning 30B',
+                    tag: 'Ultra-fast MoE 30B - Rhythmic & Musical Structure',
+                  },
+                  {
+                    id: 'nvidia/llama-3.1-nemotron-70b-instruct',
+                    name: 'NVIDIA Llama 3.1 Nemotron 70B',
+                    tag: 'High-Intelligence 70B - Deep Harmonic Composition',
+                  },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setMusicNvidiaModel(m.id);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem('aura_nvidia_music_model', m.id);
+                      }
+                    }}
+                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
+                      musicNvidiaModel === m.id
+                        ? 'bg-emerald-900/40 border-emerald-500/60 text-white ring-1 ring-emerald-400/50'
+                        : 'bg-slate-900/70 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                    }`}
+                  >
+                    <div className="font-bold flex items-center justify-between">
+                      <span>{m.name}</span>
+                      {musicNvidiaModel === m.id && (
+                        <span className="text-[10px] font-bold text-emerald-400">âœ“ Selected</span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 mt-0.5">{m.tag}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">
@@ -2187,17 +2637,29 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           <button
             onClick={handleGenerateMusic}
             disabled={!musicPrompt.trim() || isGeneratingMusic}
-            className="w-full py-3 rounded-2xl bg-pink-600 hover:bg-pink-500 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-pink-600/30 transition-all"
+            className={`w-full py-3 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all disabled:opacity-50 text-white ${
+              musicAiProvider === 'nvidia'
+                ? 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/30'
+                : 'bg-pink-600 hover:bg-pink-500 shadow-pink-600/30'
+            }`}
           >
             {isGeneratingMusic ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Synthesizing Track with Lyria...</span>
+                <span>
+                  {musicAiProvider === 'nvidia'
+                    ? `Synthesizing Track with NVIDIA NIM (${musicNvidiaModel.split('/')[1] || musicNvidiaModel})...`
+                    : 'Synthesizing Track with Lyria...'}
+                </span>
               </>
             ) : (
               <>
-                <Music className="w-4 h-4" />
-                <span>Generate Track with Lyria 3</span>
+                {musicAiProvider === 'nvidia' ? <Cpu className="w-4 h-4" /> : <Music className="w-4 h-4" />}
+                <span>
+                  {musicAiProvider === 'nvidia'
+                    ? `Generate Track via NVIDIA (${musicNvidiaModel.split('/')[1] || musicNvidiaModel})`
+                    : 'Generate Track with Lyria 3'}
+                </span>
               </>
             )}
           </button>
@@ -2315,7 +2777,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
               <button
                 type="button"
                 onClick={() => setImageAiProvider('gemini')}
-                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
                   imageAiProvider === 'gemini'
                     ? 'bg-purple-600 text-white shadow-md shadow-purple-950/50 ring-1 ring-purple-400'
                     : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
@@ -2327,17 +2789,57 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
               <button
                 type="button"
                 onClick={() => setImageAiProvider('nvidia')}
-                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5 cursor-pointer ${
                   imageAiProvider === 'nvidia'
                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/50 ring-1 ring-emerald-400'
                     : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200'
                 }`}
               >
                 <Cpu className="w-3.5 h-3.5 text-emerald-300" />
-                <span>NVIDIA SD 3 Medium</span>
+                <span>
+                  NVIDIA NIM (
+                  {AVAILABLE_NVIDIA_MODELS.find((m) => m.id === imageNvidiaModel)?.name?.replace('Stable Diffusion', 'SD') ||
+                    'SD 3'}
+                  )
+                </span>
               </button>
             </div>
           </div>
+
+          {/* NVIDIA NIM Model Selector */}
+          {imageAiProvider === 'nvidia' && (
+            <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/30 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Chosen NVIDIA Model:</span>
+                </span>
+                <span className="text-[10px] font-mono text-emerald-400 font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30">
+                  {AVAILABLE_NVIDIA_MODELS.find((m) => m.id === imageNvidiaModel)?.badge || 'NVIDIA NIM'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {AVAILABLE_NVIDIA_MODELS.filter((m) => m.supportsImageGen).map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => {
+                      setImageNvidiaModel(model.id);
+                      localStorage.setItem('aura_nvidia_image_model', model.id);
+                    }}
+                    className={`p-2 rounded-xl text-left transition-all border cursor-pointer ${
+                      imageNvidiaModel === model.id
+                        ? 'bg-emerald-600/30 text-white border-emerald-500 shadow-sm'
+                        : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200 hover:bg-slate-900'
+                    }`}
+                  >
+                    <div className="font-bold text-xs truncate">{model.name}</div>
+                    <div className="text-[9px] text-slate-500 font-mono truncate">{model.id}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Aspect Ratio, Resolution & Grounding Settings */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
@@ -2396,7 +2898,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
                 <RefreshCw className="w-4 h-4 animate-spin" />
                 <span>
                   {imageAiProvider === 'nvidia'
-                    ? 'Rendering via NVIDIA NIM Stable Diffusion 3 Medium...'
+                    ? `Rendering via NVIDIA NIM (${imageNvidiaModel})...`
                     : 'Rendering High-Resolution Image via Google Imagen 3...'}
                 </span>
               </>
@@ -2405,7 +2907,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
                 {imageAiProvider === 'nvidia' ? <Cpu className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
                 <span>
                   {imageAiProvider === 'nvidia'
-                    ? 'Generate Artwork via NVIDIA NIM (SD 3 Medium)'
+                    ? `Generate Artwork via NVIDIA (${AVAILABLE_NVIDIA_MODELS.find((m) => m.id === imageNvidiaModel)?.name || imageNvidiaModel})`
                     : 'Generate / Edit with Google Imagen 3'}
                 </span>
               </>

@@ -152,16 +152,34 @@ export async function transcribeAudio(
   return await res.json();
 }
 
-// 2. Veo 3 Video Generation from Text using veo-3.1-fast-generate-preview
+// 2. Video Generation from Text using Google Veo or NVIDIA NIM Video Engine
 export async function generateVideoFromText(
   prompt: string,
   aspectRatio: '16:9' | '9:16' = '16:9',
-  resolution: '720p' | '1080p' = '720p'
+  resolution: '720p' | '1080p' = '720p',
+  options?: {
+    provider?: 'gemini' | 'nvidia';
+    model?: string;
+    nvidiaApiKey?: string;
+  }
 ): Promise<{ operationName: string; modelUsed: string; aspectRatio: string }> {
+  const rawActiveProvider = typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : 'gemini';
+  const effectiveProvider = options?.provider || (rawActiveProvider === 'nvidia' ? 'nvidia' : 'gemini');
+  const effectiveNvidiaKey =
+    options?.nvidiaApiKey ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') || undefined : undefined);
+
   const res = await fetch(getApiUrl('/api/ai/generate-video'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, aspectRatio, resolution }),
+    body: JSON.stringify({
+      prompt,
+      aspectRatio,
+      resolution,
+      provider: effectiveProvider,
+      model: options?.model,
+      nvidiaApiKey: effectiveNvidiaKey,
+    }),
   });
 
   if (!res.ok) {
@@ -172,12 +190,17 @@ export async function generateVideoFromText(
   return await res.json();
 }
 
-// 4. Animate Image into Video using veo-3.1-fast-generate-preview
+// 4. Animate Image into Video using Google Veo or NVIDIA NIM Video Engine
 export async function animateImageToVideo(
   imageSource: Blob | string,
   prompt?: string,
   aspectRatio: '16:9' | '9:16' = '16:9',
-  resolution: '720p' | '1080p' = '720p'
+  resolution: '720p' | '1080p' = '720p',
+  options?: {
+    provider?: 'gemini' | 'nvidia';
+    model?: string;
+    nvidiaApiKey?: string;
+  }
 ): Promise<{ operationName: string; modelUsed: string; aspectRatio: string }> {
   let imageBase64: string;
   let mimeType = 'image/png';
@@ -211,10 +234,25 @@ export async function animateImageToVideo(
     imageBase64 = await blobToBase64(imageSource);
   }
 
+  const rawActiveProvider = typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : 'gemini';
+  const effectiveProvider = options?.provider || (rawActiveProvider === 'nvidia' ? 'nvidia' : 'gemini');
+  const effectiveNvidiaKey =
+    options?.nvidiaApiKey ||
+    (typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') || undefined : undefined);
+
   const res = await fetch(getApiUrl('/api/ai/image-to-video'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ imageBase64, mimeType, prompt, aspectRatio, resolution }),
+    body: JSON.stringify({
+      imageBase64,
+      mimeType,
+      prompt,
+      aspectRatio,
+      resolution,
+      provider: effectiveProvider,
+      model: options?.model,
+      nvidiaApiKey: effectiveNvidiaKey,
+    }),
   });
 
   if (!res.ok) {
@@ -395,11 +433,16 @@ async function directMultiTurnChatFallback(
   };
 }
 
-// 6. Music Generation using Lyria (lyria-3-clip-preview & lyria-3-pro-preview)
+// 6. Music Generation using Lyria (lyria-3-clip-preview & lyria-3-pro-preview) or NVIDIA NIM
 export async function generateMusic(
   prompt: string,
   mode: 'clip' | 'pro' = 'clip',
-  imageSource?: Blob | string
+  imageSource?: Blob | string,
+  options?: {
+    provider?: 'gemini' | 'nvidia';
+    model?: string;
+    nvidiaApiKey?: string;
+  }
 ): Promise<{ audioUrl: string; lyrics: string; modelUsed: string; mode: string }> {
   let imageBase64: string | undefined;
   let mimeType: string | undefined;
@@ -429,10 +472,24 @@ export async function generateMusic(
   }
 
   try {
+    const rawActiveProvider = typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : 'gemini';
+    const effectiveProvider = options?.provider || (rawActiveProvider === 'nvidia' ? 'nvidia' : 'gemini');
+    const effectiveNvidiaKey =
+      options?.nvidiaApiKey ||
+      (typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') || undefined : undefined);
+
     const res = await fetch(getApiUrl('/api/ai/generate-music'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode, imageBase64, mimeType }),
+      body: JSON.stringify({
+        prompt,
+        mode,
+        imageBase64,
+        mimeType,
+        provider: effectiveProvider,
+        model: options?.model,
+        nvidiaApiKey: effectiveNvidiaKey,
+      }),
     });
 
     if (res.ok) {
@@ -605,6 +662,24 @@ export async function generateOrEditImage(
     }
   }
 
+  const chosenProvider =
+    options.provider ||
+    (typeof window !== 'undefined' ? (localStorage.getItem('aura_ai_provider') as any) : null) ||
+    'gemini';
+
+  const chosenModel =
+    options.model ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem(`aura_${chosenProvider}_image_model`) ||
+        localStorage.getItem(`aura_${chosenProvider}_model`)
+      : null) ||
+    (chosenProvider === 'nvidia' ? 'black-forest-labs/flux.1-schnell' : 'gemini-nano-banana-2.1');
+
+  const nvidiaKey =
+    typeof window !== 'undefined'
+      ? localStorage.getItem('aura_nvidia_api_key')
+      : undefined;
+
   const res = await fetch(getApiUrl('/api/ai/image-studio'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -615,8 +690,9 @@ export async function generateOrEditImage(
       aspectRatio: options.aspectRatio || '1:1',
       imageSize: options.imageSize || '1K',
       useSearch: !!options.useSearch,
-      provider: options.provider,
-      model: options.model,
+      provider: chosenProvider,
+      model: chosenModel,
+      nvidiaApiKey: nvidiaKey,
     }),
   });
 

@@ -300,8 +300,28 @@ export const IBooksLibraryTab: React.FC = () => {
     const handleSyncComplete = () => {
       loadSqliteLibrary();
     };
+
+    const handleBooksUpdated = (event: Event) => {
+      const customEvt = event as CustomEvent<Book>;
+      if (customEvt.detail && customEvt.detail.id) {
+        setBooks((prev) => {
+          const exists = prev.some((b) => b.id === customEvt.detail.id);
+          if (exists) {
+            return prev.map((b) => (b.id === customEvt.detail.id ? customEvt.detail : b));
+          }
+          return [customEvt.detail, ...prev];
+        });
+      } else {
+        loadSqliteLibrary();
+      }
+    };
+
     window.addEventListener('aura_sqlite_synced', handleSyncComplete);
-    return () => window.removeEventListener('aura_sqlite_synced', handleSyncComplete);
+    window.addEventListener('aura_ibooks_updated', handleBooksUpdated);
+    return () => {
+      window.removeEventListener('aura_sqlite_synced', handleSyncComplete);
+      window.removeEventListener('aura_ibooks_updated', handleBooksUpdated);
+    };
   }, [user?.email]);
 
   // Initialize and check local cache status for books (LRU top 20 retention)

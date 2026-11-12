@@ -42,6 +42,7 @@ import {
   Play,
   CheckCircle2,
   CloudSun,
+  BookOpen,
 } from 'lucide-react';
 import { syncAnyAiOutputToDrive } from '../services/guidedLearningService';
 import { useApp } from '../context/AppContext';
@@ -54,6 +55,10 @@ import { AI_MODEL_CHANGED_EVENT } from '../services/aiConfig';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
+import { uploadBookToDrive } from '../services/appleBooksDrive';
+import { parsePdfFileToBook, syncBookToSqlite } from '../utils/pdfHelper';
+import { saveBookToSqliteStore } from '../services/offlineSyncService';
+import { Book } from '../types/book';
 import {
   createReminder,
   getLocalReminders,
@@ -324,8 +329,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [isAnalyzingFile, setIsAnalyzingFile] = useState(false);
   const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
+  const [isUploadingToAppleBooks, setIsUploadingToAppleBooks] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const appleBooksInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -690,6 +697,184 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         });
         speakWithAuro(errText);
       }
+    }
+  };
+
+  const handleAppleBooksFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setMicStatusMessage(null);
+      setShowPlusMenu(false);
+      setFilePreviewUrl(null);
+      setFileSnippet('');
+      await handleUploadAttachmentToAppleBooks(file);
+    }
+    if (e.target) {
+      e.target.value = '';
+    }
+  };
+
+  const handleUploadAttachmentToAppleBooks = async (fileToUpload?: File) => {
+    const file = fileToUpload || selectedFile;
+    if (!file) return;
+
+    let activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
+
+    // If not authenticated with Google, proactively prompt and launch Google OAuth
+    if (!activeToken) {
+      const isTamil = voiceLanguage.startsWith('ta');
+      const authNotice = isTamil
+        ? 'ஆப்பிள் புக்ஸ் நூலகத்தை கூகுள் டிரைவில் (Family Circle / Apple Books) ஒத்திசைக்க, கூகுள் கணக்கு இணைப்பு தேவைப்படுகிறது. உள்நுழைவை துவக்குகிறேன்...'
+        : 'Google authorization is required to sync Apple Books into your Google Drive under "Family Circle / Apple Books". Opening Google sign-in now...';
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: authNotice,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'helpful & attentive',
+        actionSuggestion: 'Sign in with Google',
+      });
+      speakWithAuro(authNotice);
+
+      const ok = await signInWithGoogleOAuth();
+      if (!ok) {
+        const cancelMsg = isTamil
+          ? 'கூகுள் உள்நுழைவு ரத்து செய்யப்பட்டது. ஆப்பிள் புக்ஸ் நூலகத்தில் சேமிக்க கூகுள் கணக்கை இணைக்கவும்.'
+          : 'Google sign-in was cancelled. Please connect your Google account to upload books to Google Drive.';
+        addVoiceMessage({
+          role: 'assistant',
+          content: cancelMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'comforting',
+        });
+        speakWithAuro(cancelMsg);
+        return;
+      }
+      activeToken = localStorage.getItem('aura_google_access_token');
+    }
+
+    setIsUploadingToAppleBooks(true);
+    try {
+      const defaultFolder = googleWorkspaceSettings?.driveDefaultFolder || 'Family Circle';
+
+      // 1. Parse PDF/eBook file into structured Book model and cache binary in IndexedDB
+      let parsedBook = await parsePdfFileToBook(file);
+
+      // 2. Upload to Google Drive under Family Circle / Apple Books / {Category}
+      let driveRes: {
+        driveFileId: string;
+        driveFolderId: string;
+        driveFolderPath: string;
+        driveCategory: string;
+        driveWebViewLink: string;
+      } | null = null;
+
+      if (activeToken) {
+        try {
+          driveRes = await uploadBookToDrive(
+            activeToken,
+            parsedBook,
+            file,
+            defaultFolder,
+            user?.email
+          );
+          parsedBook = {
+            ...parsedBook,
+            driveFileId: driveRes.driveFileId,
+            driveFolderId: driveRes.driveFolderId,
+            driveFolderPath: driveRes.driveFolderPath,
+            driveCategory: driveRes.driveCategory,
+            driveWebViewLink: driveRes.driveWebViewLink,
+            isLocalCached: true,
+          };
+        } catch (driveErr) {
+          console.warn('[AURO Apple Books Drive Upload] Drive API notice:', driveErr);
+        }
+      }
+
+      // 3. Persist into local library localStorage safely
+      try {
+        const existingSaved = localStorage.getItem('aura_ibooks_library');
+        let currentBooks: Book[] = existingSaved ? JSON.parse(existingSaved) : [];
+        const filtered = currentBooks.filter((b) => b.id !== parsedBook.id && b.title !== parsedBook.title);
+        const updatedLibrary = [parsedBook, ...filtered];
+        const lightweightBooks = updatedLibrary.map((b) => {
+          if (b.pdfUrl && b.pdfUrl.length > 500) {
+            const { pdfUrl, ...rest } = b;
+            return rest;
+          }
+          return b;
+        });
+        localStorage.setItem('aura_ibooks_library', JSON.stringify(lightweightBooks));
+      } catch (storageErr) {
+        console.warn('LocalStorage save error:', storageErr);
+      }
+
+      // 4. Mirror to backend SQLite endpoints
+      try {
+        syncBookToSqlite(parsedBook);
+        await saveBookToSqliteStore(parsedBook);
+      } catch (sqlErr) {
+        console.warn('SQLite store book error:', sqlErr);
+      }
+
+      // 5. Notify the rest of the application reactive listeners
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aura_ibooks_updated', { detail: parsedBook }));
+        window.dispatchEvent(new CustomEvent('aura_sqlite_synced'));
+      }
+
+      setIsUploadingToAppleBooks(false);
+      setSelectedFile(null);
+      setFilePreviewUrl(null);
+      setFileSnippet('');
+      setDriveUploadNotice(parsedBook.title);
+      setTimeout(() => setDriveUploadNotice(null), 6000);
+
+      const isTamil = voiceLanguage.startsWith('ta');
+      const folderPathDisplay = driveRes?.driveFolderPath || `${defaultFolder} / Apple Books / ${parsedBook.genre || 'General'}`;
+
+      const confirmText = isTamil
+        ? `உங்கள் "${parsedBook.title}" புத்தகம் வெற்றிகரமாக கூகுள் டிரைவில் உள்ள "${folderPathDisplay}" கோப்புறையில் பதிவேற்றப்பட்டு, உங்கள் ஆப்பிள் புக்ஸ் லைப்ரரியில் (${parsedBook.totalPages || 1} பக்கங்கள்) சேர்க்கப்பட்டது!`
+        : `I have uploaded "${parsedBook.title}" into Google Drive under "${folderPathDisplay}" and added it directly to your Apple Books library (${parsedBook.totalPages || 1} pages)! It is indexed in SQLite and ready to read.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: confirmText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'organized & protective',
+        actionSuggestion: 'Open Apple Books Library',
+        bookCard: {
+          id: parsedBook.id,
+          title: parsedBook.title,
+          author: parsedBook.author,
+          totalPages: parsedBook.totalPages,
+          coverGradient: parsedBook.coverGradient,
+          driveFolderPath: folderPathDisplay,
+          category: parsedBook.genre,
+        },
+      });
+
+      speakWithAuro(confirmText, { emotion: 'supportive' });
+      return parsedBook;
+    } catch (err: any) {
+      setIsUploadingToAppleBooks(false);
+      console.error('Apple Books Drive upload error:', err);
+      const isTamil = voiceLanguage.startsWith('ta');
+      const errMsg = err?.message || '';
+
+      const errText = isTamil
+        ? `ஆப்பிள் புக்ஸ் லைப்ரரியில் பதிவேற்ற முடியவில்லை: ${errMsg || 'தயவுசெய்து கோப்பை சரிபார்த்து மீண்டும் முயற்சிக்கவும்.'}`
+        : `Could not upload to Apple Books library: ${errMsg || 'Please verify the PDF file and try again.'}`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: errText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'comforting',
+      });
+      speakWithAuro(errText);
     }
   };
 
@@ -1301,6 +1486,125 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
+    // 20b. Weather Forecast & Live GPS Radar
+    if (
+      lower.includes('open weather') ||
+      lower.includes('weather forecast') ||
+      lower.includes('weather radar') ||
+      lower.includes('weather tab') ||
+      lower.includes('weather screen') ||
+      lower === 'weather' ||
+      lower.includes('வானிலை திரை') ||
+      lower.includes('வானிலை திற')
+    ) {
+      executeVoiceNavigation(
+        'weather',
+        undefined,
+        'Opening Weather Forecast and Radar on your screen now.',
+        'வானிலை முன்னறிவிப்பு திரையை இப்போது உங்கள் திரையில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    // 20c. AI Studio Feature Sub-Tabs (Veo Video, Lyria Music, Banana/NVIDIA Image, Guided Learning, Transcribe)
+    if (
+      lower.includes('open video generator') ||
+      lower.includes('generate video') ||
+      lower.includes('create video') ||
+      lower.includes('veo video') ||
+      lower.includes('video studio') ||
+      lower.includes('வீடியோ உருவாக்கு')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'veo-video',
+        'Opening AI Video Generator powered by NVIDIA NIM & Veo 3 in AI Studio now.',
+        'வீடியோ ஜெனரேட்டரை இப்போது ஏஐ ஸ்டுடியோவில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    if (
+      lower.includes('animate photo') ||
+      lower.includes('animate image') ||
+      lower.includes('photo to video') ||
+      lower.includes('image to video') ||
+      lower.includes('photo motion') ||
+      lower.includes('புகைப்பட அசைவு')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'veo-animate',
+        'Opening Photo to Video Animation Studio in AI Studio now.',
+        'புகைப்பட வீடியோ அனிமேஷன் ஸ்டுடியோவை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    if (
+      lower.includes('open music generator') ||
+      lower.includes('generate music') ||
+      lower.includes('create music') ||
+      lower.includes('lyria music') ||
+      lower.includes('music studio') ||
+      lower.includes('மியூசிக் உருவாக்கு')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'music',
+        'Opening AI Music Studio powered by NVIDIA NIM and Lyria in AI Studio now.',
+        'என்விடியா மற்றும் லிரியா மியூசிக் ஸ்டுடியோவை இப்போது ஏஐ ஸ்டுடியோவில் திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    if (
+      lower.includes('open image generator') ||
+      lower.includes('generate image') ||
+      lower.includes('create image') ||
+      lower.includes('image studio') ||
+      lower.includes('artwork generator') ||
+      lower.includes('nvidia image') ||
+      lower.includes('படம் உருவாக்கு')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'images',
+        'Opening Photorealistic Image Studio in AI Studio now.',
+        'இமேஜ் ஸ்டுடியோவை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    if (
+      lower.includes('guided learning') ||
+      lower.includes('learning studio') ||
+      lower.includes('learn with ai') ||
+      lower.includes('வழிகாட்டப்பட்ட கற்றல்')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'guided-learning',
+        'Opening Guided Learning Studio now.',
+        'வழிகாட்டப்பட்ட கற்றல் திரையை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
+    if (
+      lower.includes('audio transcriber') ||
+      lower.includes('transcribe audio') ||
+      lower.includes('ஆடியோ டிரான்ஸ்கிரைப்')
+    ) {
+      executeVoiceNavigation(
+        'ai-studio',
+        'transcribe',
+        'Opening Audio Transcriber in AI Studio now.',
+        'ஆடியோ டிரான்ஸ்கிரைபரை இப்போது திறக்கிறேன்.'
+      );
+      return;
+    }
+
     // 21. Cloud Billing Dashboard
     if (
       (lower.includes('open billing') || lower.includes('open cloud billing') || lower === 'billing') &&
@@ -1378,7 +1682,8 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.includes('open sync center') ||
       lower.includes('open offline sync') ||
       lower.includes('sync center') ||
-      lower.includes('offline cache')
+      lower.includes('offline cache') ||
+      lower.includes('ஆஃப்லைன் சின்க்')
     ) {
       if (onOpenOfflineSync) {
         setIsThinking(false);
@@ -1388,6 +1693,62 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         onOpenOfflineSync();
         return;
       }
+    }
+
+    // 26. Global AI Engine & Model Architecture Configurator
+    if (
+      lower.includes('open ai engine') ||
+      lower.includes('ai engine') ||
+      lower.includes('model architecture') ||
+      lower.includes('ai models') ||
+      lower.includes('configure ai') ||
+      lower.includes('nvidia model') ||
+      lower.includes('gemini model') ||
+      lower.includes('மாதிரி கட்டமைப்பு')
+    ) {
+      setIsThinking(false);
+      isNavigatingRef.current = true;
+      setShowGlobalAiModal(true);
+      const rep = voiceLanguage.startsWith('ta')
+        ? 'AI என்ஜின் மற்றும் மாடல் ஆர்க்கிடெக்சர் திரையை திறக்கிறேன்.'
+        : 'Opening AI Engine and Model Architecture configuration on your screen now.';
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Configure AI Models & Keys',
+      });
+      speakWithAuro(rep);
+      return;
+    }
+
+    // 27. Windows Host System Assistant & Software Installer
+    if (
+      lower.includes('open windows assistant') ||
+      lower.includes('windows assistant') ||
+      lower.includes('software installer') ||
+      lower.includes('install software') ||
+      lower.includes('windows terminal') ||
+      lower.includes('windows console') ||
+      lower.includes('powershell console') ||
+      lower.includes('விண்டோஸ் அசிஸ்டண்ட்')
+    ) {
+      setIsThinking(false);
+      isNavigatingRef.current = true;
+      setShowWindowsInstallerModal(true);
+      const rep = voiceLanguage.startsWith('ta')
+        ? 'விண்டோஸ் சிஸ்டம் அசிஸ்டண்ட் மற்றும் மென்பொருள் நிறுவி திரையை திறக்கிறேன்.'
+        : 'Opening Windows System Assistant and Software Installer console on your screen now.';
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'Launch Windows System Installer',
+      });
+      speakWithAuro(rep);
+      return;
     }
 
     // Direct Voice-to-Call intent detection
@@ -1401,6 +1762,61 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         speechEngine.speak(`Calling ${targetContact.name} on sovereign line now.`);
         onClose();
         startCall(targetContact, false);
+        return;
+      }
+    }
+
+    // Direct Apple Books library upload intent (via Google Drive & SQLite)
+    const isAppleBooksUploadIntent =
+      (
+        lower.includes('apple book') ||
+        lower.includes('apple books') ||
+        lower.includes('book library') ||
+        lower.includes('ibooks') ||
+        lower.includes('புத்தகம்') ||
+        lower.includes('புக் லைப்ரரி') ||
+        (selectedFile &&
+          (selectedFile.type === 'application/pdf' ||
+            selectedFile.name.toLowerCase().endsWith('.pdf') ||
+            selectedFile.name.toLowerCase().endsWith('.epub')) &&
+          (lower.includes('book') || lower.includes('library') || lower.includes('புத்தகம்') || lower.includes('புக்')))
+      ) &&
+      (
+        lower.includes('upload') ||
+        lower.includes('save') ||
+        lower.includes('add') ||
+        lower.includes('store') ||
+        lower.includes('put') ||
+        lower.includes('சேமி') ||
+        lower.includes('பதிவேற்ற') ||
+        lower.includes('அப்லோட்') ||
+        lower.includes('போடு') ||
+        lower.includes('drive') ||
+        lower.includes('டிரைவ்') ||
+        lower.includes('unable to upload') ||
+        lower.includes('can not upload') ||
+        lower.includes('cannot upload')
+      );
+
+    if (isAppleBooksUploadIntent) {
+      if (selectedFile) {
+        setIsThinking(true);
+        await handleUploadAttachmentToAppleBooks(selectedFile);
+        setIsThinking(false);
+        return;
+      } else {
+        appleBooksInputRef.current?.click();
+        const promptMsg = voiceLanguage.startsWith('ta')
+          ? 'ஆப்பிள் புக்ஸ் நூலகத்தில் பதிவேற்ற வேண்டிய PDF அல்லது புத்தகம் கோப்பைத் தேர்ந்தெடுக்கவும். நான் அதனை கூகுள் டிரைவில் (Family Circle / Apple Books) வகைப்படுத்தி உங்கள் நூலகத்தில் சேர்க்கிறேன்.'
+          : 'Please select the PDF or eBook you want to upload into your Apple Books library. I will organize it in Google Drive under "Family Circle / Apple Books / [Category]" and index it in your sovereign library.';
+        addVoiceMessage({
+          role: 'assistant',
+          content: promptMsg,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'helpful & attentive',
+          actionSuggestion: 'Select PDF for Apple Books Library',
+        });
+        speakWithAuro(promptMsg);
         return;
       }
     }
@@ -2966,7 +3382,19 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
         const activeToken = googleAccessToken || (typeof window !== 'undefined' ? localStorage.getItem('aura_google_access_token') : null);
 
-        if (activeToken) {
+        // If this is a book/eBook and user asked about Apple Books library
+        const isTargetingAppleBooks =
+          (selectedFile.type === 'application/pdf' || selectedFile.name.toLowerCase().endsWith('.pdf') || selectedFile.name.toLowerCase().endsWith('.epub')) &&
+          (lower.includes('apple book') || lower.includes('apple books') || lower.includes('ibooks') || lower.includes('book library') || lower.includes('புத்தகம்') || lower.includes('book'));
+
+        if (isTargetingAppleBooks) {
+          const uploadedBook = await handleUploadAttachmentToAppleBooks(selectedFile);
+          if (uploadedBook) {
+            uploadedToDrive = Boolean(uploadedBook.driveFileId);
+            driveFileId = uploadedBook.driveFileId || '';
+            driveWebLink = uploadedBook.driveWebViewLink || '';
+          }
+        } else if (activeToken) {
           try {
             const uploaded = await uploadGoogleDriveFile(selectedFile);
             uploadedToDrive = true;
@@ -4331,6 +4759,50 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                     </div>
                   )}
 
+                  {/* Apple Books Sovereign Library Card */}
+                  {msg.bookCard && (
+                    <div className="mt-3 p-3 rounded-2xl bg-gradient-to-r from-amber-950/70 via-slate-900 to-orange-950/70 border border-amber-500/40 shadow-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <BookOpen className="w-4 h-4 text-amber-400 shrink-0" />
+                          <span className="text-xs font-bold text-white truncate">
+                            {msg.bookCard.title}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {msg.bookCard.totalPages ? `${msg.bookCard.totalPages} pages` : 'Apple Books'}
+                        </span>
+                      </div>
+
+                      {msg.bookCard.author && (
+                        <p className="text-[11px] text-slate-300">
+                          Author: <span className="text-white font-medium">{msg.bookCard.author}</span>
+                        </p>
+                      )}
+
+                      {msg.bookCard.driveFolderPath && (
+                        <p className="text-[10px] text-slate-400 font-mono truncate">
+                          Drive: {msg.bookCard.driveFolderPath}
+                        </p>
+                      )}
+
+                      <div className="flex items-center justify-end pt-1 border-t border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onNavigateTab) {
+                              onNavigateTab('ibooks');
+                            }
+                          }}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer font-semibold"
+                        >
+                          <span>Open Apple Books Library</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                 {msg.actionSuggestion && (
                   <div className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
                     <Compass className="w-3.5 h-3.5 shrink-0" />
@@ -4552,6 +5024,30 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                 )}
               </button>
 
+              {(selectedFile.type === 'application/pdf' ||
+                selectedFile.name.toLowerCase().endsWith('.pdf') ||
+                selectedFile.name.toLowerCase().endsWith('.epub')) && (
+                <button
+                  type="button"
+                  disabled={isUploadingToAppleBooks}
+                  onClick={() => handleUploadAttachmentToAppleBooks()}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-bold text-xs shadow-md shadow-amber-600/30 transition-all flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-50"
+                  title="Upload book into Apple Books library via Google Drive"
+                >
+                  {isUploadingToAppleBooks ? (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving Book...</span>
+                    </>
+                  ) : (
+                    <>
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span>Apple Books (Drive)</span>
+                    </>
+                  )}
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -4568,13 +5064,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </div>
         )}
 
-        {/* Hidden File Inputs for Attachments, Camera, and Gallery */}
+        {/* Hidden File Inputs for Attachments, Camera, Gallery, and Apple Books */}
         <input
           ref={fileInputRef}
           type="file"
           className="hidden"
           onChange={handleFileChange}
           accept="*/*"
+        />
+
+        <input
+          ref={appleBooksInputRef}
+          type="file"
+          className="hidden"
+          accept=".pdf,.epub,application/pdf"
+          onChange={handleAppleBooksFileChange}
         />
 
         <input
@@ -4752,6 +5256,27 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                       </div>
                     </button>
                   )}
+
+                  {/* Option 6: Upload Book to Apple Books Library */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowPlusMenu(false);
+                      appleBooksInputRef.current?.click();
+                    }}
+                    className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-orange-600/20 hover:border-orange-500/30 border border-transparent transition-all text-left group cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center shrink-0 text-orange-400 group-hover:scale-105 group-hover:bg-orange-600 group-hover:text-white transition-all shadow-sm">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-white group-hover:text-orange-200 flex items-center gap-1.5">
+                        <span>Apple Books Library</span>
+                        <span className="text-[10px] font-normal px-1.5 py-0.5 bg-orange-500/20 text-orange-300 rounded-full border border-orange-500/30">Drive Sync</span>
+                      </p>
+                      <p className="text-[11px] text-slate-400 truncate">Upload PDF/eBook directly to Apple Books & Drive</p>
+                    </div>
+                  </button>
                 </div>
               </div>
             )}

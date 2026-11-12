@@ -26,6 +26,13 @@ export async function registerAiCreation(
 
   const driveFolderPath = item.driveFolderPath || item.drivePath || `Family Circle / AI Studio Creations / ${folderCategory}`;
 
+  // Auto-resolve Google Drive access token from argument or localStorage
+  const effectiveToken =
+    accessToken ||
+    (typeof window !== 'undefined'
+      ? localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token')
+      : null);
+
   const creation: AiStudioCreation = {
     ...item,
     modelUsed: item.modelUsed || item.model || 'gemini-frontier',
@@ -33,7 +40,7 @@ export async function registerAiCreation(
     createdAt,
     userEmail,
     driveFolderPath,
-    driveSyncStatus: accessToken ? 'pending' : 'local_only',
+    driveSyncStatus: effectiveToken ? 'pending' : 'local_only',
   };
 
   // 1. Immediately store in local cache
@@ -57,9 +64,9 @@ export async function registerAiCreation(
   }
 
   // 3. If Google Drive access token is active, initiate live Drive upload in background
-  if (accessToken && accessToken.trim()) {
+  if (effectiveToken && effectiveToken.trim()) {
     try {
-      const driveMeta = await uploadAiCreationToGoogleDrive(creation, accessToken, userEmail);
+      const driveMeta = await uploadAiCreationToGoogleDrive(creation, effectiveToken, userEmail);
       if (driveMeta) {
         creation.driveFileId = driveMeta.driveFileId;
         creation.driveWebViewLink = driveMeta.driveWebViewLink;

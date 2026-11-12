@@ -185,6 +185,16 @@ export interface WeatherCardData {
   coordinates?: { latitude: number; longitude: number };
 }
 
+export interface AppleBookCardData {
+  id: string;
+  title: string;
+  author?: string;
+  totalPages?: number;
+  coverGradient?: string;
+  driveFolderPath?: string;
+  category?: string;
+}
+
 export interface VoiceMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -206,6 +216,7 @@ export interface VoiceMessage {
   systemAction?: WindowsSystemAction;
   systemExecutionResult?: WindowsSystemExecutionResult;
   weatherCard?: WeatherCardData;
+  bookCard?: AppleBookCardData;
 }
 
 export interface GoogleWorkspaceSettings {
@@ -476,6 +487,8 @@ export interface AiModelOption {
   color: string;
   recommendedFor?: string;
   supportsImageGen?: boolean;
+  supportsVideoGen?: boolean;
+  supportsMusicGen?: boolean;
 }
 
 export const AVAILABLE_OPENAI_MODELS: AiModelOption[] = [
@@ -629,15 +642,92 @@ export const AVAILABLE_NVIDIA_MODELS: AiModelOption[] = [
     recommendedFor: 'Low-latency Family Chat',
   },
   {
-    id: 'stabilityai/stable-diffusion-3-medium',
-    name: 'Stable Diffusion 3 Medium',
+    id: 'black-forest-labs/flux.1-schnell',
+    name: 'FLUX.1 Schnell',
     provider: 'nvidia',
-    badge: 'IMAGE GEN',
+    badge: 'FLUX.1 SCHNELL',
+    tagline: '12B parameter state-of-the-art visual generation model on NVIDIA NIM',
+    speed: 'Lightning 4-Step',
+    color: 'amber',
+    recommendedFor: 'Ultra-Fast High Detail Artwork',
+    supportsImageGen: true,
+  },
+  {
+    id: 'black-forest-labs/flux.1-dev',
+    name: 'FLUX.1 Dev',
+    provider: 'nvidia',
+    badge: 'FLUX.1 DEV',
+    tagline: 'Frontier 12B guidance-distilled visual foundation model on NVIDIA NIM',
+    speed: 'Production Quality',
+    color: 'emerald',
+    recommendedFor: 'Maximum Prompt Adherence & Artistry',
+    supportsImageGen: true,
+  },
+  {
+    id: 'stabilityai/stable-diffusion-3.5-large',
+    name: 'Stable Diffusion 3.5 Large',
+    provider: 'nvidia',
+    badge: 'SD 3.5 LARGE',
     tagline: 'Photorealistic high-fidelity image generation via NVIDIA NIM',
     speed: 'Photorealistic',
     color: 'rose',
-    recommendedFor: 'AI Studio Image Studio',
+    recommendedFor: 'AI Studio Image Generation',
     supportsImageGen: true,
+  },
+  {
+    id: 'stabilityai/sdxl-turbo',
+    name: 'SDXL Turbo',
+    provider: 'nvidia',
+    badge: 'REAL-TIME SDXL',
+    tagline: 'Adversarial diffusion distillation for instant single-step generation on NVIDIA GPUs',
+    speed: 'Instant (1-step)',
+    color: 'teal',
+    recommendedFor: 'Rapid Prototyping & Thumbnails',
+    supportsImageGen: true,
+  },
+  {
+    id: 'stabilityai/stable-diffusion-xl',
+    name: 'Stable Diffusion XL',
+    provider: 'nvidia',
+    badge: 'SDXL BASE',
+    tagline: 'Flagship open visual synthesis model with dedicated refiner pipeline on NVIDIA NIM',
+    speed: 'High Definition',
+    color: 'indigo',
+    recommendedFor: 'Portraits & Landscape Composition',
+    supportsImageGen: true,
+  },
+  {
+    id: 'nvidia/cosmos-1.0-diffusion-7b',
+    name: 'NVIDIA Cosmos 1.0 Diffusion',
+    provider: 'nvidia',
+    badge: 'COSMOS VIDEO',
+    tagline: 'World-foundation generative video model trained on physical dynamics & photorealism',
+    speed: 'High-Throughput Video',
+    color: 'emerald',
+    recommendedFor: 'AI Studio Video & Motion Synthesis',
+    supportsVideoGen: true,
+  },
+  {
+    id: 'stabilityai/stable-video-diffusion-img2vid-xt',
+    name: 'Stable Video Diffusion XT',
+    provider: 'nvidia',
+    badge: 'SVD-XT',
+    tagline: 'State-of-the-art image-to-video foundation model on NVIDIA NIM for cinematic camera animation',
+    speed: 'Cinematic Motion',
+    color: 'purple',
+    recommendedFor: 'Animate Photos to Motion Video',
+    supportsVideoGen: true,
+  },
+  {
+    id: 'nvidia/nemotron-video-director-30b',
+    name: 'NVIDIA Nemotron Video Director 30B',
+    provider: 'nvidia',
+    badge: 'DIRECTOR 30B',
+    tagline: 'Intelligent cinematic director orchestrating camera pan, orbital rotation, and lighting transport',
+    speed: 'Ultra Fast',
+    color: 'indigo',
+    recommendedFor: 'Text to Video & Motion Storyboarding',
+    supportsVideoGen: true,
   },
 ];
 
