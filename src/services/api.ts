@@ -151,15 +151,35 @@ export async function sendChatMessage(payload: {
   const selectedModel =
     payload.model ||
     (typeof window !== 'undefined'
-      ? localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      ? localStorage.getItem(`aura_${selectedProvider}_model`) ||
+        localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
       : null) ||
-    (selectedProvider === 'nvidia' ? 'nvidia/llama-3.1-nemotron-70b-instruct' : 'gemini-3.8-flash');
+    (selectedProvider === 'nvidia'
+      ? 'nvidia/nemotron-3.5-lightning-30b-a3b'
+      : selectedProvider === 'openai'
+      ? 'gpt-4o-mini'
+      : selectedProvider === 'anthropic'
+      ? 'claude-3-5-haiku-20241022'
+      : 'gemini-3.8-flash');
+
+  let customConfig: any = undefined;
+  if (selectedProvider === 'custom' && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('aura_custom_ai_config');
+      if (raw) customConfig = JSON.parse(raw);
+    } catch {}
+  }
 
   const completePayload = {
     ...payload,
     googleAccessToken: token,
     provider: selectedProvider,
     model: selectedModel,
+    customConfig,
+    geminiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_custom_gemini_api_key') : null,
+    nvidiaApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') : null,
+    openaiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_openai_api_key') : null,
+    anthropicApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_anthropic_api_key') : null,
   };
 
   try {
@@ -176,7 +196,7 @@ export async function sendChatMessage(payload: {
       return res;
     }
 
-    if (isDirectGeminiAvailable()) {
+    if (isDirectGeminiAvailable() && selectedProvider === 'gemini') {
       try {
         console.log('[Auro] Backend error. Falling back to direct client-side Gemini...');
         return await chatWithGeminiDirect(completePayload);
@@ -191,7 +211,7 @@ export async function sendChatMessage(payload: {
     return res;
   } catch (backendErr: any) {
     // If backend server.ts is offline, automatically fall back to direct on-device Gemini
-    if (isDirectGeminiAvailable()) {
+    if (isDirectGeminiAvailable() && selectedProvider === 'gemini') {
       console.log('[Auro] Backend server offline. Running direct client-side Gemini...', backendErr.message);
       return await chatWithGeminiDirect(completePayload);
     }
@@ -213,9 +233,18 @@ export async function transcribeAudioApi(
   const selectedModel =
     model ||
     (typeof window !== 'undefined'
-      ? localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+      ? localStorage.getItem(`aura_${selectedProvider}_model`) ||
+        localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
       : null) ||
-    (selectedProvider === 'nvidia' ? 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' : 'gemini-3.8-flash');
+    (selectedProvider === 'nvidia' ? 'nvidia/nemotron-3.5-lightning-30b-a3b' : 'gemini-3.5-flash');
+
+  let customConfig: any = undefined;
+  if (selectedProvider === 'custom' && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('aura_custom_ai_config');
+      if (raw) customConfig = JSON.parse(raw);
+    } catch {}
+  }
 
   return safeFetchJson('/api/ai/transcribe', {
     method: 'POST',
@@ -226,6 +255,11 @@ export async function transcribeAudioApi(
       language,
       provider: selectedProvider,
       model: selectedModel,
+      customConfig,
+      geminiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_custom_gemini_api_key') : null,
+      nvidiaApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') : null,
+      openaiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_openai_api_key') : null,
+      anthropicApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_anthropic_api_key') : null,
     }),
   });
 }

@@ -268,7 +268,7 @@ export const RealtimeSttTab: React.FC = () => {
       return;
     }
     setIsTranscribingAi(true);
-    showToast('Gemini AI transcribing your audio in authentic script...');
+    showToast('AI transcribing your audio in authentic script...');
     try {
       const base64 = await blobToBase64(blob);
       const res = await transcribeAudioApi(base64, blob.type || 'audio/webm', selectedLanguage);
@@ -278,12 +278,12 @@ export const RealtimeSttTab: React.FC = () => {
           const base = prev.trim();
           return base ? `${base} ${transcribed}` : transcribed;
         });
-        showToast('✓ Audio successfully transcribed with Gemini AI!');
+        showToast('✓ Audio successfully transcribed with AI STT!');
       } else {
-        showToast('No clear speech detected in recording.');
+        showToast((res as any)?.note || 'No clear speech detected in recording.');
       }
     } catch (err: any) {
-      console.warn('Gemini STT error:', err);
+      console.warn('AI STT error:', err);
       showToast('AI transcription notice: ' + (err.message || 'Please retry speaking.'));
     } finally {
       setIsTranscribingAi(false);

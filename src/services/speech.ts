@@ -740,19 +740,19 @@ export class VoiceAssistantEngine {
         }
 
         try {
-          this.onTranscriptCallback?.('Transcribing your voice with Gemini...', false);
+          this.onTranscriptCallback?.('Transcribing your voice...', false);
           const base64 = await blobToBase64(recordedBlob);
           const result = await transcribeAudioApi(base64, recordedBlob.type, this.currentLanguage);
           if (result && result.text && result.text.trim()) {
             this.onTranscriptCallback?.(result.text.trim(), true);
           } else {
-            this.onErrorCallback?.('No speech was recognized. Please try speaking again.');
+            this.onErrorCallback?.((result as any)?.note || 'No speech was recognized. Please try speaking again.');
           }
         } catch (transcribeErr: any) {
-          console.warn('Gemini audio transcription error:', transcribeErr);
+          console.warn('Audio transcription error:', transcribeErr);
           const message =
             transcribeErr instanceof Error ? transcribeErr.message : String(transcribeErr);
-          this.onErrorCallback?.(`Voice transcription failed: ${message}`);
+          this.onErrorCallback?.(`Voice transcription notice: ${message}`);
         }
       };
 

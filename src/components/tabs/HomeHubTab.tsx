@@ -55,7 +55,14 @@ import {
   Music,
   Eye,
   Navigation,
+  CloudSun,
 } from 'lucide-react';
+import {
+  WeatherData,
+  getCachedWeatherData,
+  getCurrentCoordinates,
+  fetchWeatherForecast,
+} from '../../services/weatherService';
 import { HubKeysAndSqliteModal } from '../HubKeysAndSqliteModal';
 import { GitHubSyncModal } from '../GitHubSyncModal';
 import { useApp } from '../../context/AppContext';
@@ -144,6 +151,27 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
   useEffect(() => {
     setHubVoiceLang(speechEngine.getLanguage());
   }, [showKeysAndSqliteModal]);
+
+  // Live Weather State for Home Hub Widget
+  const [homeWeather, setHomeWeather] = useState<WeatherData | null>(() => getCachedWeatherData());
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        const { coords } = await getCurrentCoordinates();
+        const data = await fetchWeatherForecast(coords.latitude, coords.longitude);
+        if (isMounted) {
+          setHomeWeather(data);
+        }
+      } catch (err) {
+        // Fall back to cached weather
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const [isHomeDigestLoading, setIsHomeDigestLoading] = useState(false);
   const [homeDigestResult, setHomeDigestResult] = useState<any>(null);
@@ -324,6 +352,51 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
           >
             <LogOut className="w-4 h-4" />
           </button>
+        </div>
+      </div>
+
+      {/* Live Weather Forecast Status Banner */}
+      <div
+        onClick={() => onNavigate('weather')}
+        className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-r from-sky-950/70 via-slate-900 to-indigo-950/70 border border-sky-500/40 hover:border-sky-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg group relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex items-center gap-3 relative z-10">
+          <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0 border border-sky-500/30 group-hover:scale-105 transition-transform shadow-inner">
+            <CloudSun className="w-5 h-5 text-sky-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold text-white">
+                {homeWeather?.locationName || 'Live Weather Forecast'}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-mono font-bold border border-sky-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                {homeWeather ? `${homeWeather.current.temperature}°C • ${homeWeather.current.weatherDescription}` : 'LIVE GPS'}
+              </span>
+              {homeWeather?.coordinates && (
+                <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                  ({homeWeather.coordinates.latitude.toFixed(2)}°N, {homeWeather.coordinates.longitude.toFixed(2)}°E)
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>Feels like {homeWeather?.current.apparentTemperature ?? 30}°C</span>
+              <span>•</span>
+              <span>Humidity {homeWeather?.current.relativeHumidity ?? 65}%</span>
+              <span>•</span>
+              <span>Wind {homeWeather?.current.windSpeed ?? 12} km/h</span>
+              <span>•</span>
+              <span className="text-sky-300">Tap for 24h & 7-Day Forecast</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 relative z-10 self-end sm:self-auto">
+          <div className="flex items-center gap-1 text-xs text-sky-400 group-hover:text-sky-300 font-semibold">
+            <span>Forecast</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </div>
         </div>
       </div>
 
@@ -2139,6 +2212,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               icon: Home,
               accent: 'border-slate-800 hover:border-slate-600',
               iconBg: 'bg-slate-800 text-slate-300',
+            },
+            {
+              key: 'weather' as TabKey,
+              title: 'Live Weather & Forecast',
+              category: 'Lifestyle',
+              desc: 'High-accuracy GPS coordinates, 24h hourly forecast, 7-day outlook, UV & humidity index.',
+              badge: 'LIVE GPS',
+              icon: CloudSun,
+              accent: 'border-sky-500/30 hover:border-sky-400',
+              iconBg: 'bg-sky-500/20 text-sky-400',
             },
             {
               key: 'ibooks' as TabKey,

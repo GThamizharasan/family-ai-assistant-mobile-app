@@ -38,7 +38,14 @@ import {
   Cpu,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { AVAILABLE_NVIDIA_MODELS } from '../../types';
+import { AVAILABLE_NVIDIA_MODELS, AiProvider } from '../../types';
+import {
+  getActiveAiProvider,
+  getActiveAiModel,
+  getModelDisplayName,
+  AI_MODEL_CHANGED_EVENT,
+} from '../../services/aiConfig';
+import { AiModelConfigModal } from '../AiModelConfigModal';
 import { AiCreationsHistoryDashboard } from '../ai/AiCreationsHistoryDashboard';
 import { registerAiCreation } from '../../services/aiDriveSync';
 import {
@@ -193,6 +200,8 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           learningStyle: guidedStyle,
           lessonDepth: guidedDepth,
           language: guidedLanguage,
+          provider: studioAiProvider,
+          model: studioAiModel,
         },
         user.email,
         token || undefined
@@ -252,20 +261,26 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
   const [animateError, setAnimateError] = useState<string | null>(null);
 
   // ----------------------------------------------------
-  // 3. Multi-Turn Chatbot State
+  // Global Sovereign AI Engine & Multi-Turn Chatbot State
   // ----------------------------------------------------
-  const [chatAiProvider, setChatAiProvider] = useState<'gemini' | 'nvidia'>(() => {
-    if (typeof window !== 'undefined') {
-      return (localStorage.getItem('aura_ai_provider') as 'gemini' | 'nvidia') || 'gemini';
-    }
-    return 'gemini';
-  });
-  const [chatNvidiaModel, setChatNvidiaModel] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('aura_nvidia_model') || 'nvidia/nemotron-3.5-lightning-30b-a3b';
-    }
-    return 'nvidia/nemotron-3.5-lightning-30b-a3b';
-  });
+  const [studioAiProvider, setStudioAiProvider] = useState<AiProvider>(() => getActiveAiProvider());
+  const [studioAiModel, setStudioAiModel] = useState<string>(() => getActiveAiModel());
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+
+  // Sync with global model change events
+  useEffect(() => {
+    const handleModelChanged = (e: any) => {
+      if (e.detail?.provider) {
+        setStudioAiProvider(e.detail.provider);
+        setStudioAiModel(e.detail.model);
+      }
+    };
+    window.addEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
+    return () => window.removeEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
+  }, []);
+
+  const [chatAiProvider, setChatAiProvider] = useState<AiProvider>(() => getActiveAiProvider());
+  const [chatNvidiaModel, setChatNvidiaModel] = useState<string>(() => getActiveAiModel());
   const [selectedRole, setSelectedRole] = useState('executive');
   const [taskComplexity, setTaskComplexity] = useState<'complex' | 'general' | 'fast'>('complex');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -390,7 +405,7 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
     if (!transcribeAudioBlob) return;
     setIsTranscribing(true);
     try {
-      const res = await transcribeAudio(transcribeAudioBlob, transcribePrompt || undefined);
+      const res = await transcribeAudio(transcribeAudioBlob, transcribePrompt || undefined, studioAiProvider, studioAiModel);
       setTranscribeResult(res);
       void registerAiCreation({
         title: transcribePrompt ? `Transcript: ${transcribePrompt.slice(0, 36)}` : 'Voice Audio Transcription',
@@ -569,8 +584,8 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
       const res = await sendMultiTurnChat(messagesForApi, {
         role: selectedRole,
         taskComplexity,
-        provider: chatAiProvider,
-        model: chatAiProvider === 'nvidia' ? chatNvidiaModel : undefined,
+        provider: studioAiProvider,
+        model: studioAiModel,
       });
 
       const modelMsg: ChatMessage = {
@@ -781,7 +796,26 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Active AI Model Configuration Button */}
+            <button
+              type="button"
+              onClick={() => setIsConfigModalOpen(true)}
+              className="px-3 py-1.5 rounded-2xl bg-slate-950/80 hover:bg-slate-900 border border-slate-700/80 hover:border-indigo-500/50 text-slate-200 text-xs font-semibold flex items-center gap-2 shadow-md transition-all cursor-pointer active:scale-95"
+              title="Click to switch or configure active AI model"
+            >
+              <Cpu className="w-3.5 h-3.5 text-indigo-400" />
+              <div className="text-left">
+                <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-mono">
+                  Engine ({studioAiProvider.toUpperCase()})
+                </span>
+                <span className="font-bold text-white text-[11px] truncate max-w-[130px] block font-mono">
+                  {getModelDisplayName(studioAiProvider, studioAiModel)}
+                </span>
+              </div>
+              <span className="text-[10px] text-indigo-400 ml-1">▾</span>
+            </button>
+
             {onOpenVoiceAssistant && (
               <button
                 onClick={onOpenVoiceAssistant}
@@ -2515,6 +2549,11 @@ export const AiStudioTab: React.FC<AiStudioTabProps> = ({
           onOpenSubTab={(subTab: string) => setActiveTab(subTab as AiStudioSubTab)}
         />
       )}
+      {/* AI Model Config Modal */}
+      <AiModelConfigModal
+        isOpen={isConfigModalOpen}
+        onClose={() => setIsConfigModalOpen(false)}
+      />
     </div>
   );
 };

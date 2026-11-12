@@ -8,6 +8,7 @@ import { BottomNav, TabKey } from './components/BottomNav';
 import { BiometricLock } from './components/BiometricLock';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import { AndroidInstallerModal } from './components/AndroidInstallerModal';
+import { WindowsSystemInstallerModal } from './components/WindowsSystemInstallerModal';
 import { GoogleSSOScreen } from './components/GoogleSSOScreen';
 
 // Tabs
@@ -36,6 +37,7 @@ import { RealtimeTranslatorTab } from './components/tabs/RealtimeTranslatorTab';
 import { AdobeScannerTab } from './components/tabs/AdobeScannerTab';
 import { ClockTab } from './components/tabs/ClockTab';
 import { NavigationTab } from './components/tabs/NavigationTab';
+import { WeatherForecastTab } from './components/tabs/WeatherForecastTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
@@ -62,6 +64,7 @@ const AppContent: React.FC = () => {
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
   const [isVisionOpen, setIsVisionOpen] = useState(false);
   const [isInstallerOpen, setIsInstallerOpen] = useState(false);
+  const [isWindowsInstallerOpen, setIsWindowsInstallerOpen] = useState(false);
   const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
   const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
   const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
@@ -234,6 +237,14 @@ const AppContent: React.FC = () => {
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
+      case 'weather':
+        return (
+          <WeatherForecastTab
+            onNavigateHome={() => setCurrentTab('home')}
+            onNavigateMap={() => setCurrentTab('navigation')}
+            onNavigateWellness={() => setCurrentTab('wellness')}
+          />
+        );
       case 'navigation':
         return <NavigationTab onNavigateHome={() => setCurrentTab('home')} />;
       case 'ibooks':
@@ -309,8 +320,10 @@ const AppContent: React.FC = () => {
       onOpenVoice={() => setIsVoiceOpen(true)}
       onOpenVision={() => setIsVisionOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
+      onOpenWindowsInstaller={() => setIsWindowsInstallerOpen(true)}
       onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
       onOpenWalkingSteps={() => setCurrentTab('wellness')}
+      onOpenWeather={() => setCurrentTab('weather')}
       onGoHome={() => setCurrentTab('home')}
     >
       {renderActiveTab()}
@@ -442,6 +455,12 @@ const AppContent: React.FC = () => {
           setIsInstallerOpen(false);
           setCurrentTab('home');
         }}
+      />
+
+      {/* Auro Windows Host System & Software Installer Modal */}
+      <WindowsSystemInstallerModal
+        isOpen={isWindowsInstallerOpen}
+        onClose={() => setIsWindowsInstallerOpen(false)}
       />
 
       {/* 3GB SQLite Offline Store & Unified Sync Center */}

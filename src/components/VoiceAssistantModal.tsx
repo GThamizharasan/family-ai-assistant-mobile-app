@@ -36,10 +36,21 @@ import {
   Copy,
   ExternalLink,
   Cpu,
+  Settings,
+  Terminal,
+  ArrowRight,
+  Play,
+  CheckCircle2,
+  CloudSun,
 } from 'lucide-react';
 import { syncAnyAiOutputToDrive } from '../services/guidedLearningService';
 import { useApp } from '../context/AppContext';
 import { AVAILABLE_GEMINI_MODELS, AVAILABLE_NVIDIA_MODELS } from '../types';
+import { AiModelConfigModal } from './AiModelConfigModal';
+import { WindowsSystemInstallerModal } from './WindowsSystemInstallerModal';
+import { openWindowsTerminalWindow } from '../services/windowsSystemService';
+import { getCachedWeatherData, getCurrentCoordinates, fetchWeatherForecast } from '../services/weatherService';
+import { AI_MODEL_CHANGED_EVENT } from '../services/aiConfig';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
@@ -200,7 +211,21 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
   }, [chatHistory, clearChatHistory]);
   const [showMemoryDrawer, setShowMemoryDrawer] = useState(false);
+  const [showGlobalAiModal, setShowGlobalAiModal] = useState(false);
+  const [showWindowsInstallerModal, setShowWindowsInstallerModal] = useState(false);
   const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
+
+  // Synchronize with global AI model changes
+  useEffect(() => {
+    const handleGlobalModelChanged = (e: any) => {
+      if (e.detail?.provider) {
+        setAiProvider(e.detail.provider);
+        setSelectedVoiceModel(e.detail.model);
+      }
+    };
+    window.addEventListener(AI_MODEL_CHANGED_EVENT, handleGlobalModelChanged);
+    return () => window.removeEventListener(AI_MODEL_CHANGED_EVENT, handleGlobalModelChanged);
+  }, []);
   const [savedKeepNoteNotice, setSavedKeepNoteNotice] = useState<string | null>(null);
   const [savedReminderNotice, setSavedReminderNotice] = useState<string | null>(null);
   const [driveUploadNotice, setDriveUploadNotice] = useState<string | null>(null);
@@ -2759,6 +2784,68 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speakWithAuro(summaryText);
       return;
     }
+
+    // -------------------------------------------------------------------------
+    // Direct Live Weather Query Interception
+    // -------------------------------------------------------------------------
+    const isDirectWeatherCheck =
+      /^(what('s| is| are)? (the )?(weather|temperature|forecast|rain)|weather report|today('s)? weather|check weather|வானிலை|இன்றைய வானிலை|மழை பெய்யுமா|மழை வருமா|வெயில் எப்படி)/i.test(lower) ||
+      (lower.includes('weather') && (lower.includes('today') || lower.includes('now') || lower.includes('outside') || lower.includes('current')));
+
+    if (isDirectWeatherCheck && !selectedFile) {
+      setIsThinking(true);
+      try {
+        let weatherData = getCachedWeatherData();
+        try {
+          const { coords } = await getCurrentCoordinates();
+          weatherData = await fetchWeatherForecast(coords.latitude, coords.longitude);
+        } catch {}
+
+        if (weatherData) {
+          setIsThinking(false);
+          const isTamil = voiceLanguage.startsWith('ta') || /[\u0B80-\u0BFF]/.test(spokenText);
+          const loc = weatherData.locationName || 'your current location';
+          const tempC = weatherData.current.temperature;
+          const condition = weatherData.current.weatherDescription;
+          const humidity = weatherData.current.relativeHumidity;
+          const rainChance = weatherData.daily[0]?.precipitationProbabilityMax ?? 0;
+          const highC = weatherData.daily[0]?.tempMax ?? tempC;
+          const lowC = weatherData.daily[0]?.tempMin ?? tempC - 5;
+
+          const spokenReport = isTamil
+            ? `தற்போது ${loc}-ல் வெப்பநிலை ${tempC}°C ஆகவும், ${condition} நிலையிலும் உள்ளது. இன்றைய அதிகபட்சம் ${highC}°C, குறைந்தபட்சம் ${lowC}°C, மழை வாய்ப்பு ${rainChance}% ஆகும்.`
+            : `Currently in ${loc}, it's ${tempC}°C with ${condition.toLowerCase()}. Today's high is ${highC}°C and low is ${lowC}°C with a ${rainChance}% chance of rain.`;
+
+          const weatherCardData = {
+            location: loc,
+            temperature: tempC,
+            apparentTemperature: weatherData.current.apparentTemperature,
+            condition: condition,
+            high: highC,
+            low: lowC,
+            rainChance: rainChance,
+            humidity: humidity,
+            wind: `${weatherData.current.windSpeed} km/h ${weatherData.current.windDirectionCompass || ''}`.trim(),
+            uvIndex: weatherData.current.uvIndex,
+            coordinates: weatherData.coordinates,
+          };
+
+          addVoiceMessage({
+            role: 'assistant',
+            content: spokenReport,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            emotion: 'fresh & informative',
+            actionSuggestion: 'Open Weather Forecast Tab',
+            weatherCard: weatherCardData,
+          });
+
+          speakWithAuro(spokenReport);
+          return;
+        }
+      } catch (wErr) {
+        console.warn('Direct weather check exception:', wErr);
+      }
+    }
   }
 
     setIsThinking(true);
@@ -2766,12 +2853,44 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       setIsAnalyzingFile(true);
     }
     try {
+      // Gather live weather metrics for Auro
+      let liveWeatherContext = getCachedWeatherData();
+      if (!liveWeatherContext || /weather|temperature|rain|climate|forecast|வானிலை|மழை/i.test(spokenText)) {
+        try {
+          const { coords } = await getCurrentCoordinates();
+          liveWeatherContext = await fetchWeatherForecast(coords.latitude, coords.longitude);
+        } catch {}
+      }
+
       const historyPayload = chatHistory.slice(-6).map((m) => ({
         role: m.role,
         content: m.content,
       }));
 
       const contextPayload = {
+        liveWeatherSummary: liveWeatherContext ? {
+          locationName: liveWeatherContext.locationName,
+          coordinates: liveWeatherContext.coordinates,
+          temperatureC: liveWeatherContext.current.temperature,
+          temperatureF: Math.round((liveWeatherContext.current.temperature * 9) / 5 + 32),
+          apparentTemperatureC: liveWeatherContext.current.apparentTemperature,
+          apparentTemperatureF: Math.round((liveWeatherContext.current.apparentTemperature * 9) / 5 + 32),
+          condition: liveWeatherContext.current.weatherDescription,
+          isDay: liveWeatherContext.current.isDay,
+          humidityPercent: liveWeatherContext.current.relativeHumidity,
+          windSpeedKmH: liveWeatherContext.current.windSpeed,
+          windDirectionCompass: liveWeatherContext.current.windDirectionCompass,
+          precipitationMm: liveWeatherContext.current.precipitation,
+          rainChancePercent: liveWeatherContext.daily[0]?.precipitationProbabilityMax ?? 0,
+          todayHighC: liveWeatherContext.daily[0]?.tempMax ?? liveWeatherContext.current.temperature,
+          todayLowC: liveWeatherContext.daily[0]?.tempMin ?? liveWeatherContext.current.temperature - 5,
+          uvIndex: liveWeatherContext.current.uvIndex,
+          sunrise: liveWeatherContext.daily[0]?.sunrise,
+          sunset: liveWeatherContext.daily[0]?.sunset,
+          hourlyOutlook: (liveWeatherContext.hourly || []).slice(0, 6).map((h) => `${h.formattedTime}: ${h.temperature}°C, ${h.weatherDescription} (${h.precipitationProbability}% rain)`).join('; '),
+          sevenDayOutlook: (liveWeatherContext.daily || []).slice(0, 5).map((d) => `${d.dayName}: High ${d.tempMax}°C / Low ${d.tempMin}°C, ${d.weatherDescription} (${d.precipitationProbabilityMax}% rain)`).join('; '),
+          lastUpdated: liveWeatherContext.fetchedAt,
+        } : null,
         pendingTasksCount: tasks.filter((t) => !t.completed).length,
         currentNetWorth: netWorth,
         familyCount: familyMembers.length,
@@ -3016,6 +3135,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         emotion: emotionText,
         actionSuggestion: result.actionSuggestion,
+        systemExecutionResult: result.systemExecutionResult,
+        systemAction: result.systemAction,
+        weatherCard: result.weatherCard,
       };
       addVoiceMessage(aiMsg);
 
@@ -3139,37 +3261,38 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 backdrop-blur-xl p-2 sm:p-4">
       <div className="w-full max-w-xl h-[92vh] max-h-[820px] rounded-3xl border border-slate-800 bg-slate-900/95 flex flex-col shadow-2xl relative overflow-hidden">
-        {/* Top Header */}
-        <div className="p-4 sm:px-6 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/50">
+        {/* Tier 1: Top Header Bar (Navigation & Controls) */}
+        <div className="p-3 sm:px-6 border-b border-slate-800/80 flex items-center justify-between bg-slate-950/70">
           <div className="flex items-center gap-3">
             <div className="relative">
-              <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-600 to-indigo-600 flex items-center justify-center p-0.5 shadow-lg shadow-amber-500/20 overflow-hidden">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-2xl bg-gradient-to-tr from-amber-600 to-indigo-600 flex items-center justify-center p-0.5 shadow-lg shadow-amber-500/20 overflow-hidden">
                 <img src="/app-logo.png" alt="Aura Logo" className="w-full h-full object-cover rounded-xl" />
               </div>
-              <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
+              <span className="absolute -bottom-1 -right-1 w-3 h-3 sm:w-3.5 sm:h-3.5 rounded-full bg-emerald-500 border-2 border-slate-900" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-bold text-white text-base">Aura Family Assistant</h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <h3 className="font-bold text-white text-sm sm:text-base">Aura Family Assistant</h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                   Real-Time Voice
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
+              <p className="text-[10px] sm:text-[11px] text-slate-400 flex items-center gap-1.5">
                 <Heart className="w-3 h-3 text-rose-400 fill-rose-400/30" />
                 Demeanor: <span className="text-slate-300 font-medium capitalize">{currentEmotion}</span>
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-2">
+            {/* Test Sound */}
             <button
               onClick={() => {
                 if (isMuted) setIsMuted(false);
                 speechEngine.testVoiceOutput();
               }}
-              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/30 transition-all cursor-pointer shadow-sm"
-              title="Test Aura voice audio output"
+              className="px-2 py-1.5 sm:px-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-200 border border-indigo-500/30 transition-all cursor-pointer shadow-sm"
+              title="Test voice audio"
             >
               <Volume2 className="w-3.5 h-3.5 text-indigo-400" />
               <span className="hidden sm:inline">Test Sound</span>
@@ -3180,13 +3303,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               <button
                 type="button"
                 onClick={() => setShowLangMenu(!showLangMenu)}
-                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 cursor-pointer"
+                className="px-2 py-1.5 sm:px-2.5 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 cursor-pointer"
                 title="Change Voice Language"
               >
                 <span>
                   {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === voiceLanguage)?.flag || '🇮🇳'}{' '}
                   {SUPPORTED_VOICE_LANGUAGES.find((l) => l.code === voiceLanguage)?.nativeName || 'தமிழ்'}
                 </span>
+                <span className="text-[9px]">▾</span>
               </button>
 
               {showLangMenu && (
@@ -3219,8 +3343,37 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               )}
             </div>
 
+            {/* Mute Voice Toggle */}
+            <button
+              onClick={() => {
+                if (isSpeaking) speechEngine.stopSpeaking();
+                setIsMuted(!isMuted);
+              }}
+              className="p-1.5 sm:p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              title={isMuted ? 'Unmute voice' : 'Mute voice'}
+            >
+              {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+            </button>
+
+            {/* Cancel & Go Back to Home Button */}
+            <button
+              onClick={handleCancelAndGoHome}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 hover:text-white border border-rose-500/40 hover:border-rose-500/60 transition-all cursor-pointer shadow-md active:scale-95"
+              title="Cancel and return to Home Hub"
+              aria-label="Cancel and go back to home"
+            >
+              <Home className="w-3.5 h-3.5 text-rose-300" />
+              <span>Cancel</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Tier 2: Dedicated AI Engine, Model Switcher & Tool Ribbon */}
+        <div className="px-3 sm:px-6 py-2 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
+          {/* Left: AI Provider Toggle & Active Model Dropdown */}
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* AI Provider Switcher (Gemini vs NVIDIA) */}
-            <div className="flex items-center bg-slate-950/80 p-0.5 rounded-xl border border-slate-700/80 shadow-inner">
+            <div className="flex items-center bg-slate-900 p-0.5 rounded-xl border border-slate-700/80 shadow-inner">
               <button
                 type="button"
                 onClick={() => handleToggleProvider('gemini')}
@@ -3275,15 +3428,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                     ) : (
                       <Sparkles className="w-3 h-3 text-purple-400" />
                     )}
-                    <span className="font-mono text-[11px] truncate max-w-[95px] sm:max-w-none">
+                    <span className="font-mono text-[11px] truncate max-w-[85px] sm:max-w-none">
                       {displayName}
                     </span>
+                    <span className="text-[9px]">▾</span>
                   </button>
                 );
               })()}
 
               {showModelMenu && (
-                <div className="absolute right-0 mt-1.5 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto">
+                <div className="absolute left-0 mt-1.5 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto">
                   {aiProvider === 'nvidia' ? (
                     <>
                       {/* NVIDIA AI Foundation Models */}
@@ -3409,10 +3563,34 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               )}
             </div>
 
+            {/* Config All Models Button (OpenAI, Claude, Custom Ollama) */}
+            <button
+              type="button"
+              onClick={() => setShowGlobalAiModal(true)}
+              className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-white border border-slate-800 transition-colors"
+              title="Configure & Extensible AI Architecture (OpenAI, Claude, Custom Ollama)"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Windows Host System & Installer Assistant Button */}
+            <button
+              type="button"
+              onClick={() => setShowWindowsInstallerModal(true)}
+              className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-cyan-400 hover:text-cyan-300 border border-slate-800 transition-colors flex items-center gap-1 cursor-pointer"
+              title="Auro Windows Host System Assistant & Software Installer (Winget, Choco, PowerShell)"
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline text-[10px] font-bold font-mono">Windows Host</span>
+            </button>
+          </div>
+
+          {/* Right: Memory, Hands-Free, Help */}
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Persistent SQLite Memory Bank Header Button */}
             <button
               onClick={() => setShowMemoryDrawer(!showMemoryDrawer)}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border cursor-pointer ${
                 showMemoryDrawer
                   ? 'bg-purple-600/30 text-purple-200 border-purple-500/50 shadow-md shadow-purple-950/40'
                   : 'bg-purple-500/10 text-purple-300 border-purple-500/20 hover:bg-purple-500/20'
@@ -3430,7 +3608,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             {onOpenVision && (
               <button
                 onClick={onOpenVision}
-                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-all shadow-sm cursor-pointer"
+                className="px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-all shadow-sm cursor-pointer"
                 title="Auro Computer Vision Guide for Blind and Low-Vision Assistance"
                 aria-label="Auro Vision for Blind and Low-Vision Assistance"
               >
@@ -3442,6 +3620,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               </button>
             )}
 
+            {/* Hands-Free Button */}
             <button
               onClick={() => {
                 const next = !isHandsFree;
@@ -3454,47 +3633,28 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                   speechEngine.stopListening(true);
                 }
               }}
-              className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all border ${
                 isHandsFree
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-950/40'
-                  : 'bg-slate-800 text-slate-400 border-slate-700'
+                  : 'bg-slate-900 text-slate-400 border-slate-800'
               }`}
               title={isHandsFree ? 'Hands-Free Loop Active: Auro auto-listens after speaking' : 'Tap to enable Hands-Free Conversation'}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${isHandsFree ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-              <span>{isHandsFree ? 'Hands-Free' : 'Push-to-Talk'}</span>
+              <span className="text-[11px]">{isHandsFree ? 'Hands-Free' : 'Push-to-Talk'}</span>
             </button>
+
+            {/* Microphone Guide Help */}
             <button
               onClick={() => setShowMicHelp(!showMicHelp)}
-              className={`p-2 rounded-xl transition-colors ${
+              className={`p-1.5 rounded-xl transition-colors ${
                 showMicHelp
                   ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
               }`}
               title="Microphone Activation Guide"
             >
-              <HelpCircle className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => {
-                if (isSpeaking) speechEngine.stopSpeaking();
-                setIsMuted(!isMuted);
-              }}
-              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              title={isMuted ? 'Unmute voice' : 'Mute voice'}
-            >
-              {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
-            </button>
-
-            {/* Cancel & Go Back to Home Button */}
-            <button
-              onClick={handleCancelAndGoHome}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 hover:text-white border border-rose-500/40 hover:border-rose-500/60 transition-all cursor-pointer shadow-md active:scale-95"
-              title="Cancel and return to Home Hub"
-              aria-label="Cancel and go back to home"
-            >
-              <Home className="w-3.5 h-3.5 text-rose-300" />
-              <span>Cancel</span>
+              <HelpCircle className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -4025,6 +4185,152 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
                   <p className="whitespace-pre-wrap">{displayContent}</p>
 
+                  {/* Interactive Windows System Step Execution Card */}
+                  {msg.systemExecutionResult && (
+                    <div className="mt-3 p-3 rounded-2xl bg-slate-950/95 border border-cyan-500/40 font-mono text-xs space-y-2.5 shadow-lg">
+                      <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                        <div className="flex items-center gap-1.5 text-cyan-400 font-bold">
+                          <Terminal className="w-3.5 h-3.5" />
+                          <span>{msg.systemExecutionResult.stepTitle || 'Windows Host Execution'}</span>
+                        </div>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            msg.systemExecutionResult.success
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          }`}
+                        >
+                          {msg.systemExecutionResult.success
+                            ? '✓ EXECUTED'
+                            : `EXIT ${msg.systemExecutionResult.exitCode}`}
+                        </span>
+                      </div>
+
+                      {msg.systemExecutionResult.stepDescription && (
+                        <p className="text-[11px] text-slate-300 font-sans leading-relaxed">
+                          {msg.systemExecutionResult.stepDescription}
+                        </p>
+                      )}
+
+                      <div className="bg-slate-900/90 p-2 rounded-xl border border-slate-800 text-[11px] text-cyan-300 overflow-x-auto flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-slate-500 font-bold">PS&gt;</span>
+                          <span className="truncate">{msg.systemExecutionResult.command}</span>
+                        </div>
+                        <span className="text-[9px] text-slate-500 font-mono shrink-0">
+                          {msg.systemExecutionResult.durationMs}ms
+                        </span>
+                      </div>
+
+                      {msg.systemExecutionResult.stdout && (
+                        <pre className="text-slate-200 text-[11px] whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed bg-slate-950 p-2.5 rounded-xl border border-slate-900">
+                          {msg.systemExecutionResult.stdout}
+                        </pre>
+                      )}
+
+                      {msg.systemExecutionResult.stderr && (
+                        <pre className="text-rose-300 text-[11px] whitespace-pre-wrap max-h-36 overflow-y-auto leading-relaxed bg-rose-950/40 p-2.5 rounded-xl border border-rose-900/40">
+                          {msg.systemExecutionResult.stderr}
+                        </pre>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                        {msg.systemExecutionResult.nextStep ? (
+                          <div className="flex items-center gap-1 text-[10px] text-indigo-300">
+                            <ArrowRight className="w-3 h-3 text-cyan-400" />
+                            <span>Next: {msg.systemExecutionResult.nextStep}</span>
+                          </div>
+                        ) : (
+                          <div />
+                        )}
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (msg.systemExecutionResult?.command) {
+                                openWindowsTerminalWindow(msg.systemExecutionResult.command);
+                              }
+                            }}
+                            className="text-[10px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors cursor-pointer bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-500/30"
+                            title="Open a visible PowerShell window on your Windows desktop running this command"
+                          >
+                            <Terminal className="w-3 h-3" />
+                            <span>Open PowerShell Window</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setShowWindowsInstallerModal(true)}
+                            className="text-[10px] text-cyan-400 hover:text-cyan-300 flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <span>Open Windows Console</span>
+                            <ArrowRight className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Interactive Live Weather Report Card */}
+                  {msg.weatherCard && (
+                    <div className="mt-3 p-3 rounded-2xl bg-gradient-to-r from-sky-950/70 via-slate-900 to-indigo-950/70 border border-sky-500/40 shadow-lg space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <CloudSun className="w-4 h-4 text-sky-400 shrink-0" />
+                          <span className="text-xs font-bold text-white truncate">
+                            {msg.weatherCard.location}
+                          </span>
+                        </div>
+                        <span className="text-sm font-mono font-bold text-sky-300 shrink-0">
+                          {msg.weatherCard.temperature}°C
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-300 pt-1 border-t border-slate-800/80">
+                        <span className="text-sky-200">{msg.weatherCard.condition}</span>
+                        <span className="font-mono text-slate-400 text-[10px]">
+                          H: {msg.weatherCard.high}°C / L: {msg.weatherCard.low}°C
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-1.5 pt-1 text-[10px] text-slate-400 font-mono">
+                        <div className="bg-slate-950/60 p-1.5 rounded-lg border border-slate-800 text-center">
+                          <span className="text-slate-500 block text-[9px]">HUMIDITY</span>
+                          <span className="text-white font-bold">{msg.weatherCard.humidity}%</span>
+                        </div>
+                        <div className="bg-slate-950/60 p-1.5 rounded-lg border border-slate-800 text-center">
+                          <span className="text-slate-500 block text-[9px]">RAIN CHANCE</span>
+                          <span className="text-white font-bold">{msg.weatherCard.rainChance}%</span>
+                        </div>
+                        <div className="bg-slate-950/60 p-1.5 rounded-lg border border-slate-800 text-center">
+                          <span className="text-slate-500 block text-[9px]">WIND</span>
+                          <span className="text-white font-bold truncate">{msg.weatherCard.wind || '12 km/h'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/80">
+                        {msg.weatherCard.coordinates && (
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {msg.weatherCard.coordinates.latitude.toFixed(2)}°N, {msg.weatherCard.coordinates.longitude.toFixed(2)}°E
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onNavigateTab) {
+                              onNavigateTab('weather');
+                            }
+                          }}
+                          className="text-[10px] text-sky-400 hover:text-sky-300 flex items-center gap-1 transition-colors cursor-pointer ml-auto font-semibold"
+                        >
+                          <span>Open Weather Tab</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                 {msg.actionSuggestion && (
                   <div className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
                     <Compass className="w-3.5 h-3.5 shrink-0" />
@@ -4476,6 +4782,18 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           </form>
         </div>
       </div>
+
+      {/* Global Extensible AI Model Configurator Modal */}
+      <AiModelConfigModal
+        isOpen={showGlobalAiModal}
+        onClose={() => setShowGlobalAiModal(false)}
+      />
+
+      {/* Auro Windows Host System Assistant & Software Installer Modal */}
+      <WindowsSystemInstallerModal
+        isOpen={showWindowsInstallerModal}
+        onClose={() => setShowWindowsInstallerModal(false)}
+      />
     </div>
   );
 };

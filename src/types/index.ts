@@ -171,6 +171,20 @@ export interface UploadedFileDoc {
   extractedEventsCount: number;
 }
 
+export interface WeatherCardData {
+  location: string;
+  temperature: number;
+  apparentTemperature?: number;
+  condition: string;
+  high: number;
+  low: number;
+  rainChance: number;
+  humidity: number;
+  wind?: string;
+  uvIndex?: number;
+  coordinates?: { latitude: number; longitude: number };
+}
+
 export interface VoiceMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -189,6 +203,9 @@ export interface VoiceMessage {
     isPdf?: boolean;
     textContent?: string;
   };
+  systemAction?: WindowsSystemAction;
+  systemExecutionResult?: WindowsSystemExecutionResult;
+  weatherCard?: WeatherCardData;
 }
 
 export interface GoogleWorkspaceSettings {
@@ -439,7 +456,15 @@ export const AVAILABLE_GEMINI_MODELS: GeminiModelOption[] = [
   },
 ];
 
-export type AiProvider = 'gemini' | 'nvidia';
+export type AiProvider = 'gemini' | 'nvidia' | 'openai' | 'anthropic' | 'custom';
+
+export interface CustomAiModelConfig {
+  endpointUrl: string;
+  modelId: string;
+  modelName: string;
+  apiKey?: string;
+  providerType?: 'openai-compatible' | 'ollama' | 'vllm' | 'lmstudio';
+}
 
 export interface AiModelOption {
   id: string;
@@ -452,6 +477,85 @@ export interface AiModelOption {
   recommendedFor?: string;
   supportsImageGen?: boolean;
 }
+
+export const AVAILABLE_OPENAI_MODELS: AiModelOption[] = [
+  {
+    id: 'gpt-4o',
+    name: 'OpenAI GPT-4o',
+    provider: 'openai',
+    badge: 'OMNI FLAGSHIP',
+    tagline: 'High-intelligence flagship multimodal model across text, audio, and vision',
+    speed: 'Fast & Versatile',
+    color: 'emerald',
+    recommendedFor: 'Complex Planning & Conversational AI',
+  },
+  {
+    id: 'gpt-4o-mini',
+    name: 'OpenAI GPT-4o Mini',
+    provider: 'openai',
+    badge: 'FAST & AFFORDABLE',
+    tagline: 'Cost-efficient intelligence with sub-second response times',
+    speed: 'Ultra-Fast',
+    color: 'emerald',
+    recommendedFor: 'Voice turns & Real-time Tasks',
+  },
+  {
+    id: 'o3-mini',
+    name: 'OpenAI o3-mini',
+    provider: 'openai',
+    badge: 'REASONING',
+    tagline: 'Advanced chain-of-thought mathematical and algorithmic reasoning',
+    speed: 'Deep Thinking',
+    color: 'indigo',
+    recommendedFor: 'Financial Roadmap & Technical Problem Solving',
+  },
+];
+
+export const AVAILABLE_ANTHROPIC_MODELS: AiModelOption[] = [
+  {
+    id: 'claude-3-7-sonnet-20250219',
+    name: 'Claude 3.7 Sonnet',
+    provider: 'anthropic',
+    badge: 'HYBRID REASONING',
+    tagline: 'State-of-the-art hybrid reasoning with adaptive thinking tokens',
+    speed: 'Adaptive / Fast',
+    color: 'purple',
+    recommendedFor: 'Executive Writing, Coding & Complex Guidance',
+  },
+  {
+    id: 'claude-3-5-haiku-20241022',
+    name: 'Claude 3.5 Haiku',
+    provider: 'anthropic',
+    badge: 'LIGHTNING FAST',
+    tagline: 'High speed, compact model for immediate voice and chat execution',
+    speed: 'Lightning Fast',
+    color: 'cyan',
+    recommendedFor: 'Everyday Assistant Turns & Quick Summary',
+  },
+];
+
+export const DEFAULT_CUSTOM_MODELS: AiModelOption[] = [
+  {
+    id: 'custom-ollama-llama3',
+    name: 'Local Ollama (Llama 3.2 / DeepSeek)',
+    provider: 'custom',
+    badge: 'LOCAL / AIR-GAPPED',
+    tagline: 'Self-hosted inference on your local GPU/machine via Ollama or vLLM',
+    speed: 'Local Latency',
+    color: 'amber',
+    recommendedFor: '100% Private Offline AI',
+  },
+  {
+    id: 'custom-openai-compatible',
+    name: 'Custom OpenAI-Compatible API',
+    provider: 'custom',
+    badge: 'EXTENSIBLE',
+    tagline: 'Connect any OpenAI-compatible API endpoint (Groq, DeepSeek, Together, LM Studio)',
+    speed: 'Custom API',
+    color: 'blue',
+    recommendedFor: 'Third-party AI Endpoints',
+  },
+];
 
 export const AVAILABLE_NVIDIA_MODELS: AiModelOption[] = [
   {
@@ -536,4 +640,53 @@ export const AVAILABLE_NVIDIA_MODELS: AiModelOption[] = [
     supportsImageGen: true,
   },
 ];
+
+export interface WindowsSystemAction {
+  shouldExecute?: boolean;
+  title?: string;
+  command?: string;
+  shell?: 'powershell' | 'cmd';
+  manager?: 'winget' | 'choco' | 'npm' | 'pip' | 'powershell';
+  packageId?: string;
+  stepNumber?: number;
+  totalSteps?: number;
+  stepDescription?: string;
+  nextStep?: string;
+  autoExecute?: boolean;
+}
+
+export interface WindowsSystemExecutionResult {
+  success: boolean;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  command: string;
+  manager?: string;
+  stepTitle?: string;
+  stepDescription?: string;
+  nextStep?: string;
+}
+
+export interface WindowsHostInfo {
+  platform: string;
+  type: string;
+  release: string;
+  arch: string;
+  hostname: string;
+  username: string;
+  uptimeSeconds: number;
+  totalMemGb: string;
+  freeMemGb: string;
+  cpuModel: string;
+  cpuCores: number;
+}
+
+export interface WindowsToolStatus {
+  id: string;
+  name: string;
+  installed: boolean;
+  path?: string;
+  version?: string;
+}
 

@@ -260,7 +260,7 @@ export async function fetchCompletedVideoBlob(operationName: string): Promise<st
   return URL.createObjectURL(blob);
 }
 
-// 3. Multi-Turn Chatbot using Gemini (gemini-4-argon, gemini-3.8-flash, gemini-3.1-flash-lite)
+// 3. Multi-Turn Chatbot using Gemini, NVIDIA NIM, OpenAI, Claude, or Custom
 export async function sendMultiTurnChat(
   messages: Array<{ role: 'user' | 'model'; text: string }>,
   options: {
@@ -268,11 +268,31 @@ export async function sendMultiTurnChat(
     taskComplexity?: 'complex' | 'general' | 'fast';
     modelOverride?: string;
     model?: string;
-    provider?: 'gemini' | 'nvidia';
+    provider?: 'gemini' | 'nvidia' | 'openai' | 'anthropic' | 'custom' | string;
     customSystemInstruction?: string;
   } = {}
 ): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string; providerUsed?: string }> {
   try {
+    const selectedProvider =
+      options.provider ||
+      (typeof window !== 'undefined' ? localStorage.getItem('aura_ai_provider') : null) ||
+      'gemini';
+    const selectedModel =
+      options.modelOverride ||
+      options.model ||
+      (typeof window !== 'undefined'
+        ? localStorage.getItem(`aura_${selectedProvider}_model`) ||
+          localStorage.getItem(selectedProvider === 'nvidia' ? 'aura_nvidia_model' : 'aura_voice_model')
+        : null);
+
+    let customConfig: any = undefined;
+    if (selectedProvider === 'custom' && typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('aura_custom_ai_config');
+        if (raw) customConfig = JSON.parse(raw);
+      } catch {}
+    }
+
     const res = await fetch(getApiUrl('/api/ai/chat-multiturn'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -280,9 +300,15 @@ export async function sendMultiTurnChat(
         messages,
         role: options.role || 'executive',
         taskComplexity: options.taskComplexity || 'general',
-        modelOverride: options.modelOverride || options.model,
-        provider: options.provider,
+        modelOverride: selectedModel,
+        model: selectedModel,
+        provider: selectedProvider,
+        customConfig,
         customSystemInstruction: options.customSystemInstruction,
+        geminiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_custom_gemini_api_key') : null,
+        nvidiaApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') : null,
+        openaiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_openai_api_key') : null,
+        anthropicApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_anthropic_api_key') : null,
       }),
     });
 

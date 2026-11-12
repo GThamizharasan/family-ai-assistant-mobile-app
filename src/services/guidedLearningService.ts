@@ -217,6 +217,8 @@ export interface PromptConstructorOptions {
   learningStyle: 'socratic' | 'analogies' | 'hands_on_project' | 'executive_summary';
   lessonDepth: '5_min_concept' | 'deep_dive_masterclass' | 'complete_curriculum';
   language: 'en' | 'ta' | 'tanglish';
+  provider?: string;
+  model?: string;
 }
 
 export interface GuidedLearningLesson {
@@ -317,13 +319,15 @@ You teach with warmth, extreme clarity, intellectual rigor, and infectious curio
 Always format your output in clean Markdown with clear headings, bullet points, and practical analogies.
 Empower the learner to build real-world intuition, code, and confidence.`;
 
-  // Call Gemini multi-turn chat service
+  // Call Universal multi-turn chat service with chosen provider & model
   const chatResult = await sendMultiTurnChat(
     [{ role: 'user', text: constructedPrompt }],
     {
       role: 'stem_tutor',
       taskComplexity: 'complex',
       customSystemInstruction: systemInstruction,
+      provider: options.provider as any,
+      model: options.model,
     }
   );
 

@@ -13,19 +13,36 @@ import {
   Eye,
   Database,
   Footprints,
+  Cpu,
+  Sparkles,
+  Zap,
+  Terminal,
+  CloudSun,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isOfflineModeSimulated } from '../services/offlineSyncService';
 import { getLocalWalkingStepLogs } from '../services/walkingStepsDriveSync';
+import { getCachedWeatherData } from '../services/weatherService';
+import { AiProvider } from '../types';
+import {
+  getActiveAiProvider,
+  getActiveAiModel,
+  getModelDisplayName,
+  SUPPORTED_AI_PROVIDERS,
+  AI_MODEL_CHANGED_EVENT,
+} from '../services/aiConfig';
+import { AiModelConfigModal } from './AiModelConfigModal';
 
 interface MobileFrameProps {
   children: ReactNode;
   onOpenVoice: () => void;
   onOpenVision?: () => void;
   onOpenInstallerHub: () => void;
+  onOpenWindowsInstaller?: () => void;
   onOpenOfflineSyncCenter?: () => void;
   onOpenWalkingSteps?: () => void;
+  onOpenWeather?: () => void;
   onGoHome: () => void;
 }
 
@@ -34,8 +51,10 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   onOpenVoice,
   onOpenVision,
   onOpenInstallerHub,
+  onOpenWindowsInstaller,
   onOpenOfflineSyncCenter,
   onOpenWalkingSteps,
+  onOpenWeather,
   onGoHome,
 }) => {
   const { isMobileDeviceFrame, toggleMobileFrame, isOnline, lockApp, signOutGoogle } = useApp();
@@ -49,9 +68,22 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   const [isActivelyWalking, setIsActivelyWalking] = useState(false);
   const [isBackgroundActive, setIsBackgroundActive] = useState(false);
 
+  // Global AI Model & Provider state for the Main Top Bar
+  const [activeProvider, setActiveProvider] = useState<AiProvider>(() => getActiveAiProvider());
+  const [activeModel, setActiveModel] = useState<string>(() => getActiveAiModel());
+  const [showAiModelModal, setShowAiModelModal] = useState(false);
+  const [topWeather, setTopWeather] = useState(() => getCachedWeatherData());
+
   useEffect(() => {
     const handleOfflineChanged = (e: any) => {
       setOfflineSimulated(!!e.detail?.active);
+    };
+
+    const handleModelChanged = (e: any) => {
+      if (e.detail?.provider) {
+        setActiveProvider(e.detail.provider);
+        setActiveModel(e.detail.model);
+      }
     };
 
     const handleStepTick = (e: any) => {
@@ -74,11 +106,13 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
     window.addEventListener('aura_offline_mode_changed', handleOfflineChanged);
     window.addEventListener('aura_realtime_step_tick', handleStepTick);
     window.addEventListener('aura_steps_logs_changed', handleLogsChanged);
+    window.addEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
 
     return () => {
       window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
       window.removeEventListener('aura_realtime_step_tick', handleStepTick);
       window.removeEventListener('aura_steps_logs_changed', handleLogsChanged);
+      window.removeEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
     };
   }, []);
 
@@ -108,6 +142,56 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             <Home className="w-3.5 h-3.5 text-indigo-400" />
             <span className="text-[11px] font-semibold">Home</span>
           </button>
+
+          {/* Main Top Bar AI Model Switcher / Indicator Pill */}
+          <button
+            onClick={() => setShowAiModelModal(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] ${
+              activeProvider === 'nvidia'
+                ? 'bg-[#76B900]/15 text-[#76B900] border-[#76B900]/40 hover:bg-[#76B900]/25'
+                : activeProvider === 'openai'
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                : activeProvider === 'anthropic'
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                : activeProvider === 'custom'
+                ? 'bg-sky-500/15 text-sky-300 border-sky-500/40 hover:bg-sky-500/25'
+                : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/25'
+            }`}
+            title={`Active AI Model: ${activeProvider.toUpperCase()} - ${getModelDisplayName(activeProvider, activeModel)} (Tap to configure any AI model)`}
+            aria-label="Active AI Model Switcher"
+          >
+            <span className="text-xs">{SUPPORTED_AI_PROVIDERS.find((p) => p.id === activeProvider)?.icon || '✦'}</span>
+            <span className="font-mono truncate max-w-[70px] sm:max-w-[110px]">
+              {getModelDisplayName(activeProvider, activeModel)}
+            </span>
+            <span className="text-[9px] opacity-70">▾</span>
+          </button>
+
+          {/* Quick Weather Forecast Button */}
+          {onOpenWeather && (
+            <button
+              onClick={onOpenWeather}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              title={`Live Weather Forecast: ${topWeather ? `${topWeather.current.temperature}°C (${topWeather.locationName})` : 'Check Forecast'}`}
+              aria-label="Open Weather Forecast"
+            >
+              <CloudSun className="w-3.5 h-3.5 text-sky-400" />
+              <span>{topWeather ? `${topWeather.current.temperature}°C` : 'Weather'}</span>
+            </button>
+          )}
+
+          {/* Windows Host System & Installer Assistant */}
+          {onOpenWindowsInstaller && (
+            <button
+              onClick={onOpenWindowsInstaller}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-white border border-cyan-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              title="Auro Windows Host System Assistant & Software Installer (Winget, Choco, PowerShell)"
+              aria-label="Open Windows System Assistant"
+            >
+              <Terminal className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Windows Host</span>
+            </button>
+          )}
 
           {/* 3GB SQLite Offline Store Sync Center */}
           {onOpenOfflineSyncCenter && (
@@ -250,6 +334,12 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           </div>
         )}
       </div>
+
+      {/* Global AI Model Selector & Configuration Modal */}
+      <AiModelConfigModal
+        isOpen={showAiModelModal}
+        onClose={() => setShowAiModelModal(false)}
+      />
     </div>
   );
 };
