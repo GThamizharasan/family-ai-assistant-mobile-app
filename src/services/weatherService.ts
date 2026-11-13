@@ -4,6 +4,8 @@
  * and high-accuracy GPS/IP location detection for mobile (Capacitor/WebView) and Web.
  */
 
+import { getApiUrl } from './api';
+
 export interface Coordinates {
   latitude: number;
   longitude: number;
@@ -346,7 +348,7 @@ export async function getCurrentCoordinates(): Promise<{ coords: Coordinates; so
 export async function reverseGeocode(latitude: number, longitude: number): Promise<{ name: string; region?: string; country?: string }> {
   // 1. Try local backend reverse endpoint first
   try {
-    const res = await fetch(`/api/weather/reverse?lat=${latitude}&lon=${longitude}`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(getApiUrl(`/api/weather/reverse?lat=${latitude}&lon=${longitude}`), { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       if (data.name) {
@@ -387,7 +389,7 @@ export async function searchLocations(query: string): Promise<GeoLocationResult[
 
   // Try local proxy endpoint first
   try {
-    const res = await fetch(`/api/weather/geocode?query=${encodeURIComponent(trimmed)}`, { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(getApiUrl(`/api/weather/geocode?query=${encodeURIComponent(trimmed)}`), { signal: AbortSignal.timeout(4000) });
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.results)) {
@@ -449,7 +451,7 @@ export async function fetchWeatherForecast(
   let apiJson: any = null;
 
   try {
-    const proxyRes = await fetch(`/api/weather/forecast?lat=${roundedLat}&lon=${roundedLon}`, { signal: AbortSignal.timeout(4000) });
+    const proxyRes = await fetch(getApiUrl(`/api/weather/forecast?lat=${roundedLat}&lon=${roundedLon}`), { signal: AbortSignal.timeout(4000) });
     if (proxyRes.ok) {
       apiJson = await proxyRes.json();
     }
@@ -588,9 +590,12 @@ export async function fetchWeatherForecast(
     source: customLocationName ? 'search' : 'gps',
   };
 
-  // Cache latest weather data in localStorage for offline availability
+  // Cache latest weather data in localStorage for offline availability & notify listeners
   try {
     localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(result));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('aura_weather_updated', { detail: result }));
+    }
   } catch {}
 
   return result;

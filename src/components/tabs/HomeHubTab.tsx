@@ -154,9 +154,33 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
   // Live Weather State for Home Hub Widget
   const [homeWeather, setHomeWeather] = useState<WeatherData | null>(() => getCachedWeatherData());
+  const [isRefreshingWeather, setIsRefreshingWeather] = useState(false);
+
+  const handleRefreshHomeWeather = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isRefreshingWeather) return;
+    setIsRefreshingWeather(true);
+    try {
+      const { coords } = await getCurrentCoordinates();
+      const fresh = await fetchWeatherForecast(coords.latitude, coords.longitude);
+      setHomeWeather(fresh);
+    } catch (err) {
+      console.warn('Weather refresh error:', err);
+    } finally {
+      setIsRefreshingWeather(false);
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
+
+    const handleWeatherUpdated = (e: any) => {
+      if (e.detail?.current && isMounted) {
+        setHomeWeather(e.detail);
+      }
+    };
+    window.addEventListener('aura_weather_updated', handleWeatherUpdated);
+
     (async () => {
       try {
         const { coords } = await getCurrentCoordinates();
@@ -168,8 +192,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
         // Fall back to cached weather
       }
     })();
+
     return () => {
       isMounted = false;
+      window.removeEventListener('aura_weather_updated', handleWeatherUpdated);
     };
   }, []);
 
@@ -393,7 +419,19 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
         </div>
 
         <div className="flex items-center gap-2 relative z-10 self-end sm:self-auto">
-          <div className="flex items-center gap-1 text-xs text-sky-400 group-hover:text-sky-300 font-semibold">
+          <button
+            type="button"
+            onClick={handleRefreshHomeWeather}
+            disabled={isRefreshingWeather}
+            className="p-1.5 sm:p-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-300 hover:text-white border border-sky-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+            title="Refresh Live Weather & GPS Coordinates"
+            aria-label="Refresh Weather"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingWeather ? 'animate-spin text-sky-400' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshingWeather ? 'Updating...' : 'Refresh'}</span>
+          </button>
+
+          <div className="flex items-center gap-1 text-xs text-sky-400 group-hover:text-sky-300 font-semibold px-2 py-1 rounded-xl bg-sky-500/10 border border-sky-500/20">
             <span>Forecast</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </div>

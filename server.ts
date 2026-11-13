@@ -1742,9 +1742,10 @@ User Profile Context:
 CRITICAL GMAIL & GOOGLE WORKSPACE CAPABILITY: You have direct, real-time visibility into the user's connected Gmail inbox, sent emails, Google Drive files, and Google One storage quota. When asked about emails, unread messages, sent messages, senders, recipients, Drive documents, or cloud storage usage, answer with precision from the Connected Google Workspace & Gmail Data above. Never say you cannot check Gmail or Google Drive.
 
 SOVEREIGN FEATURE & SCREEN NAVIGATION CAPABILITY:
-You have direct sovereign control to open and switch screens for the user. When the user asks to open or navigate to any feature or screen in the app (e.g. "open voice memo", "open apple music", "open apple books", "open document scanner", "open weather", "check weather forecast", "open finance hub", "open family tracker", "open whatsapp", etc. in English, Tamil, or any language):
+You have direct sovereign control to open and switch screens for the user. When the user EXPLICITLY asks to open, switch to, or navigate to any feature or screen in the app (e.g. "open voice memo", "open apple music", "open apple books", "open document scanner", "open weather tab", "open finance hub", "open family tracker", "open whatsapp", etc. in English, Tamil, or any language):
 1. In "reply", confirm warmly that you are opening that feature now (e.g. "Opening Weather Forecast on your screen now." or "வானிலை திரையை இப்போது திறக்கிறேன்.").
-2. In your JSON response, set "navigateToTab": "home" | "weather" | "navigation" | "ibooks" | "music" | "memos" | "tts" | "stt" | "scanner" | "translate" | "clock" | "ai-studio" | "phone" | "family" | "billionaire" | "finance" | "productivity" | "wellness" | "mood" | "writing" | "vault" | "google" | "devices" | "whatsapp" | "billing" | "docs".
+2. In your JSON response, set "navigateToTab": "weather" | "navigation" | "ibooks" | "music" | "memos" | "tts" | "stt" | "scanner" | "translate" | "clock" | "ai-studio" | "phone" | "family" | "billionaire" | "finance" | "productivity" | "wellness" | "mood" | "writing" | "vault" | "google" | "devices" | "whatsapp" | "billing" | "docs" | "home".
+CRITICAL RULE: If the user did NOT explicitly command to open, switch to, or launch a screen (e.g., they are chatting, asking questions, greeting, checking the weather, discussing feelings, or making requests within the assistant), set "navigateToTab": null. NEVER set "navigateToTab": "home" for general conversation.
 
 LIVE WEATHER FORECAST & GPS COORDINATE CAPABILITY:
 You have direct access to the user's live weather forecast, GPS coordinates, 24-hour hourly temperatures, 7-day outlook, humidity, wind, and rain probabilities.
@@ -2316,6 +2317,12 @@ Return a valid JSON object matching:
       uvIndex: liveWeatherSummary.uvIndex,
       coordinates: liveWeatherSummary.coordinates,
     } : undefined);
+
+    // Guard against unintended screen navigation kicks back to home/main screen
+    const isExplicitUserNavCommand = /^(open|go to|navigate to|switch to|launch|take me to|show tab|திரைக்கு செல்|திற)\b/i.test((message || '').trim());
+    if (!isExplicitUserNavCommand && parsed.navigateToTab) {
+      delete parsed.navigateToTab;
+    }
 
     res.json({
       ...parsed,

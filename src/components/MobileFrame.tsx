@@ -36,6 +36,7 @@ import { AiModelConfigModal } from './AiModelConfigModal';
 
 interface MobileFrameProps {
   children: ReactNode;
+  currentTab?: string;
   onOpenVoice: () => void;
   onOpenVision?: () => void;
   onOpenInstallerHub: () => void;
@@ -48,6 +49,7 @@ interface MobileFrameProps {
 
 export const MobileFrame: React.FC<MobileFrameProps> = ({
   children,
+  currentTab,
   onOpenVoice,
   onOpenVision,
   onOpenInstallerHub,
@@ -103,15 +105,23 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
       setLiveStepsToday(todayLogs.reduce((acc, l) => acc + l.steps, 0));
     };
 
+    const handleWeatherUpdated = (e: any) => {
+      if (e.detail?.current) {
+        setTopWeather(e.detail);
+      }
+    };
+
     window.addEventListener('aura_offline_mode_changed', handleOfflineChanged);
     window.addEventListener('aura_realtime_step_tick', handleStepTick);
     window.addEventListener('aura_steps_logs_changed', handleLogsChanged);
+    window.addEventListener('aura_weather_updated', handleWeatherUpdated);
     window.addEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
 
     return () => {
       window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
       window.removeEventListener('aura_realtime_step_tick', handleStepTick);
       window.removeEventListener('aura_steps_logs_changed', handleLogsChanged);
+      window.removeEventListener('aura_weather_updated', handleWeatherUpdated);
       window.removeEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
     };
   }, []);
@@ -132,7 +142,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           <span className="text-[10px] text-slate-500 font-mono">v2.4 Sovereign</span>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-0.5 max-w-[calc(100%-170px)] justify-end">
           <button
             onClick={onGoHome}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95"

@@ -294,7 +294,7 @@ export const AiModelConfigModal: React.FC<AiModelConfigModalProps> = ({ isOpen, 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-5 animate-in fade-in duration-200">
       <div className="w-full max-w-xl max-h-[90vh] rounded-3xl border border-slate-800 bg-slate-900/95 flex flex-col shadow-2xl relative overflow-hidden">
         {/* Header */}
         <div className="p-4 sm:px-6 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between">

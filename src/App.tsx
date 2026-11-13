@@ -317,6 +317,7 @@ const AppContent: React.FC = () => {
 
   return (
     <MobileFrame
+      currentTab={currentTab}
       onOpenVoice={() => setIsVoiceOpen(true)}
       onOpenVision={() => setIsVisionOpen(true)}
       onOpenInstallerHub={() => setIsInstallerOpen(true)}

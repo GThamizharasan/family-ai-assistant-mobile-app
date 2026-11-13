@@ -969,11 +969,16 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.startsWith('switch to ') ||
       lower.startsWith('launch ') ||
       lower.startsWith('show tab ') ||
+      lower.startsWith('take me to ') ||
       lower.startsWith('திற ') ||
-      lower.includes('திரைக்கு செல்');
+      lower.includes('திரைக்கு செல்') ||
+      lower.endsWith(' திற') ||
+      lower === 'home' ||
+      lower === 'home hub' ||
+      lower === 'go home';
 
-    // If an attachment is attached and user didn't explicitly ask to navigate screens, bypass navigation intents to prioritize multimodal file analysis
-    const shouldCheckNavigation = !selectedFile || isExplicitNavigation;
+    // Screen navigation intents should ONLY run when the user explicitly commands navigation and no file is being analyzed
+    const shouldCheckNavigation = isExplicitNavigation && !selectedFile;
 
     if (shouldCheckNavigation) {
       // =========================================================================
@@ -1750,6 +1755,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speakWithAuro(rep);
       return;
     }
+  }
 
     // Direct Voice-to-Call intent detection
     if (lower.startsWith('call ') || lower.includes('place a call to ') || lower.includes('make a call to ') || lower.startsWith('dial ')) {
@@ -2421,10 +2427,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         actionSuggestion: 'Open Smart Meds & Supplements',
       });
       speakWithAuro(reply);
-
-      if (onNavigateTab) {
-        onNavigateTab('wellness');
-      }
       return;
     }
 
@@ -2550,10 +2552,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         actionSuggestion: 'Open Hydration Tracker',
       });
       speakWithAuro(reply);
-
-      if (onNavigateTab) {
-        onNavigateTab('wellness');
-      }
       return;
     }
 
@@ -2668,10 +2666,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         actionSuggestion: 'Open Steps Tracker',
       });
       speakWithAuro(reply);
-
-      if (onNavigateTab) {
-        onNavigateTab('wellness', 'steps');
-      }
       return;
     }
 
@@ -3262,7 +3256,6 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         console.warn('Direct weather check exception:', wErr);
       }
     }
-  }
 
     setIsThinking(true);
     if (selectedFile) {
@@ -3549,8 +3542,19 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         setTimeout(() => setDriveUploadNotice(null), 5000);
       }
 
-      // Check if Gemini requested navigation to a specific screen
-      if (result.navigateToTab && onNavigateTab) {
+      // Only execute screen navigation if the user explicitly commanded to open or switch to a screen
+      const userAskedToNavigate =
+        /^(open|go to|navigate to|switch to|show tab|launch|take me to|திரைக்கு செல்|திற)\b/i.test(spokenText.trim()) ||
+        /\b(open (the |this )?(screen|tab|feature|app)|show (the |this )?(screen|tab))\b/i.test(spokenText);
+
+      if (
+        result.navigateToTab &&
+        result.navigateToTab !== 'none' &&
+        result.navigateToTab !== 'null' &&
+        result.navigateToTab !== 'chat' &&
+        userAskedToNavigate &&
+        onNavigateTab
+      ) {
         isNavigatingRef.current = true;
         setTimeout(() => {
           onNavigateTab(result.navigateToTab as TabKey, result.navigateSubTab);
@@ -3742,32 +3746,38 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               </button>
 
               {showLangMenu && (
-                <div className="absolute right-0 mt-1.5 w-48 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-1.5 z-50">
-                  <span className="text-[10px] text-slate-400 font-semibold px-3 py-1 block uppercase tracking-wider">
-                    Voice Language
-                  </span>
-                  {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
-                    const isSelected = voiceLanguage === lang.code;
-                    return (
-                      <button
-                        key={lang.code}
-                        type="button"
-                        onClick={() => handleSelectLanguage(lang.code)}
-                        className={`w-full px-3 py-1.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'bg-indigo-600/30 text-indigo-200 font-bold'
-                            : 'text-slate-300 hover:bg-slate-800'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span>{lang.flag}</span>
-                          <span>{lang.label}</span>
-                        </span>
-                        {isSelected && <span className="text-emerald-400 text-xs">✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowLangMenu(false)}
+                  />
+                  <div className="absolute right-0 top-full mt-1.5 w-48 rounded-2xl bg-slate-900/98 backdrop-blur-xl border border-slate-700 shadow-2xl py-1.5 z-50 ring-1 ring-white/10 animate-in fade-in zoom-in-95 duration-150">
+                    <span className="text-[10px] text-slate-400 font-semibold px-3 py-1 block uppercase tracking-wider">
+                      Voice Language
+                    </span>
+                    {SUPPORTED_VOICE_LANGUAGES.map((lang) => {
+                      const isSelected = voiceLanguage === lang.code;
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onClick={() => handleSelectLanguage(lang.code)}
+                          className={`w-full px-3 py-1.5 text-xs text-left flex items-center justify-between transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600/30 text-indigo-200 font-bold'
+                              : 'text-slate-300 hover:bg-slate-800'
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span>{lang.flag}</span>
+                            <span>{lang.label}</span>
+                          </span>
+                          {isSelected && <span className="text-emerald-400 text-xs">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 
@@ -3797,7 +3807,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         </div>
 
         {/* Tier 2: Dedicated AI Engine, Model Switcher & Tool Ribbon */}
-        <div className="px-3 sm:px-6 py-2 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between gap-2 overflow-x-auto scrollbar-none">
+        <div className="px-3 sm:px-6 py-2 bg-slate-950 border-b border-slate-800/80 flex items-center justify-between gap-1.5 sm:gap-2 relative z-30 flex-wrap sm:flex-nowrap">
           {/* Left: AI Provider Toggle & Active Model Dropdown */}
           <div className="flex items-center gap-1.5 shrink-0">
             {/* AI Provider Switcher (Gemini vs NVIDIA) */}
@@ -3865,129 +3875,136 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
               })()}
 
               {showModelMenu && (
-                <div className="absolute left-0 mt-1.5 w-72 rounded-2xl bg-slate-900 border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto">
-                  {aiProvider === 'nvidia' ? (
-                    <>
-                      {/* NVIDIA AI Foundation Models */}
-                      <div className="px-3 py-1 flex items-center justify-between border-b border-slate-800 bg-slate-950/60">
-                        <span className="text-[10px] text-[#76B900] font-bold uppercase tracking-wider flex items-center gap-1">
-                          <Cpu className="w-3 h-3" />
-                          NVIDIA NIM GPU Models
-                        </span>
-                        <span className="text-[8px] px-1.5 py-0.2 rounded bg-[#76B900]/20 text-[#76B900] font-mono font-bold">
-                          ACTIVE
-                        </span>
-                      </div>
-                      {AVAILABLE_NVIDIA_MODELS.filter((m) => !m.supportsImageGen).map((modelOpt) => {
-                        const isSelected = selectedVoiceModel === modelOpt.id;
-                        return (
+                <>
+                  {/* Backdrop dismiss listener */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowModelMenu(false)}
+                  />
+                  <div className="absolute left-1/2 -translate-x-1/2 sm:translate-x-0 sm:left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2.5rem)] rounded-2xl bg-slate-900/98 backdrop-blur-xl border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto ring-1 ring-white/10 animate-in fade-in zoom-in-95 duration-150">
+                    {aiProvider === 'nvidia' ? (
+                      <>
+                        {/* NVIDIA AI Foundation Models */}
+                        <div className="px-3 py-1 flex items-center justify-between border-b border-slate-800 bg-slate-950/60">
+                          <span className="text-[10px] text-[#76B900] font-bold uppercase tracking-wider flex items-center gap-1">
+                            <Cpu className="w-3 h-3" />
+                            NVIDIA NIM GPU Models
+                          </span>
+                          <span className="text-[8px] px-1.5 py-0.2 rounded bg-[#76B900]/20 text-[#76B900] font-mono font-bold">
+                            ACTIVE
+                          </span>
+                        </div>
+                        {AVAILABLE_NVIDIA_MODELS.filter((m) => !m.supportsImageGen).map((modelOpt) => {
+                          const isSelected = selectedVoiceModel === modelOpt.id;
+                          return (
+                            <button
+                              key={modelOpt.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedVoiceModel(modelOpt.id);
+                                setAiProvider('nvidia');
+                                localStorage.setItem('aura_ai_provider', 'nvidia');
+                                localStorage.setItem('aura_nvidia_model', modelOpt.id);
+                                setShowModelMenu(false);
+                              }}
+                              className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-[#76B900]/20 text-emerald-200 font-bold border-l-2 border-[#76B900]'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white text-xs">{modelOpt.name}</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-[#76B900]/20 text-[#76B900] text-[9px] font-mono font-bold">
+                                    {modelOpt.badge}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
+                              </div>
+                              {isSelected && <span className="text-[#76B900] text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                            </button>
+                          );
+                        })}
+
+                        {/* Quick Switch to Gemini footer option */}
+                        <div className="p-2 mt-2 border-t border-slate-800 bg-slate-950/40">
                           <button
-                            key={modelOpt.id}
                             type="button"
                             onClick={() => {
-                              setSelectedVoiceModel(modelOpt.id);
-                              setAiProvider('nvidia');
-                              localStorage.setItem('aura_ai_provider', 'nvidia');
-                              localStorage.setItem('aura_nvidia_model', modelOpt.id);
+                              handleToggleProvider('gemini');
                               setShowModelMenu(false);
                             }}
-                            className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
-                              isSelected
-                                ? 'bg-[#76B900]/20 text-emerald-200 font-bold border-l-2 border-[#76B900]'
-                                : 'text-slate-300 hover:bg-slate-800'
-                            }`}
+                            className="w-full py-1.5 px-2 rounded-xl text-xs font-semibold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                           >
-                            <div className="min-w-0 pr-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-white text-xs">{modelOpt.name}</span>
-                                <span className="px-1.5 py-0.2 rounded bg-[#76B900]/20 text-[#76B900] text-[9px] font-mono font-bold">
-                                  {modelOpt.badge}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
-                            </div>
-                            {isSelected && <span className="text-[#76B900] text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                            <Sparkles className="w-3 h-3 text-purple-400" />
+                            <span>Switch to Google Gemini Engine</span>
                           </button>
-                        );
-                      })}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* Google Gemini Models */}
+                        <div className="px-3 py-1.5 flex items-center justify-between border-b border-slate-800 bg-slate-950/60">
+                          <span className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" />
+                            Google Gemini Models
+                          </span>
+                          <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono">
+                            ACTIVE
+                          </span>
+                        </div>
+                        {AVAILABLE_GEMINI_MODELS.map((modelOpt) => {
+                          const isSelected = selectedVoiceModel === modelOpt.id;
+                          return (
+                            <button
+                              key={modelOpt.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedVoiceModel(modelOpt.id);
+                                setAiProvider('gemini');
+                                localStorage.setItem('aura_ai_provider', 'gemini');
+                                localStorage.setItem('aura_voice_model', modelOpt.id);
+                                setShowModelMenu(false);
+                              }}
+                              className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-purple-600/30 text-purple-200 font-bold border-l-2 border-purple-400'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white text-xs">{modelOpt.name}</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-mono font-bold">
+                                    {modelOpt.badge}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
+                              </div>
+                              {isSelected && <span className="text-purple-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                            </button>
+                          );
+                        })}
 
-                      {/* Quick Switch to Gemini footer option */}
-                      <div className="p-2 mt-2 border-t border-slate-800 bg-slate-950/40">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleToggleProvider('gemini');
-                            setShowModelMenu(false);
-                          }}
-                          className="w-full py-1.5 px-2 rounded-xl text-xs font-semibold text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                        >
-                          <Sparkles className="w-3 h-3 text-purple-400" />
-                          <span>Switch to Google Gemini Engine</span>
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {/* Google Gemini Models */}
-                      <div className="px-3 py-1.5 flex items-center justify-between border-b border-slate-800 bg-slate-950/60">
-                        <span className="text-[10px] text-purple-400 font-semibold uppercase tracking-wider flex items-center gap-1">
-                          <Sparkles className="w-3 h-3" />
-                          Google Gemini Models
-                        </span>
-                        <span className="text-[8px] px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono">
-                          ACTIVE
-                        </span>
-                      </div>
-                      {AVAILABLE_GEMINI_MODELS.map((modelOpt) => {
-                        const isSelected = selectedVoiceModel === modelOpt.id;
-                        return (
+                        {/* Quick Switch to NVIDIA footer option */}
+                        <div className="p-2 mt-2 border-t border-slate-800 bg-slate-950/40">
                           <button
-                            key={modelOpt.id}
                             type="button"
                             onClick={() => {
-                              setSelectedVoiceModel(modelOpt.id);
-                              setAiProvider('gemini');
-                              localStorage.setItem('aura_ai_provider', 'gemini');
-                              localStorage.setItem('aura_voice_model', modelOpt.id);
+                              handleToggleProvider('nvidia');
                               setShowModelMenu(false);
                             }}
-                            className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
-                              isSelected
-                                ? 'bg-purple-600/30 text-purple-200 font-bold border-l-2 border-purple-400'
-                                : 'text-slate-300 hover:bg-slate-800'
-                            }`}
+                            className="w-full py-1.5 px-2 rounded-xl text-xs font-semibold text-[#76B900] bg-[#76B900]/10 hover:bg-[#76B900]/20 border border-[#76B900]/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
                           >
-                            <div className="min-w-0 pr-2">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-bold text-white text-xs">{modelOpt.name}</span>
-                                <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 text-[9px] font-mono font-bold">
-                                  {modelOpt.badge}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-slate-400 truncate mt-0.5">{modelOpt.tagline}</p>
-                            </div>
-                            {isSelected && <span className="text-purple-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                            <Cpu className="w-3 h-3 text-[#76B900]" />
+                            <span>Switch to NVIDIA NIM Engine</span>
                           </button>
-                        );
-                      })}
-
-                      {/* Quick Switch to NVIDIA footer option */}
-                      <div className="p-2 mt-2 border-t border-slate-800 bg-slate-950/40">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleToggleProvider('nvidia');
-                            setShowModelMenu(false);
-                          }}
-                          className="w-full py-1.5 px-2 rounded-xl text-xs font-semibold text-[#76B900] bg-[#76B900]/10 hover:bg-[#76B900]/20 border border-[#76B900]/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                        >
-                          <Cpu className="w-3 h-3 text-[#76B900]" />
-                          <span>Switch to NVIDIA NIM Engine</span>
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </>
               )}
             </div>
 
