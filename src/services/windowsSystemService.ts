@@ -149,6 +149,20 @@ export const POPULAR_WINDOWS_SOFTWARE: SoftwareCatalogItem[] = [
       'Verify VLC player registration',
     ],
   },
+  {
+    id: 'dbeaver',
+    name: 'DBeaver Community',
+    packageId: 'DBeaver.DBeaver.Community',
+    manager: 'winget',
+    category: 'Dev Tools',
+    icon: '🦫',
+    description: 'Universal SQL client, database management tool, and ERD modeler for SQLite, PostgreSQL, MySQL',
+    steps: [
+      'Fetch DBeaver Community Edition via Windows Package Manager (Winget)',
+      'Execute silent installer with SQLite and JDBC driver support',
+      'Verify dbeaver binary and desktop shortcut availability',
+    ],
+  },
 ];
 
 /**

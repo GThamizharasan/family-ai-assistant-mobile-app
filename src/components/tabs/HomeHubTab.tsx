@@ -381,63 +381,6 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
         </div>
       </div>
 
-      {/* Live Weather Forecast Status Banner */}
-      <div
-        onClick={() => onNavigate('weather')}
-        className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-r from-sky-950/70 via-slate-900 to-indigo-950/70 border border-sky-500/40 hover:border-sky-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg group relative overflow-hidden"
-      >
-        <div className="absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0 border border-sky-500/30 group-hover:scale-105 transition-transform shadow-inner">
-            <CloudSun className="w-5 h-5 text-sky-400" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-bold text-white">
-                {homeWeather?.locationName || 'Live Weather Forecast'}
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-mono font-bold border border-sky-500/30 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
-                {homeWeather ? `${homeWeather.current.temperature}°C • ${homeWeather.current.weatherDescription}` : 'LIVE GPS'}
-              </span>
-              {homeWeather?.coordinates && (
-                <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
-                  ({homeWeather.coordinates.latitude.toFixed(2)}°N, {homeWeather.coordinates.longitude.toFixed(2)}°E)
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-slate-300 mt-0.5 flex items-center gap-2 flex-wrap">
-              <span>Feels like {homeWeather?.current.apparentTemperature ?? 30}°C</span>
-              <span>•</span>
-              <span>Humidity {homeWeather?.current.relativeHumidity ?? 65}%</span>
-              <span>•</span>
-              <span>Wind {homeWeather?.current.windSpeed ?? 12} km/h</span>
-              <span>•</span>
-              <span className="text-sky-300">Tap for 24h & 7-Day Forecast</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 relative z-10 self-end sm:self-auto">
-          <button
-            type="button"
-            onClick={handleRefreshHomeWeather}
-            disabled={isRefreshingWeather}
-            className="p-1.5 sm:p-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-300 hover:text-white border border-sky-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
-            title="Refresh Live Weather & GPS Coordinates"
-            aria-label="Refresh Weather"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingWeather ? 'animate-spin text-sky-400' : ''}`} />
-            <span className="hidden sm:inline">{isRefreshingWeather ? 'Updating...' : 'Refresh'}</span>
-          </button>
-
-          <div className="flex items-center gap-1 text-xs text-sky-400 group-hover:text-sky-300 font-semibold px-2 py-1 rounded-xl bg-sky-500/10 border border-sky-500/20">
-            <span>Forecast</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </div>
-        </div>
-      </div>
-
       {/* =========================================================================
           ACTIVE REALTIME VOICE ASSISTANT HERO COMMAND CENTER
           - Center: Active Real-Time Voice Assistant (AURO) with live status & interactive mic
@@ -912,6 +855,63 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 group-hover:bg-indigo-500 text-white text-xs font-bold transition-all shadow-md shadow-indigo-900/40 shrink-0">
             <span>Open Billing Dashboard</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Live Weather Forecast Status Banner */}
+      <div
+        onClick={() => onNavigate('weather')}
+        className="cursor-pointer p-3.5 rounded-2xl bg-gradient-to-r from-sky-950/70 via-slate-900 to-indigo-950/70 border border-sky-500/40 hover:border-sky-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg group relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="flex items-center gap-3 relative z-10">
+          <div className="w-10 h-10 rounded-2xl bg-sky-500/20 text-sky-400 flex items-center justify-center shrink-0 border border-sky-500/30 group-hover:scale-105 transition-transform shadow-inner">
+            <CloudSun className="w-5 h-5 text-sky-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-bold text-white">
+                {homeWeather?.locationName || 'Live Weather Forecast'}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 text-[10px] font-mono font-bold border border-sky-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                {homeWeather ? `${homeWeather.current.temperature}°C • ${homeWeather.current.weatherDescription}` : 'LIVE GPS'}
+              </span>
+              {homeWeather?.coordinates && (
+                <span className="text-[10px] text-slate-400 font-mono hidden md:inline">
+                  ({homeWeather.coordinates.latitude.toFixed(2)}°N, {homeWeather.coordinates.longitude.toFixed(2)}°E)
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-300 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>Feels like {homeWeather?.current.apparentTemperature ?? 30}°C</span>
+              <span>•</span>
+              <span>Humidity {homeWeather?.current.relativeHumidity ?? 65}%</span>
+              <span>•</span>
+              <span>Wind {homeWeather?.current.windSpeed ?? 12} km/h</span>
+              <span>•</span>
+              <span className="text-sky-300">Tap for 24h & 7-Day Forecast</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 relative z-10 self-end sm:self-auto">
+          <button
+            type="button"
+            onClick={handleRefreshHomeWeather}
+            disabled={isRefreshingWeather}
+            className="p-1.5 sm:p-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 active:scale-95 text-sky-300 hover:text-white border border-sky-500/30 transition-all cursor-pointer flex items-center gap-1.5 text-xs font-semibold"
+            title="Refresh Live Weather & GPS Coordinates"
+            aria-label="Refresh Weather"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingWeather ? 'animate-spin text-sky-400' : ''}`} />
+            <span className="hidden sm:inline">{isRefreshingWeather ? 'Updating...' : 'Refresh'}</span>
+          </button>
+
+          <div className="flex items-center gap-1 text-xs text-sky-400 group-hover:text-sky-300 font-semibold px-2 py-1 rounded-xl bg-sky-500/10 border border-sky-500/20">
+            <span>Forecast</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </div>
         </div>
