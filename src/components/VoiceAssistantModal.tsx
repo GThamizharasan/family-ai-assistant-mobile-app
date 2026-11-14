@@ -5160,40 +5160,19 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             <Home className="w-5 h-5" />
           </button>
 
-          {/* 2. Voice Assistant Mic Button (Positioned right after Home icon) */}
+          {/* 2. Bottom Bar Mic Toggle (Original hardware mic override: Mute/Unmute speech recognition) */}
           <button
             type="button"
             onClick={toggleMic}
-            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 shrink-0 relative ${
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 shrink-0 cursor-pointer ${
               isListening
-                ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white border-emerald-400 ring-2 ring-emerald-400/40 animate-pulse'
-                : isSpeaking
-                ? 'bg-gradient-to-tr from-purple-600 to-pink-500 text-white border-purple-400 ring-2 ring-purple-400/40'
-                : isThinking
-                ? 'bg-gradient-to-tr from-amber-600 to-orange-500 text-white border-amber-400 animate-spin'
-                : 'bg-slate-900 hover:bg-indigo-950/60 text-indigo-400 hover:text-indigo-200 border-slate-800 hover:border-indigo-500/40'
+                ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/30 animate-pulse'
+                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
             }`}
-            title={
-              isListening
-                ? 'Listening... tap to pause or send speech'
-                : isSpeaking
-                ? 'Aura speaking... tap to interrupt'
-                : 'Tap to speak with Aura'
-            }
+            title={isListening ? 'Stop listening' : 'Start speaking'}
             aria-label={isListening ? 'Stop microphone' : 'Start microphone'}
           >
-            {isListening && (
-              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-950 animate-ping" />
-            )}
-            {isListening ? (
-              <Mic className="w-5 h-5 text-white animate-bounce" />
-            ) : isSpeaking ? (
-              <Volume2 className="w-5 h-5 text-white animate-pulse" />
-            ) : isThinking ? (
-              <Sparkles className="w-5 h-5 text-amber-200" />
-            ) : (
-              <Mic className="w-5 h-5" />
-            )}
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           {/* 3. Action Hub / Plus (+) Button & Options Menu */}
