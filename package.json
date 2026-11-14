@@ -9,7 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "generate:icons": "powershell -ExecutionPolicy Bypass -File scripts/generate_app_icons.ps1 -SourcePath public/logo.png",
+    "cap:sync": "npm run build && npm run generate:icons && npx cap sync android"
   },
   "dependencies": {
     "@capacitor-community/speech-recognition": "^7.0.1",

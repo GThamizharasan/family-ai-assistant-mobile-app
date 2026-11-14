@@ -10,7 +10,9 @@ if (-not [System.IO.Path]::IsPathRooted($SourcePath)) {
 }
 
 Write-Host "Loading source image from: $SourcePath"
-$sourceImg = [System.Drawing.Bitmap]::new($SourcePath)
+$bytes = [System.IO.File]::ReadAllBytes($SourcePath)
+$ms = [System.IO.MemoryStream]::new($bytes)
+$sourceImg = [System.Drawing.Bitmap]::new($ms)
 
 # Sample background color near corners (e.g. at x=10, y=10)
 $bgSample = $sourceImg.GetPixel(10, 10)
@@ -23,10 +25,21 @@ if (-not (Test-Path $assetsDir)) { New-Item -ItemType Directory -Path $assetsDir
 $publicDir = Join-Path $RootDir "public"
 $resDir = Join-Path $RootDir "android\app\src\main\res"
 
-# Save master logo in assets and public
-$sourceImg.Save((Join-Path $publicDir "app-logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-$sourceImg.Save((Join-Path $publicDir "logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
-Write-Host "Saved master logo to src/assets/logo.png, public/app-logo.png, and public/logo.png"
+# Save master logo in assets and public if not source
+$targetAppLogo = Join-Path $publicDir "app-logo.png"
+$targetLogo = Join-Path $publicDir "logo.png"
+$targetSrcLogo = Join-Path $assetsDir "logo.png"
+
+if ($SourcePath -ne $targetAppLogo) {
+    $sourceImg.Save($targetAppLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+}
+if ($SourcePath -ne $targetLogo) {
+    $sourceImg.Save($targetLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+}
+if ($SourcePath -ne $targetSrcLogo) {
+    $sourceImg.Save($targetSrcLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+}
+Write-Host "Verified master logo across assets and public"
 
 # Helper function to resize with high quality bicubic interpolation
 function Resize-Image {
@@ -139,4 +152,5 @@ $fav.Save((Join-Path $publicDir "favicon.ico"), [System.Drawing.Imaging.ImageFor
 $fav.Dispose()
 
 $sourceImg.Dispose()
+$ms.Dispose()
 Write-Host "Successfully generated all Android and PWA mobile icons!"

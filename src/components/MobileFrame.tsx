@@ -23,7 +23,7 @@ import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
 import { isOfflineModeSimulated } from '../services/offlineSyncService';
 import { getLocalWalkingStepLogs } from '../services/walkingStepsDriveSync';
-import { getCachedWeatherData } from '../services/weatherService';
+import { getCachedWeatherData, getCurrentCoordinates, fetchWeatherForecast } from '../services/weatherService';
 import { AiProvider } from '../types';
 import {
   getActiveAiProvider,
@@ -117,6 +117,20 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
     window.addEventListener('aura_weather_updated', handleWeatherUpdated);
     window.addEventListener(AI_MODEL_CHANGED_EVENT, handleModelChanged);
 
+    // Actively fetch live weather on mount if not already cached
+    (async () => {
+      try {
+        const cached = getCachedWeatherData();
+        if (!cached) {
+          const { coords } = await getCurrentCoordinates();
+          const fresh = await fetchWeatherForecast(coords.latitude, coords.longitude);
+          setTopWeather(fresh);
+        }
+      } catch (err) {
+        console.warn('[MobileFrame] Initial weather fetch failed:', err);
+      }
+    })();
+
     return () => {
       window.removeEventListener('aura_offline_mode_changed', handleOfflineChanged);
       window.removeEventListener('aura_realtime_step_tick', handleStepTick);
@@ -131,21 +145,26 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-start p-0 sm:py-6 selection:bg-indigo-500/30">
       {/* Top Floating Utility Control Bar */}
-      <header className="sticky top-0 z-40 w-full max-w-lg mb-3 px-3 pt-[env(safe-area-inset-top)] flex items-center justify-between text-xs text-slate-400 bg-slate-950/95 backdrop-blur-xl">
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-40 w-full max-w-2xl mb-3 px-3 pt-[env(safe-area-inset-top)] flex items-center justify-between gap-2 text-xs text-slate-400 bg-slate-950/95 backdrop-blur-xl">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <img
             src="/app-logo.png"
             alt="Aura Logo"
             className="w-5 h-5 rounded-full object-cover border border-amber-500/40 shadow-sm"
           />
-          <span className="font-semibold text-slate-200">AuraFamily Life OS</span>
-          <span className="text-[10px] text-slate-500 font-mono">v2.4 Sovereign</span>
+          <span className="text-slate-200 text-xs sm:text-sm">Aura</span>
+          <span className="px-1.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-mono font-semibold shadow-sm">
+            v1.0
+          </span>
         </div>
 
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-0.5 max-w-[calc(100%-170px)] justify-end">
+        <div
+          className="flex-1 flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scrollbar-none py-1 scroll-smooth min-w-0 justify-start ml-1"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           <button
             onClick={onGoHome}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-800 transition-colors cursor-pointer shadow-sm active:scale-95 shrink-0"
             title="Go to Home Hub"
             aria-label="Go to Home"
           >
@@ -156,22 +175,21 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {/* Main Top Bar AI Model Switcher / Indicator Pill */}
           <button
             onClick={() => setShowAiModelModal(true)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] ${
-              activeProvider === 'nvidia'
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0 ${activeProvider === 'nvidia'
                 ? 'bg-[#76B900]/15 text-[#76B900] border-[#76B900]/40 hover:bg-[#76B900]/25'
                 : activeProvider === 'openai'
-                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
-                : activeProvider === 'anthropic'
-                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
-                : activeProvider === 'custom'
-                ? 'bg-sky-500/15 text-sky-300 border-sky-500/40 hover:bg-sky-500/25'
-                : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/25'
-            }`}
+                  ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/25'
+                  : activeProvider === 'anthropic'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                    : activeProvider === 'custom'
+                      ? 'bg-sky-500/15 text-sky-300 border-sky-500/40 hover:bg-sky-500/25'
+                      : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40 hover:bg-indigo-500/25'
+              }`}
             title={`Active AI Model: ${activeProvider.toUpperCase()} - ${getModelDisplayName(activeProvider, activeModel)} (Tap to configure any AI model)`}
             aria-label="Active AI Model Switcher"
           >
             <span className="text-xs">{SUPPORTED_AI_PROVIDERS.find((p) => p.id === activeProvider)?.icon || '✦'}</span>
-            <span className="font-mono truncate max-w-[70px] sm:max-w-[110px]">
+            <span className="font-mono truncate max-w-[80px] sm:max-w-[120px]">
               {getModelDisplayName(activeProvider, activeModel)}
             </span>
             <span className="text-[9px] opacity-70">▾</span>
@@ -181,7 +199,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {onOpenWeather && (
             <button
               onClick={onOpenWeather}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 hover:text-white border border-sky-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
               title={`Live Weather Forecast: ${topWeather ? `${topWeather.current.temperature}°C (${topWeather.locationName})` : 'Check Forecast'}`}
               aria-label="Open Weather Forecast"
             >
@@ -194,7 +212,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {onOpenWindowsInstaller && (
             <button
               onClick={onOpenWindowsInstaller}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-white border border-cyan-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-300 hover:text-white border border-cyan-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
               title="Auro Windows Host System Assistant & Software Installer (Winget, Choco, PowerShell)"
               aria-label="Open Windows System Assistant"
             >
@@ -207,7 +225,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {onOpenOfflineSyncCenter && (
             <button
               onClick={onOpenOfflineSyncCenter}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
               title="3GB SQLite Offline Store & Unified Sync Center"
               aria-label="Open 3GB SQLite Offline Store"
             >
@@ -220,7 +238,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {onOpenWalkingSteps && (
             <button
               onClick={onOpenWalkingSteps}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
               title="Realtime Walking Steps (Device Motion Pedometer & SQLite/Drive Sync)"
               aria-label="Open Realtime Walking Steps"
             >
@@ -233,7 +251,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {onOpenVision && (
             <button
               onClick={onOpenVision}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-white border border-amber-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
               title="Auro Computer Vision Guide for Blind and Low-Vision Assistance"
               aria-label="Open Auro Vision Assistant"
             >
@@ -243,12 +261,14 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           )}
 
           {/* Install Android APK Button */}
-          <PWAInstallButton onOpenInstallerHub={onOpenInstallerHub} />
+          <div className="shrink-0">
+            <PWAInstallButton onOpenInstallerHub={onOpenInstallerHub} />
+          </div>
 
           {/* Toggle Device Frame */}
           <button
             onClick={toggleMobileFrame}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors shrink-0"
             title="Toggle between Native Phone Frame and Full Screen"
           >
             {isMobileDeviceFrame ? <Maximize2 className="w-3.5 h-3.5" /> : <Smartphone className="w-3.5 h-3.5" />}
@@ -258,7 +278,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {/* Quick Lock */}
           <button
             onClick={lockApp}
-            className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+            className="p-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors shrink-0"
             title="Lock with Biometrics"
           >
             <Lock className="w-3.5 h-3.5 text-emerald-400" />
@@ -267,7 +287,7 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
           {/* Google Sign Out */}
           <button
             onClick={signOutGoogle}
-            className="p-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/60 text-slate-300 hover:text-rose-400 border border-slate-800 hover:border-rose-500/40 transition-colors"
+            className="p-1.5 rounded-xl bg-slate-900 hover:bg-rose-950/60 text-slate-300 hover:text-rose-400 border border-slate-800 hover:border-rose-500/40 transition-colors shrink-0"
             title="Sign Out of Google SSO"
           >
             <LogOut className="w-3.5 h-3.5" />
@@ -277,11 +297,10 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
 
       {/* Main Container: Mobile Frame or Responsive Layout */}
       <div
-        className={`w-full transition-all duration-300 ${
-          isMobileDeviceFrame
+        className={`w-full transition-all duration-300 ${isMobileDeviceFrame
             ? 'max-w-[430px] rounded-[52px] border-[10px] border-slate-800/90 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] bg-slate-950 overflow-hidden relative min-h-[890px] ring-1 ring-slate-700/50'
             : 'max-w-2xl px-3 sm:px-0 relative min-h-[850px]'
-        }`}
+          }`}
       >
         {/* Native Mobile Status Bar (Visible in phone frame) */}
         {isMobileDeviceFrame && (
@@ -298,6 +317,18 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
                 <span className="text-[10px] text-indigo-300 font-mono">Aura AI</span>
                 <Mic className="w-3 h-3 text-indigo-400 group-hover:scale-110 transition-transform" />
               </div>
+
+              {/* Weather Pill in Mobile Phone Status Bar */}
+              {onOpenWeather && (
+                <div
+                  onClick={onOpenWeather}
+                  className="cursor-pointer px-2.5 py-0.5 rounded-full bg-sky-950/60 border border-sky-500/30 text-[10px] font-mono text-sky-300 flex items-center gap-1 hover:border-sky-400 transition-colors shadow-inner"
+                  title={`Live Weather: ${topWeather ? `${topWeather.current.temperature}°C (${topWeather.locationName})` : 'Check Forecast'}`}
+                >
+                  <CloudSun className="w-3 h-3 text-sky-400" />
+                  <span>{topWeather ? `${topWeather.current.temperature}°C` : 'Weather'}</span>
+                </div>
+              )}
 
               {/* Real-Time Live Steps Pill */}
               <div

@@ -5119,23 +5119,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         <div className="p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
           <button
             onClick={handleCancelAndGoHome}
-            className="p-3.5 rounded-2xl flex items-center justify-center bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 transition-all shadow active:scale-95 cursor-pointer"
+            className="p-3.5 rounded-2xl flex items-center justify-center bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 transition-all shadow active:scale-95 cursor-pointer shrink-0"
             title="Cancel and return to Home Hub"
             aria-label="Cancel and go back to home"
           >
             <Home className="w-5 h-5" />
-          </button>
-
-          <button
-            onClick={toggleMic}
-            className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 ${
-              isListening
-                ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/30 animate-pulse'
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
-            }`}
-            title={isListening ? 'Stop listening' : 'Start speaking'}
-          >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           {/* Action Hub / Plus (+) Button & Options Menu */}
