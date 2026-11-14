@@ -139,14 +139,40 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
 
   // Two-Finger Pinch-to-Zoom Gesture Tracking (Thumb and Index finger)
   const readerContentRef = useRef<HTMLDivElement | null>(null);
+  const pdfScrollContainerRef = useRef<HTMLElement | null>(null);
   const touchStartDistRef = useRef<number | null>(null);
   const touchStartZoomRef = useRef<number>(1.0);
   const [isPinching, setIsPinching] = useState<boolean>(false);
   const [pinchZoomBadge, setPinchZoomBadge] = useState<number | null>(null);
   const pinchBadgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // PDF Scroll Mode: 'page' (flick page-by-page) vs 'continuous' (infinite vertical scroll)
+  const [pdfScrollMode, setPdfScrollMode] = useState<'page' | 'continuous'>('page');
+  const [swipeFeedbackBadge, setSwipeFeedbackBadge] = useState<number | null>(null);
+  const swipeFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showPageBadge = (pageNum: number) => {
+    setSwipeFeedbackBadge(pageNum);
+    if (swipeFeedbackTimeoutRef.current) {
+      clearTimeout(swipeFeedbackTimeoutRef.current);
+    }
+    swipeFeedbackTimeoutRef.current = setTimeout(() => {
+      setSwipeFeedbackBadge(null);
+    }, 1200);
+  };
+
+  // Touch Tracking for 1-finger swipes (vertical & horizontal)
+  const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
+  const touchStartTimeRef = useRef<number>(0);
+  const touchStartScrollTopRef = useRef<number>(0);
+  const touchIsMultiRef = useRef<boolean>(false);
+
   const pdfZoomRef = useRef(pdfZoom);
   const flowZoomRef = useRef(flowZoom);
+  const pdfScrollModeRef = useRef(pdfScrollMode);
+  const goToNextPageRef = useRef<() => void>(() => {});
+  const goToPrevPageRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     pdfZoomRef.current = pdfZoom;
@@ -156,14 +182,22 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     flowZoomRef.current = flowZoom;
   }, [flowZoom]);
 
-  // Handle two-finger pinch-to-zoom gesture on the reading pane
+  useEffect(() => {
+    pdfScrollModeRef.current = pdfScrollMode;
+  }, [pdfScrollMode]);
+
+  // Handle touch gestures on the reading pane:
+  // 1) Two-finger pinch-to-zoom (thumb + index finger)
+  // 2) Single-finger vertical swipe (swipe up -> next page, swipe down -> prev page)
+  // 3) Single-finger horizontal swipe (swipe left -> next page, swipe right -> prev page)
+  // 4) Scroll boundary pull detection (at bottom + scroll up -> next page, at top + scroll down -> prev page)
   useEffect(() => {
     const el = readerContentRef.current;
     if (!el) return;
 
     const handleTouchStart = (e: TouchEvent) => {
-      // Exactly two touch points (thumb and index finger)
       if (e.touches.length === 2) {
+        touchIsMultiRef.current = true;
         const dist = Math.hypot(
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
@@ -174,6 +208,15 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
         if (pinchBadgeTimeoutRef.current) {
           clearTimeout(pinchBadgeTimeoutRef.current);
         }
+        return;
+      }
+
+      if (e.touches.length === 1) {
+        touchIsMultiRef.current = false;
+        touchStartXRef.current = e.touches[0].clientX;
+        touchStartYRef.current = e.touches[0].clientY;
+        touchStartTimeRef.current = Date.now();
+        touchStartScrollTopRef.current = pdfScrollContainerRef.current?.scrollTop ?? 0;
       }
     };
 
@@ -200,15 +243,74 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) {
-        touchStartDistRef.current = null;
-        setIsPinching(false);
-        if (pinchBadgeTimeoutRef.current) {
-          clearTimeout(pinchBadgeTimeoutRef.current);
+      if (touchIsMultiRef.current) {
+        if (e.touches.length < 2) {
+          touchStartDistRef.current = null;
+          setIsPinching(false);
+          touchIsMultiRef.current = false;
+          if (pinchBadgeTimeoutRef.current) {
+            clearTimeout(pinchBadgeTimeoutRef.current);
+          }
+          pinchBadgeTimeoutRef.current = setTimeout(() => {
+            setPinchZoomBadge(null);
+          }, 1200);
         }
-        pinchBadgeTimeoutRef.current = setTimeout(() => {
-          setPinchZoomBadge(null);
-        }, 1200);
+        return;
+      }
+
+      // Single-finger swipe evaluation
+      if (e.changedTouches.length === 1 && !isPinching) {
+        const endX = e.changedTouches[0].clientX;
+        const endY = e.changedTouches[0].clientY;
+        const deltaX = endX - touchStartXRef.current;
+        const deltaY = endY - touchStartYRef.current;
+        const absX = Math.abs(deltaX);
+        const absY = Math.abs(deltaY);
+        const duration = Date.now() - touchStartTimeRef.current;
+
+        // Ignore prolonged presses or static taps (gesture must be deliberate, <= 900ms)
+        if (duration > 900) return;
+
+        const container = pdfScrollContainerRef.current;
+        const currentScrollTop = container?.scrollTop ?? 0;
+        const maxScroll = container ? container.scrollHeight - container.clientHeight : 0;
+        const isAtTop = currentScrollTop <= 15;
+        const isAtBottom = maxScroll <= 5 || currentScrollTop >= maxScroll - 20;
+
+        // If in PDF mode and single-page flip mode
+        if (readerMode === 'pdf' && pdfScrollModeRef.current === 'page') {
+          // 1. Vertical Swipe Handling
+          if (absY > 40 && absY > absX * 1.05) {
+            if (deltaY < -40) {
+              // Swiped UP: go to next page if content doesn't scroll or started/ended near bottom
+              if (maxScroll <= 20 || touchStartScrollTopRef.current >= maxScroll - 25 || isAtBottom) {
+                goToNextPageRef.current();
+              }
+            } else if (deltaY > 40) {
+              // Swiped DOWN: go to previous page if content doesn't scroll or started/ended near top
+              if (maxScroll <= 20 || touchStartScrollTopRef.current <= 25 || isAtTop) {
+                goToPrevPageRef.current();
+              }
+            }
+          }
+          // 2. Horizontal Swipe Handling
+          else if (absX > 40 && absX > absY * 1.05) {
+            if (deltaX < -40) {
+              goToNextPageRef.current();
+            } else if (deltaX > 40) {
+              goToPrevPageRef.current();
+            }
+          }
+        } else if (readerMode === 'flow') {
+          // In flow reading mode, horizontal swipe navigates pages
+          if (absX > 40 && absX > absY * 1.05) {
+            if (deltaX < -40) {
+              goToNextPageRef.current();
+            } else if (deltaX > 40) {
+              goToPrevPageRef.current();
+            }
+          }
+        }
       }
     };
 
@@ -450,22 +552,6 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     };
   }, []);
 
-  // Keyboard navigation (Left/Right arrows)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showSearchModal || showAiCompanion) return;
-      if (e.key === 'ArrowRight' || e.key === 'PageDown') {
-        goToNextPage();
-      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-        goToPrevPage();
-      } else if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPage, totalPages, showSearchModal, showAiCompanion]);
-
   // Handle Progress update
   const updateProgress = (newPage: number, chapterIdx: number) => {
     setCurrentPage(newPage);
@@ -475,23 +561,60 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
     updateBookProgressInSqliteStore(safeBook.id, newPage, chId, percent).catch(() => {});
   };
 
+  const goToPage = (p: number) => {
+    const validP = Math.max(1, Math.min(totalPages, p));
+    const pData = getPageContent({ ...safeBook, totalPages }, chapters, validP);
+    setCurrentChapterIndex(pData.chapterIndex);
+    updateProgress(validP, pData.chapterIndex);
+    showPageBadge(validP);
+    if (pdfScrollMode === 'continuous') {
+      const el = document.getElementById(`pdf-page-${validP}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } else {
+      pdfScrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   const goToNextPage = () => {
     if (currentPage < totalPages) {
-      const nextP = currentPage + 1;
-      const nextData = getPageContent({ ...safeBook, totalPages }, chapters, nextP);
-      setCurrentChapterIndex(nextData.chapterIndex);
-      updateProgress(nextP, nextData.chapterIndex);
+      goToPage(currentPage + 1);
     }
   };
 
   const goToPrevPage = () => {
     if (currentPage > 1) {
-      const prevP = currentPage - 1;
-      const prevData = getPageContent({ ...safeBook, totalPages }, chapters, prevP);
-      setCurrentChapterIndex(prevData.chapterIndex);
-      updateProgress(prevP, prevData.chapterIndex);
+      goToPage(currentPage - 1);
     }
   };
+
+  useEffect(() => {
+    goToNextPageRef.current = goToNextPage;
+    goToPrevPageRef.current = goToPrevPage;
+  });
+
+  // Keyboard navigation (Arrows, Space, PageUp/PageDown, Home, End)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (showSearchModal || showAiCompanion) return;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === 'ArrowDown' || (e.key === ' ' && !e.shiftKey)) {
+        if (e.key === ' ') e.preventDefault();
+        goToNextPage();
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp' || e.key === 'ArrowUp' || (e.key === ' ' && e.shiftKey)) {
+        if (e.key === ' ') e.preventDefault();
+        goToPrevPage();
+      } else if (e.key === 'Home') {
+        goToPage(1);
+      } else if (e.key === 'End') {
+        goToPage(totalPages);
+      } else if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentPage, totalPages, showSearchModal, showAiCompanion, pdfScrollMode]);
 
   // Soundscape toggle
   const handleSoundscapeChange = (type: SoundscapeType) => {
@@ -1162,8 +1285,37 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
           </div>
         )}
 
+        {/* Floating Page Turn Feedback Badge */}
+        {swipeFeedbackBadge !== null && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 rounded-full bg-slate-950/95 border border-amber-500/60 shadow-2xl text-amber-300 text-xs font-mono font-bold flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-150 backdrop-blur-md pointer-events-none">
+            <FileText className="w-3.5 h-3.5 text-amber-400" />
+            <span>Page {swipeFeedbackBadge} of {totalPages}</span>
+          </div>
+        )}
+
+        {/* Floating Mobile Thumb Edge Navigation Chevrons */}
+        <button
+          onClick={goToPrevPage}
+          disabled={currentPage <= 1}
+          className="sm:hidden absolute left-2 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/60 shadow-2xl text-slate-200 active:scale-90 transition-all disabled:opacity-0 disabled:pointer-events-none backdrop-blur-md"
+          title="Previous Page"
+          aria-label="Previous Page"
+        >
+          <ChevronLeft className="w-5 h-5 text-amber-400" />
+        </button>
+
+        <button
+          onClick={goToNextPage}
+          disabled={currentPage >= totalPages}
+          className="sm:hidden absolute right-2 top-1/2 -translate-y-1/2 z-30 p-2.5 rounded-full bg-slate-900/85 hover:bg-slate-800 border border-slate-700/60 shadow-2xl text-slate-200 active:scale-90 transition-all disabled:opacity-0 disabled:pointer-events-none backdrop-blur-md"
+          title="Next Page"
+          aria-label="Next Page"
+        >
+          <ChevronRight className="w-5 h-5 text-amber-400" />
+        </button>
+
         {readerMode === 'pdf' ? (
-          <main className="flex-1 overflow-y-auto flex flex-col items-center bg-slate-950 p-2 sm:p-6 select-text">
+          <main ref={pdfScrollContainerRef} className="flex-1 overflow-y-auto flex flex-col items-center bg-slate-950 p-2 sm:p-6 select-text scroll-smooth">
             {/* Top PDF Controls Toolbar */}
             <div className="w-full max-w-4xl flex items-center justify-between px-3 sm:px-4 py-2 bg-slate-900 border border-slate-800 rounded-2xl text-xs text-slate-300 mb-4 shadow-lg shrink-0 gap-2 flex-wrap">
               <div className="flex items-center gap-2">
@@ -1183,6 +1335,32 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
               </div>
 
               <div className="flex items-center gap-1.5 sm:gap-2">
+                {/* Scroll Mode Switcher: Single Page Flip vs Continuous Scroll */}
+                <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-xs font-medium">
+                  <button
+                    onClick={() => setPdfScrollMode('page')}
+                    className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[11px] ${
+                      pdfScrollMode === 'page'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Single Page Flip Mode: Swipe up/down or tap to flip pages"
+                  >
+                    <span>📄 Page</span>
+                  </button>
+                  <button
+                    onClick={() => setPdfScrollMode('continuous')}
+                    className={`px-2 py-1 rounded-lg transition-colors flex items-center gap-1 text-[11px] ${
+                      pdfScrollMode === 'continuous'
+                        ? 'bg-amber-500 text-slate-950 font-bold shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                    title="Continuous Scroll Mode: Smooth vertical scrolling through all pages"
+                  >
+                    <span>📜 Continuous</span>
+                  </button>
+                </div>
+
                 {/* Zoom Controls (Pinch with thumb & index finger or tap buttons) */}
                 <div className="flex items-center bg-slate-950 px-1.5 sm:px-2 py-1 rounded-xl border border-slate-800 text-xs font-mono gap-1 shadow-inner">
                   <button
@@ -1276,6 +1454,14 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
                   currentPage={currentPage}
                   zoom={1.0}
                   bookTitle={safeBook.title}
+                  scrollMode={pdfScrollMode}
+                  onPageChange={(p) => {
+                    if (p !== currentPage) {
+                      const pData = getPageContent({ ...safeBook, totalPages }, chapters, p);
+                      setCurrentChapterIndex(pData.chapterIndex);
+                      updateProgress(p, pData.chapterIndex);
+                    }
+                  }}
                   onNumPagesLoaded={(num) => {
                     if (num && num !== dynamicTotalPages) {
                       setDynamicTotalPages(num);
@@ -1507,9 +1693,7 @@ export const AppleBookReaderModal: React.FC<AppleBookReaderModalProps> = ({
             value={currentPage}
             onChange={(e) => {
               const val = Number(e.target.value);
-              const targetData = getPageContent(safeBook, chapters, val);
-              setCurrentChapterIndex(targetData.chapterIndex);
-              updateProgress(val, targetData.chapterIndex);
+              goToPage(val);
             }}
             className="w-full accent-amber-500 h-1.5 bg-black/15 dark:bg-white/20 rounded-lg cursor-pointer"
           />
