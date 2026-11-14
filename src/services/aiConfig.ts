@@ -9,6 +9,7 @@
 import {
   AiProvider,
   AiModelOption,
+  DynamicAiModel,
   CustomAiModelConfig,
   AVAILABLE_GEMINI_MODELS,
   AVAILABLE_NVIDIA_MODELS,
@@ -206,13 +207,154 @@ function dispatchModelChange(): void {
 }
 
 // ----------------------------------------------------
+// Dynamic AI Models (Future & On-Demand Engine Registry)
+// ----------------------------------------------------
+
+export const DYNAMIC_AI_MODELS_STORAGE_KEY = 'aura_dynamic_ai_models';
+
+export function getDynamicAiModels(): DynamicAiModel[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(DYNAMIC_AI_MODELS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn('[AI Config] Failed to parse dynamic models from localStorage:', err);
+  }
+  return [];
+}
+
+export async function saveDynamicAiModel(
+  modelInput: Partial<DynamicAiModel> & { name: string; modelId: string; provider?: AiProvider }
+): Promise<DynamicAiModel> {
+  const now = new Date().toISOString();
+  const id = modelInput.id || modelInput.modelId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const provider = modelInput.provider || (
+    id.startsWith('gemini') ? 'gemini' :
+    id.startsWith('nvidia') ? 'nvidia' :
+    id.startsWith('claude') ? 'anthropic' :
+    id.startsWith('gpt') ? 'openai' :
+    'gemini'
+  );
+
+  const newModel: DynamicAiModel = {
+    id,
+    name: modelInput.name,
+    provider,
+    modelId: modelInput.modelId,
+    badge: modelInput.badge || 'ON-DEMAND',
+    tagline: modelInput.tagline || `${modelInput.name} (${provider.toUpperCase()}) - Sovereign Dynamic AI Model`,
+    description: modelInput.description || `Registered dynamically via Voice Assistant for on-demand inference`,
+    speed: modelInput.speed || 'Adaptive Live Inference',
+    color: modelInput.color || (provider === 'nvidia' ? 'emerald' : provider === 'anthropic' ? 'amber' : provider === 'openai' ? 'teal' : 'purple'),
+    endpointUrl: modelInput.endpointUrl,
+    apiKey: modelInput.apiKey,
+    isActive: modelInput.isActive ?? true,
+    isDynamic: true,
+    addedBy: modelInput.addedBy || 'voice_assistant',
+    createdAt: modelInput.createdAt || now,
+    updatedAt: now,
+  };
+
+  // 1. Save to LocalStorage cache
+  if (typeof window !== 'undefined') {
+    const current = getDynamicAiModels();
+    const updated = [newModel, ...current.filter((m) => m.id !== id && m.modelId !== modelInput.modelId)];
+    localStorage.setItem(DYNAMIC_AI_MODELS_STORAGE_KEY, JSON.stringify(updated));
+  }
+
+  // 2. Persist to SQLite Backend
+  try {
+    await fetch(getApiUrl('/api/ai/dynamic-models'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newModel),
+    });
+  } catch (sqlErr) {
+    console.warn('[AI Config] SQLite dynamic model save notice:', sqlErr);
+  }
+
+  // 3. Dispatch change event across UI
+  dispatchModelChange();
+
+  return newModel;
+}
+
+export async function deleteDynamicAiModel(id: string): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    const current = getDynamicAiModels();
+    const updated = current.filter((m) => m.id !== id && m.modelId !== id);
+    localStorage.setItem(DYNAMIC_AI_MODELS_STORAGE_KEY, JSON.stringify(updated));
+  }
+
+  try {
+    await fetch(getApiUrl(`/api/ai/dynamic-models/${id}`), {
+      method: 'DELETE',
+    });
+  } catch (err) {
+    console.warn('[AI Config] SQLite dynamic model delete notice:', err);
+  }
+
+  dispatchModelChange();
+  return true;
+}
+
+export async function syncDynamicAiModelsFromSqlite(): Promise<DynamicAiModel[]> {
+  try {
+    const res = await fetch(getApiUrl('/api/ai/dynamic-models'));
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.models)) {
+        const sqliteModels: DynamicAiModel[] = data.models.map((m: any) => ({
+          ...m,
+          isDynamic: true,
+        }));
+        if (typeof window !== 'undefined') {
+          const local = getDynamicAiModels();
+          const mergedMap = new Map<string, DynamicAiModel>();
+          sqliteModels.forEach((m) => mergedMap.set(m.id, m));
+          local.forEach((m) => {
+            if (!mergedMap.has(m.id)) mergedMap.set(m.id, m);
+          });
+          const merged = Array.from(mergedMap.values());
+          localStorage.setItem(DYNAMIC_AI_MODELS_STORAGE_KEY, JSON.stringify(merged));
+        }
+        return sqliteModels;
+      }
+    }
+  } catch (err) {
+    console.warn('[AI Config] syncDynamicAiModelsFromSqlite notice:', err);
+  }
+  return getDynamicAiModels();
+}
+
+// ----------------------------------------------------
 // Model Catalog Queries
 // ----------------------------------------------------
 
 export function getModelsForProvider(provider: AiProvider): AiModelOption[] {
+  const dynamicModels = getDynamicAiModels()
+    .filter((dm) => dm.provider === provider)
+    .map((dm) => ({
+      id: dm.modelId,
+      name: dm.name,
+      provider: dm.provider,
+      badge: dm.badge || 'ON-DEMAND',
+      tagline: dm.tagline || `${dm.name} - Sovereign Dynamic Model`,
+      speed: dm.speed || 'Adaptive',
+      color: dm.color || 'purple',
+      recommendedFor: 'Voice & Sovereign Tasks',
+      isDynamic: true,
+      endpointUrl: dm.endpointUrl,
+      apiKey: dm.apiKey,
+    }));
+
+  let baseList: AiModelOption[] = [];
   switch (provider) {
     case 'gemini':
-      return AVAILABLE_GEMINI_MODELS.map((m) => ({
+      baseList = AVAILABLE_GEMINI_MODELS.map((m) => ({
         id: m.id,
         name: m.name,
         provider: 'gemini' as AiProvider,
@@ -222,15 +364,19 @@ export function getModelsForProvider(provider: AiProvider): AiModelOption[] {
         color: m.color,
         recommendedFor: m.recommendedFor,
       }));
+      break;
     case 'nvidia':
-      return AVAILABLE_NVIDIA_MODELS;
+      baseList = AVAILABLE_NVIDIA_MODELS;
+      break;
     case 'openai':
-      return AVAILABLE_OPENAI_MODELS;
+      baseList = AVAILABLE_OPENAI_MODELS;
+      break;
     case 'anthropic':
-      return AVAILABLE_ANTHROPIC_MODELS;
+      baseList = AVAILABLE_ANTHROPIC_MODELS;
+      break;
     case 'custom': {
       const custom = getCustomAiConfig();
-      const customList: AiModelOption[] = [
+      baseList = [
         {
           id: custom.modelId || 'llama3.2',
           name: custom.modelName || 'Custom Model',
@@ -243,14 +389,21 @@ export function getModelsForProvider(provider: AiProvider): AiModelOption[] {
         },
         ...DEFAULT_CUSTOM_MODELS,
       ];
-      return customList;
+      break;
     }
     default:
-      return [];
+      baseList = [];
   }
+
+  // Prepend dynamic models so any newly added models are immediately accessible at the top
+  return [...dynamicModels, ...baseList];
 }
 
 export function getModelDisplayName(provider: AiProvider, modelId: string): string {
+  // Check dynamic models first
+  const dynamic = getDynamicAiModels().find((m) => m.modelId === modelId || m.id === modelId);
+  if (dynamic) return dynamic.name;
+
   const models = getModelsForProvider(provider);
   const found = models.find((m) => m.id === modelId);
   if (found) return found.name;

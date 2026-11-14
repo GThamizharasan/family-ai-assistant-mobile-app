@@ -489,6 +489,28 @@ export interface AiModelOption {
   supportsImageGen?: boolean;
   supportsVideoGen?: boolean;
   supportsMusicGen?: boolean;
+  isDynamic?: boolean;
+  endpointUrl?: string;
+  apiKey?: string;
+}
+
+export interface DynamicAiModel {
+  id: string;
+  name: string;
+  provider: AiProvider;
+  modelId: string;
+  badge?: string;
+  tagline?: string;
+  description?: string;
+  speed?: string;
+  color?: string;
+  endpointUrl?: string;
+  apiKey?: string;
+  isActive?: boolean;
+  isDynamic: true;
+  addedBy?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export const AVAILABLE_OPENAI_MODELS: AiModelOption[] = [

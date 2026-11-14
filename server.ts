@@ -31,6 +31,9 @@ import {
   getSharedFamilyRecordsFromSqlite,
   getHubApiKeysFromSqlite,
   setHubApiKeyInSqlite,
+  getDynamicAiModelsFromSqlite,
+  saveDynamicAiModelInSqlite,
+  deleteDynamicAiModelFromSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -989,6 +992,57 @@ app.post('/api/ai/set-provider', (req, res) => {
     defaultNvidiaModel: process.env.DEFAULT_NVIDIA_MODEL,
     defaultGeminiModel: process.env.DEFAULT_GEMINI_MODEL,
   });
+});
+
+// -------------------------------------------------------------
+// Dynamic AI Models Management & Synchronization Endpoints
+// -------------------------------------------------------------
+app.get('/api/ai/dynamic-models', (_req, res) => {
+  try {
+    const models = getDynamicAiModelsFromSqlite();
+    res.json({ success: true, models, count: models.length });
+  } catch (err: any) {
+    console.error('Error fetching dynamic AI models from SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch dynamic models' });
+  }
+});
+
+app.post('/api/ai/dynamic-models', (req, res) => {
+  try {
+    const { name, modelId, provider, badge, tagline, description, color, endpointUrl, apiKey, isActive, addedBy } = req.body;
+    if (!name || !modelId) {
+      return res.status(400).json({ error: 'Model name and modelId are required.' });
+    }
+    const saved = saveDynamicAiModelInSqlite({
+      name,
+      modelId,
+      provider,
+      badge,
+      tagline,
+      description,
+      color,
+      endpointUrl,
+      apiKey,
+      isActive,
+      addedBy: addedBy || 'voice_assistant',
+    });
+    console.log(`[AI Engine] Dynamic AI Model registered in SQLite: "${saved.name}" (${saved.modelId}) for provider: ${saved.provider}`);
+    res.json({ success: true, model: saved });
+  } catch (err: any) {
+    console.error('Error saving dynamic AI model to SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to save dynamic model' });
+  }
+});
+
+app.delete('/api/ai/dynamic-models/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = deleteDynamicAiModelFromSqlite(id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    console.error('Error deleting dynamic AI model from SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete dynamic model' });
+  }
 });
 
 // Test NVIDIA API Key & Model

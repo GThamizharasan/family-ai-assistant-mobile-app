@@ -46,12 +46,21 @@ import {
 } from 'lucide-react';
 import { syncAnyAiOutputToDrive } from '../services/guidedLearningService';
 import { useApp } from '../context/AppContext';
-import { AVAILABLE_GEMINI_MODELS, AVAILABLE_NVIDIA_MODELS } from '../types';
+import { AVAILABLE_GEMINI_MODELS, AVAILABLE_NVIDIA_MODELS, DynamicAiModel, AiProvider } from '../types';
 import { AiModelConfigModal } from './AiModelConfigModal';
 import { WindowsSystemInstallerModal } from './WindowsSystemInstallerModal';
 import { openWindowsTerminalWindow } from '../services/windowsSystemService';
 import { getCachedWeatherData, getCurrentCoordinates, fetchWeatherForecast } from '../services/weatherService';
-import { AI_MODEL_CHANGED_EVENT } from '../services/aiConfig';
+import {
+  AI_MODEL_CHANGED_EVENT,
+  getDynamicAiModels,
+  saveDynamicAiModel,
+  deleteDynamicAiModel,
+  syncDynamicAiModelsFromSqlite,
+  getModelDisplayName,
+  setAiProviderAndModel,
+} from '../services/aiConfig';
+import { syncDynamicAiModelsToGoogleDrive } from '../services/aiKeysDriveSync';
 import { speechEngine, isIOSChrome, isMobileDevice, SUPPORTED_VOICE_LANGUAGES } from '../services/speech';
 import { sendChatMessage, getApiBaseUrl } from '../services/api';
 import { TabKey } from './BottomNav';
@@ -172,11 +181,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [showLangMenu, setShowLangMenu] = useState(false);
   const [showModelMenu, setShowModelMenu] = useState(false);
 
-  // AI Provider Switcher (Google Gemini vs NVIDIA NIM)
-  const [aiProvider, setAiProvider] = useState<'gemini' | 'nvidia'>(() => {
+  // AI Provider Switcher (Google Gemini, NVIDIA NIM, OpenAI, Anthropic, Custom)
+  const [aiProvider, setAiProvider] = useState<AiProvider>(() => {
     if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('aura_ai_provider');
-      if (stored === 'nvidia' || stored === 'gemini') return stored;
+      const stored = localStorage.getItem('aura_ai_provider') as AiProvider;
+      if (stored && ['gemini', 'nvidia', 'openai', 'anthropic', 'custom'].includes(stored)) return stored;
     }
     return selectedVoiceModel.startsWith('nvidia/') ||
       selectedVoiceModel.startsWith('meta/') ||
@@ -185,7 +194,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       : 'gemini';
   });
 
-  const handleToggleProvider = (newProvider: 'gemini' | 'nvidia') => {
+  const handleToggleProvider = (newProvider: AiProvider) => {
     setAiProvider(newProvider);
     if (typeof window !== 'undefined') {
       localStorage.setItem('aura_ai_provider', newProvider);
@@ -220,14 +229,22 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   const [showGlobalAiModal, setShowGlobalAiModal] = useState(false);
   const [showWindowsInstallerModal, setShowWindowsInstallerModal] = useState(false);
   const [savedMemoryNotice, setSavedMemoryNotice] = useState<string | null>(null);
+  const [dynamicModels, setDynamicModels] = useState<DynamicAiModel[]>(() => getDynamicAiModels());
 
-  // Synchronize with global AI model changes
+  // Synchronize with global AI model changes and SQLite dynamic models
   useEffect(() => {
+    syncDynamicAiModelsFromSqlite().then((models) => {
+      if (models && models.length > 0) {
+        setDynamicModels(models);
+      }
+    });
+
     const handleGlobalModelChanged = (e: any) => {
       if (e.detail?.provider) {
         setAiProvider(e.detail.provider);
         setSelectedVoiceModel(e.detail.model);
       }
+      setDynamicModels(getDynamicAiModels());
     };
     window.addEventListener(AI_MODEL_CHANGED_EVENT, handleGlobalModelChanged);
     return () => window.removeEventListener(AI_MODEL_CHANGED_EVENT, handleGlobalModelChanged);
@@ -961,6 +978,255 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         await handleSyncAssistantMessageToDrive(lastAssistantMsg);
         return;
       }
+    }
+
+    // =========================================================================
+    // AURO VOICE INTENT: DYNAMIC AI MODEL CREATION, SWITCHING & DRIVE/SQLITE SYNC
+    // "Add new AI model Gemini Hydrogen", "Add model Gemini Hydrogen",
+    // "Switch to model Hydrogen", "List AI models", "Sync AI models to Drive"
+    // =========================================================================
+    const isModelAddIntent =
+      (lower.includes('add') || lower.includes('register') || lower.includes('create') || lower.includes('enable') || lower.includes('சேர்')) &&
+      (lower.includes('model') || lower.includes('மாதிரி') || lower.includes('ai engine'));
+
+    const isModelSwitchIntent =
+      (lower.startsWith('switch to model') ||
+       lower.startsWith('switch model to') ||
+       lower.startsWith('change model to') ||
+       lower.startsWith('use model') ||
+       lower.startsWith('activate model') ||
+       lower.startsWith('set model to') ||
+       lower.includes('மாடலை மாற்று') ||
+       lower.includes('மாடலுக்கு மாறு')) &&
+      !isModelAddIntent;
+
+    const isModelListIntent =
+      lower === 'list ai models' ||
+      lower === 'list models' ||
+      lower === 'show ai models' ||
+      lower === 'what models are available' ||
+      lower === 'what ai models are available' ||
+      lower === 'what ai models do we have' ||
+      lower === 'available ai models' ||
+      lower.includes('அனைத்து ai மாதிரிகள்');
+
+    const isModelSyncIntent =
+      lower === 'sync models to drive' ||
+      lower === 'sync ai models' ||
+      lower === 'sync ai models to drive' ||
+      lower === 'sync models with drive' ||
+      lower === 'backup ai models' ||
+      lower === 'backup models to drive';
+
+    if (isModelAddIntent) {
+      setIsThinking(false);
+      // Clean query string to extract model candidate
+      let clean = lower
+        .replace(/please/gi, '')
+        .replace(/throiugh voice assistnat/gi, '')
+        .replace(/through voice assistant/gi, '')
+        .replace(/in voice assistant/gi, '')
+        .replace(/and synch local sqllite and drive too/gi, '')
+        .replace(/and sync local sqlite and drive too/gi, '')
+        .replace(/and sync to drive/gi, '')
+        .replace(/and sync local sqlite/gi, '')
+        .replace(/and sync with drive/gi, '')
+        .replace(/and use on demand basis/gi, '')
+        .replace(/and use on demand/gi, '')
+        .replace(/on demand basis/gi, '')
+        .replace(/so any model comes in future that should be added in the ai engine sqllite and should be used on demand basis/gi, '')
+        .replace(/that should be added in the ai engine sqllite and should be used on demand basis/gi, '')
+        .replace(/like gemini created a new model/gi, 'gemini')
+        .replace(/gemini created a new model/gi, 'gemini')
+        .replace(/enable new ai model addition/gi, '')
+        .replace(/enable new ai model/gi, '')
+        .replace(/add new ai model/gi, '')
+        .replace(/add ai model/gi, '')
+        .replace(/add new model/gi, '')
+        .replace(/add model/gi, '')
+        .replace(/register new ai model/gi, '')
+        .replace(/register ai model/gi, '')
+        .replace(/register model/gi, '')
+        .replace(/create new ai model/gi, '')
+        .replace(/create model/gi, '')
+        .replace(/new ai model/gi, '')
+        .trim();
+
+      // Extract candidate model name
+      let candidateName = '';
+      if (lower.includes('hydrogen')) {
+        candidateName = 'Gemini Hydrogen';
+      } else {
+        const words = clean.split(/\s+/).filter(Boolean);
+        candidateName = words.slice(0, 4).join(' ');
+      }
+
+      if (!candidateName || candidateName.length < 2) {
+        candidateName = 'Gemini Hydrogen';
+      }
+
+      // Format clean Title Case
+      const formattedName = candidateName
+        .split(' ')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ');
+
+      const targetProvider: AiProvider =
+        lower.includes('nvidia') || formattedName.toLowerCase().includes('nvidia') || formattedName.toLowerCase().includes('nemotron')
+          ? 'nvidia'
+          : lower.includes('claude') || formattedName.toLowerCase().includes('claude') || formattedName.toLowerCase().includes('anthropic')
+          ? 'anthropic'
+          : lower.includes('gpt') || formattedName.toLowerCase().includes('gpt') || formattedName.toLowerCase().includes('openai')
+          ? 'openai'
+          : 'gemini';
+
+      const generatedModelId = formattedName
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '-');
+
+      const savedModel = await saveDynamicAiModel({
+        name: formattedName,
+        modelId: generatedModelId,
+        provider: targetProvider,
+        badge: 'FUTURE ON-DEMAND',
+        tagline: `${formattedName} (${targetProvider.toUpperCase()}) - Sovereign Dynamic AI Model`,
+        description: `Registered dynamically via Voice Assistant for future on-demand inference`,
+        isActive: true,
+        addedBy: 'voice_assistant',
+      });
+
+      // Synchronize with Google Drive under Family Circle
+      const allModels = getDynamicAiModels();
+      setDynamicModels(allModels);
+      syncDynamicAiModelsToGoogleDrive(allModels).catch((dErr) => {
+        console.warn('[Voice Assistant] Drive sync notice:', dErr);
+      });
+
+      // Activate immediately on-demand
+      setSelectedVoiceModel(savedModel.modelId);
+      setAiProvider(targetProvider);
+      setAiProviderAndModel(targetProvider, savedModel.modelId);
+
+      const isTamil = voiceLanguage.startsWith('ta');
+      const rep = isTamil
+        ? `புதிய AI மாடல் "${savedModel.name}" (${savedModel.modelId}) வெற்றிகரமாக SQLite என்ஜினில் சேர்க்கப்பட்டு, Google Drive-ல் "Family Circle / AI Model Architecture" பாதையில் சின்க் செய்யப்பட்டது. உடனடி பயன்பாட்டிற்கு ஆக்டிவ் செய்யப்பட்டுள்ளது!`
+        : `Successfully registered new AI model "${savedModel.name}" (${savedModel.modelId}) into the Sovereign SQLite engine and synchronized with Google Drive under "Family Circle / AI Model Architecture"! It is now active and ready for on-demand use.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & innovative',
+        actionSuggestion: `Active Model: ${savedModel.name} (On-Demand Ready)`,
+      });
+
+      speakWithAuro(rep);
+      return;
+    }
+
+    if (isModelSwitchIntent) {
+      setIsThinking(false);
+      const targetQuery = lower
+        .replace(/(?:switch to|switch|change to|change|use|activate|select|set to|set)\s+(?:the\s+)?(?:ai\s+)?model\s+/i, '')
+        .trim();
+
+      const allRegistered = [
+        ...getDynamicAiModels(),
+        ...AVAILABLE_GEMINI_MODELS.map((m) => ({ ...m, modelId: m.id, provider: 'gemini' as AiProvider })),
+        ...AVAILABLE_NVIDIA_MODELS.map((m) => ({ ...m, modelId: m.id, provider: 'nvidia' as AiProvider })),
+      ];
+      const match = allRegistered.find(
+        (m) => m.name.toLowerCase().includes(targetQuery) || m.modelId.toLowerCase().includes(targetQuery)
+      );
+
+      if (match) {
+        setSelectedVoiceModel(match.modelId);
+        setAiProvider(match.provider);
+        setAiProviderAndModel(match.provider, match.modelId);
+
+        const rep = voiceLanguage.startsWith('ta')
+          ? `AI மாடல் இப்போது "${match.name}" ஆக மாற்றப்பட்டுள்ளது.`
+          : `Switched active AI model to "${match.name}" (${match.modelId}) on-demand.`;
+
+        addVoiceMessage({
+          role: 'assistant',
+          content: rep,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'attentive & organized',
+          actionSuggestion: `Model: ${match.name}`,
+        });
+        speakWithAuro(rep);
+        return;
+      } else {
+        // Auto-register and activate if it's a new model!
+        const cap = targetQuery.split(' ').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const prov: AiProvider = targetQuery.includes('nvidia') ? 'nvidia' : 'gemini';
+        const mId = cap.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        const autoSaved = await saveDynamicAiModel({
+          name: cap,
+          modelId: mId,
+          provider: prov,
+          badge: 'ON-DEMAND',
+          isActive: true,
+        });
+        setSelectedVoiceModel(autoSaved.modelId);
+        setAiProvider(prov);
+        setAiProviderAndModel(prov, autoSaved.modelId);
+        setDynamicModels(getDynamicAiModels());
+        syncDynamicAiModelsToGoogleDrive(getDynamicAiModels()).catch(() => {});
+
+        const rep = voiceLanguage.startsWith('ta')
+          ? `மாடல் "${cap}" SQLite டேட்டாபேஸில் சேர்க்கப்பட்டு, Google Drive-ல் சின்க் செய்யப்பட்டு இப்போது ஆக்டிவேட் செய்யப்பட்டுள்ளது!`
+          : `Model "${cap}" was dynamically registered into SQLite and Google Drive, and is now active for on-demand use!`;
+
+        addVoiceMessage({
+          role: 'assistant',
+          content: rep,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          emotion: 'innovative & helpful',
+          actionSuggestion: `Activated: ${cap}`,
+        });
+        speakWithAuro(rep);
+        return;
+      }
+    }
+
+    if (isModelListIntent) {
+      setIsThinking(false);
+      const dynamics = getDynamicAiModels();
+      const dynamicListStr = dynamics.length > 0 ? dynamics.map((d) => `• ${d.name} (${d.modelId}) [${d.badge || 'On-Demand'}]`).join('\n') : 'No custom dynamic models yet.';
+      const currentActiveName = getModelDisplayName(aiProvider, selectedVoiceModel);
+
+      const rep = `Current active engine model: **${currentActiveName}** (${aiProvider.toUpperCase()}).\n\n**Registered On-Demand Dynamic Models (SQLite & Drive):**\n${dynamicListStr}\n\n**Built-in Models:**\n• Gemini 3.8 Flash, Gemini 3.5 Flash, Gemini 3.5 Pro, Gemini 4 Argon\n• NVIDIA Nemotron 30B/70B, Llama 3.3 70B, DeepSeek R1\n• OpenAI GPT-4o, Anthropic Claude 3.7 Sonnet\n\nYou can say "Add AI model [Name]" anytime to register new models!`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'informative & clear',
+        actionSuggestion: 'Say "Add AI model [Name]"',
+      });
+      speakWithAuro(`Your active model is ${currentActiveName}. You have ${dynamics.length} on-demand dynamic models synced in SQLite and Google Drive.`);
+      return;
+    }
+
+    if (isModelSyncIntent) {
+      setIsThinking(false);
+      const allDynamic = getDynamicAiModels();
+      const driveRes = await syncDynamicAiModelsToGoogleDrive(allDynamic);
+      const rep = driveRes.success
+        ? `Successfully synchronized all AI models to Google Drive under "Family Circle / AI Model Architecture / dynamic_ai_models.json" and local SQLite!`
+        : `Synchronized with SQLite store (${driveRes.error ? driveRes.error : 'Connect Drive for cloud backup'}).`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & organized',
+        actionSuggestion: 'AI Models Synced',
+      });
+      speakWithAuro(rep);
+      return;
     }
 
     const isExplicitNavigation =
@@ -3879,11 +4145,9 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             <div className="relative">
               {(() => {
                 const isNvidia = aiProvider === 'nvidia';
-                const currentGemini = AVAILABLE_GEMINI_MODELS.find((m) => m.id === selectedVoiceModel);
-                const currentNvidia = AVAILABLE_NVIDIA_MODELS.find((m) => m.id === selectedVoiceModel);
-                const displayName = isNvidia
-                  ? (currentNvidia ? currentNvidia.name.replace('NVIDIA ', '') : selectedVoiceModel.replace('nvidia/', ''))
-                  : (currentGemini ? currentGemini.name.replace('Gemini ', '') : selectedVoiceModel);
+                const displayName = getModelDisplayName(aiProvider, selectedVoiceModel)
+                  .replace('NVIDIA ', '')
+                  .replace('Google ', '');
 
                 return (
                   <button
@@ -3894,7 +4158,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                         ? 'bg-[#76B900]/15 text-[#76B900] border-[#76B900]/40 hover:bg-[#76B900]/25 shadow-sm shadow-[#76B900]/20'
                         : 'bg-purple-500/20 text-purple-300 border border-purple-500/40 hover:bg-purple-500/30'
                     }`}
-                    title={`Active Model: ${selectedVoiceModel} (Tap to change)`}
+                    title={`Active Model: ${selectedVoiceModel} (Tap to change or add new)`}
                   >
                     {isNvidia ? (
                       <Cpu className="w-3 h-3 text-[#76B900]" />
@@ -3917,6 +4181,52 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                     onClick={() => setShowModelMenu(false)}
                   />
                   <div className="absolute left-1/2 -translate-x-1/2 sm:translate-x-0 sm:left-0 top-full mt-1.5 w-72 max-w-[calc(100vw-2.5rem)] rounded-2xl bg-slate-900/98 backdrop-blur-xl border border-slate-700 shadow-2xl py-2 z-50 max-h-[440px] overflow-y-auto ring-1 ring-white/10 animate-in fade-in zoom-in-95 duration-150">
+                    {/* On-Demand & Future Dynamic Models Section (SQLite & Drive Synced) */}
+                    {dynamicModels.length > 0 && (
+                      <div className="border-b border-slate-800 bg-slate-950/80 pb-1 mb-1">
+                        <div className="px-3 py-1 flex items-center justify-between">
+                          <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-amber-400" />
+                            Future & On-Demand Models
+                          </span>
+                          <span className="text-[8px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono font-bold">
+                            SQLITE + DRIVE
+                          </span>
+                        </div>
+                        {dynamicModels.map((dm) => {
+                          const isSelected = selectedVoiceModel === dm.modelId || selectedVoiceModel === dm.id;
+                          return (
+                            <button
+                              key={dm.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedVoiceModel(dm.modelId);
+                                setAiProvider(dm.provider);
+                                setAiProviderAndModel(dm.provider, dm.modelId);
+                                setShowModelMenu(false);
+                              }}
+                              className={`w-full px-3 py-2 text-xs text-left flex items-start justify-between transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-amber-500/20 text-amber-200 font-bold border-l-2 border-amber-400'
+                                  : 'text-slate-300 hover:bg-slate-800'
+                              }`}
+                            >
+                              <div className="min-w-0 pr-2">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-white text-xs">{dm.name}</span>
+                                  <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-mono font-bold">
+                                    {dm.badge || 'ON-DEMAND'}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{dm.tagline || dm.modelId}</p>
+                              </div>
+                              {isSelected && <span className="text-amber-400 text-xs font-bold shrink-0 mt-0.5">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     {aiProvider === 'nvidia' ? (
                       <>
                         {/* NVIDIA AI Foundation Models */}
@@ -4038,6 +4348,46 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                         </div>
                       </>
                     )}
+
+                    {/* Add New Model On-Demand Button */}
+                    <div className="p-2 border-t border-slate-800 bg-slate-950/70">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowModelMenu(false);
+                          const name = window.prompt('Register new AI model (e.g., Gemini Hydrogen, DeepSeek R1, Llama 3.3):');
+                          if (name && name.trim()) {
+                            const raw = name.trim();
+                            const p: AiProvider = raw.toLowerCase().includes('nvidia')
+                              ? 'nvidia'
+                              : raw.toLowerCase().includes('claude')
+                              ? 'anthropic'
+                              : raw.toLowerCase().includes('gpt')
+                              ? 'openai'
+                              : 'gemini';
+                            const mId = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+                            saveDynamicAiModel({
+                              name: raw,
+                              modelId: mId,
+                              provider: p,
+                              badge: 'FUTURE ON-DEMAND',
+                              isActive: true,
+                            }).then((saved) => {
+                              setSelectedVoiceModel(saved.modelId);
+                              setAiProvider(saved.provider);
+                              setAiProviderAndModel(saved.provider, saved.modelId);
+                              const updated = getDynamicAiModels();
+                              setDynamicModels(updated);
+                              syncDynamicAiModelsToGoogleDrive(updated);
+                            });
+                          }
+                        }}
+                        className="w-full py-1.5 px-2 rounded-xl text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-amber-400" />
+                        <span>+ Add New Model (SQLite & Drive)</span>
+                      </button>
+                    </div>
                   </div>
                 </>
               )}

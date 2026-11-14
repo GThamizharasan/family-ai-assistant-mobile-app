@@ -11,6 +11,7 @@ import { getApiUrl } from './api';
 export const AI_KEYS_DRIVE_ROOT_FOLDER = 'Family Circle';
 export const AI_KEYS_DRIVE_SUBFOLDER = 'AI Model Architecture';
 export const AI_KEYS_DRIVE_FILE_NAME = 'ai_model_architecture_keys.json';
+export const AI_DYNAMIC_MODELS_DRIVE_FILE_NAME = 'dynamic_ai_models.json';
 
 export interface AiArchitectureSyncPayload {
   activeProvider: AiProvider;
@@ -50,6 +51,7 @@ export interface StoredAiArchitectureJson {
     ANTHROPIC_API_KEY?: string;
   };
   customConfig?: CustomAiModelConfig;
+  dynamicModels?: any[];
 }
 
 /**
@@ -188,6 +190,7 @@ export async function saveAiArchitectureKeysToSqliteAndDrive(
           ANTHROPIC_API_KEY: payload.anthropicKey?.trim(),
         },
         customConfig: payload.customConfig,
+        dynamicModels: (typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('aura_dynamic_ai_models') || '[]') : []),
       };
 
       const fileContent = JSON.stringify(backupData, null, 2);
@@ -422,6 +425,179 @@ export async function restoreAiArchitectureFromDrive(
     });
   }
 
+  // Restore dynamic AI models if present
+  if (parsed.dynamicModels && Array.isArray(parsed.dynamicModels) && typeof window !== 'undefined') {
+    localStorage.setItem('aura_dynamic_ai_models', JSON.stringify(parsed.dynamicModels));
+    for (const dm of parsed.dynamicModels) {
+      fetch(getApiUrl('/api/ai/dynamic-models'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dm),
+      }).catch(() => {});
+    }
+  }
+
   return parsed;
+}
+
+/**
+ * Upload & Synchronize Dynamic AI Models list to Google Drive under:
+ * Family Circle / AI Model Architecture / dynamic_ai_models.json
+ */
+export async function syncDynamicAiModelsToGoogleDrive(
+  models: any[],
+  customToken?: string
+): Promise<{ success: boolean; driveFileId?: string; driveWebViewLink?: string; error?: string }> {
+  const accessToken = customToken || getGoogleAccessToken();
+  if (!accessToken) {
+    return { success: false, error: 'Google Drive access token not available' };
+  }
+
+  try {
+    const familyCircleFolder = await getOrCreateGoogleDriveFolder(accessToken, AI_KEYS_DRIVE_ROOT_FOLDER);
+    const aiFolder = await getOrCreateGoogleDriveFolder(accessToken, AI_KEYS_DRIVE_SUBFOLDER, familyCircleFolder.id);
+
+    const backupPayload = {
+      appName: 'Aura Family AI Assistant',
+      schemaVersion: '1.0',
+      type: 'dynamic_ai_models_registry',
+      syncedAt: new Date().toISOString(),
+      modelsCount: models.length,
+      models,
+    };
+    const fileContent = JSON.stringify(backupPayload, null, 2);
+
+    let existingFileId: string | null = null;
+    try {
+      const query = `'${aiFolder.id}' in parents and name = '${AI_DYNAMIC_MODELS_DRIVE_FILE_NAME}' and trashed = false`;
+      const searchRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&supportsAllDrives=true&fields=files(id,name,webViewLink)&pageSize=1`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (searchRes.ok) {
+        const sData = await searchRes.json();
+        if (sData.files && sData.files.length > 0) {
+          existingFileId = sData.files[0].id;
+        }
+      }
+    } catch {}
+
+    const boundary = '-------314159265358979323846';
+    const metadata = {
+      name: AI_DYNAMIC_MODELS_DRIVE_FILE_NAME,
+      mimeType: 'application/json',
+      ...(!existingFileId ? { parents: [aiFolder.id] } : {}),
+      description: `Family Circle Sovereign Dynamic AI Models Registry. Last updated: ${new Date().toISOString()}`,
+    };
+
+    const multipartBody =
+      `--${boundary}\r\n` +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) +
+      `\r\n--${boundary}\r\n` +
+      'Content-Type: application/json\r\n\r\n' +
+      fileContent +
+      `\r\n--${boundary}--`;
+
+    let uploadUrl = existingFileId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink`
+      : 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink';
+    let uploadMethod = existingFileId ? 'PATCH' : 'POST';
+
+    let uploadRes = await fetch(uploadUrl, {
+      method: uploadMethod,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartBody,
+    });
+
+    if (!uploadRes.ok && uploadMethod === 'PATCH' && uploadRes.status === 404) {
+      uploadUrl = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink';
+      uploadMethod = 'POST';
+      const postMeta = { ...metadata, parents: [aiFolder.id] };
+      const postBody =
+        `--${boundary}\r\n` +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(postMeta) +
+        `\r\n--${boundary}\r\n` +
+        'Content-Type: application/json\r\n\r\n' +
+        fileContent +
+        `\r\n--${boundary}--`;
+
+      uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': `multipart/related; boundary=${boundary}`,
+        },
+        body: postBody,
+      });
+    }
+
+    if (uploadRes.ok) {
+      const upData = await uploadRes.json();
+      return {
+        success: true,
+        driveFileId: upData.id,
+        driveWebViewLink: upData.webViewLink,
+      };
+    } else {
+      const errText = await uploadRes.text().catch(() => '');
+      return { success: false, error: `Drive upload error: ${uploadRes.status} ${errText}` };
+    }
+  } catch (err: any) {
+    console.warn('[AI Keys Sync] syncDynamicAiModelsToGoogleDrive error:', err);
+    return { success: false, error: err.message || 'Drive network error' };
+  }
+}
+
+/**
+ * Restore dynamic AI models from Google Drive
+ */
+export async function restoreDynamicAiModelsFromGoogleDrive(
+  customToken?: string
+): Promise<{ success: boolean; models?: any[]; error?: string }> {
+  const token = customToken || getGoogleAccessToken();
+  if (!token) {
+    return { success: false, error: 'No Google Drive access token' };
+  }
+
+  try {
+    const familyCircleFolder = await getOrCreateGoogleDriveFolder(token, AI_KEYS_DRIVE_ROOT_FOLDER);
+    const aiFolder = await getOrCreateGoogleDriveFolder(token, AI_KEYS_DRIVE_SUBFOLDER, familyCircleFolder.id);
+
+    const query = `'${aiFolder.id}' in parents and name = '${AI_DYNAMIC_MODELS_DRIVE_FILE_NAME}' and trashed = false`;
+    const searchRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&supportsAllDrives=true&fields=files(id,name)&pageSize=1`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (!searchRes.ok) {
+      return { success: false, error: 'Failed searching Google Drive folder' };
+    }
+
+    const data = await searchRes.json();
+    if (!data.files || data.files.length === 0) {
+      return { success: false, error: 'No dynamic_ai_models.json found in Google Drive' };
+    }
+
+    const fileId = data.files[0].id;
+    const downloadRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (!downloadRes.ok) {
+      return { success: false, error: 'Failed downloading models from Google Drive' };
+    }
+
+    const json = await downloadRes.json();
+    const models = Array.isArray(json.models) ? json.models : [];
+    return { success: true, models };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Restore error' };
+  }
 }
 

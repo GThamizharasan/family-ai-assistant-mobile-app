@@ -423,6 +423,23 @@ export async function initSqliteDb(): Promise<Database> {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS dynamic_ai_models (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model_id TEXT NOT NULL,
+      badge TEXT,
+      tagline TEXT,
+      description TEXT,
+      color TEXT,
+      endpoint_url TEXT,
+      api_key TEXT,
+      is_active INTEGER DEFAULT 0,
+      added_by TEXT DEFAULT 'voice_assistant',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2124,6 +2141,133 @@ export function setHubApiKeyInSqlite(keyName: string, keyValue: string, descript
     description: description || '',
     updatedAt: now,
   };
+}
+
+// -------------------------------------------------------------
+// Dynamic AI Model Store (Future & On-Demand Engine Models)
+// -------------------------------------------------------------
+export interface DynamicAiModelRecord {
+  id: string;
+  name: string;
+  provider: string;
+  modelId: string;
+  badge?: string;
+  tagline?: string;
+  description?: string;
+  color?: string;
+  endpointUrl?: string;
+  apiKey?: string;
+  isActive?: boolean;
+  addedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getDynamicAiModelsFromSqlite(): DynamicAiModelRecord[] {
+  if (!db) return [];
+  try {
+    const res = db.exec(`
+      SELECT id, name, provider, model_id, badge, tagline, description, color, endpoint_url, api_key, is_active, added_by, created_at, updated_at
+      FROM dynamic_ai_models
+      ORDER BY created_at DESC
+    `);
+    if (!res.length) return [];
+    return res[0].values.map((row) => ({
+      id: row[0] as string,
+      name: row[1] as string,
+      provider: row[2] as string,
+      modelId: row[3] as string,
+      badge: (row[4] as string) || undefined,
+      tagline: (row[5] as string) || undefined,
+      description: (row[6] as string) || undefined,
+      color: (row[7] as string) || undefined,
+      endpointUrl: (row[8] as string) || undefined,
+      apiKey: (row[9] as string) || undefined,
+      isActive: Boolean(row[10]),
+      addedBy: (row[11] as string) || 'voice_assistant',
+      createdAt: row[12] as string,
+      updatedAt: row[13] as string,
+    }));
+  } catch (err) {
+    console.warn('[SQLite] getDynamicAiModels error:', err);
+    return [];
+  }
+}
+
+export function saveDynamicAiModelInSqlite(model: Partial<DynamicAiModelRecord> & { name: string; modelId: string }): DynamicAiModelRecord {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const id = model.id || model.modelId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const provider = model.provider || (id.startsWith('gemini') ? 'gemini' : id.startsWith('nvidia') ? 'nvidia' : id.startsWith('claude') ? 'anthropic' : id.startsWith('gpt') ? 'openai' : 'gemini');
+  const badge = model.badge || 'ON-DEMAND';
+  const tagline = model.tagline || `${model.name} (${provider.toUpperCase()}) - Sovereign Dynamic AI Model`;
+  const description = model.description || `Registered dynamically via Voice Assistant for on-demand inference`;
+  const color = model.color || (provider === 'nvidia' ? 'emerald' : provider === 'anthropic' ? 'amber' : provider === 'openai' ? 'teal' : 'purple');
+  const isActive = model.isActive ? 1 : 0;
+
+  if (isActive === 1) {
+    try {
+      db.run('UPDATE dynamic_ai_models SET is_active = 0 WHERE provider = ?', [provider]);
+    } catch {}
+  }
+
+  db.run(
+    `INSERT INTO dynamic_ai_models (id, name, provider, model_id, badge, tagline, description, color, endpoint_url, api_key, is_active, added_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       name = excluded.name,
+       provider = excluded.provider,
+       model_id = excluded.model_id,
+       badge = excluded.badge,
+       tagline = excluded.tagline,
+       description = excluded.description,
+       color = excluded.color,
+       endpoint_url = excluded.endpoint_url,
+       api_key = excluded.api_key,
+       is_active = excluded.is_active,
+       updated_at = excluded.updated_at`,
+    [
+      id,
+      model.name,
+      provider,
+      model.modelId,
+      badge,
+      tagline,
+      description,
+      color,
+      model.endpointUrl || null,
+      model.apiKey || null,
+      isActive,
+      model.addedBy || 'voice_assistant',
+      model.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    name: model.name,
+    provider,
+    modelId: model.modelId,
+    badge,
+    tagline,
+    description,
+    color,
+    endpointUrl: model.endpointUrl,
+    apiKey: model.apiKey,
+    isActive: Boolean(isActive),
+    addedBy: model.addedBy || 'voice_assistant',
+    createdAt: model.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function deleteDynamicAiModelFromSqlite(id: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM dynamic_ai_models WHERE id = ?', [id]);
+  scheduleSave();
+  return true;
 }
 
 // -------------------------------------------------------------
@@ -4539,6 +4683,7 @@ export function getSqliteDbStats() {
     'shared_family_records',
     'inter_instance_communications',
     'hub_api_keys',
+    'dynamic_ai_models',
     'assistant_memory_store',
     'voice_assistant_conversations',
     'google_keep_notes',
