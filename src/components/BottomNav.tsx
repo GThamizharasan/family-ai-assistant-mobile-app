@@ -273,8 +273,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           {/* EXACT CENTRE: Active Real-Time Voice Assistant (Always fitted and fixed) */}
           <div className="w-[64px] sm:w-[72px] shrink-0 flex flex-col items-center justify-center relative z-30">
             <button
-              onClick={onOpenVoice}
-              className="w-11 h-11 sm:w-12 sm:h-12 -translate-y-2.5 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all ring-3 sm:ring-4 ring-slate-950 group relative cursor-pointer"
+              onClick={(e) => {
+                e.preventDefault();
+                onOpenVoice();
+              }}
+              className="w-11 h-11 sm:w-12 sm:h-12 -translate-y-2.5 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all ring-3 sm:ring-4 ring-slate-950 group relative cursor-pointer touch-manipulation select-none"
               title="Activate Active Real-Time Voice Assistant (AURO)"
               aria-label="Activate Real-Time Voice Assistant"
             >

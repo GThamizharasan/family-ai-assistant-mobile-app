@@ -485,9 +485,6 @@ export class VoiceAssistantEngine {
   }
 
   public startListening(): boolean {
-    if (this.isListening && !this.isUsingMediaRecorderFallback) {
-      return true;
-    }
     this.stopSpeaking();
     this.isCommitted = false;
     this.latestTranscript = '';
@@ -511,6 +508,8 @@ export class VoiceAssistantEngine {
     // 2. MediaRecorder Fallback with AudioContext VAD
     this.startMediaRecorderListening().catch((err) => {
       console.warn('MediaRecorder voice capture failed:', err);
+      this.isListening = false;
+      this.onListeningChange?.(false);
       this.onErrorCallback?.(err?.message || 'Mic access failed');
     });
     return true;
@@ -522,33 +521,54 @@ export class VoiceAssistantEngine {
 
     const session = ++this.nativeRecognitionSession;
 
+    // Provide instant UI feedback on mobile
+    this.isListening = true;
+    this.onListeningChange?.(true);
+
     try {
-      const { available } = await SpeechRecognition.available();
-      if (!available) {
-        console.warn('Native speech recognition is unavailable, switching to MediaRecorder voice capture...');
+      // 1. Check or request permissions on Android/iOS
+      try {
+        const permStatus = await SpeechRecognition.checkPermissions();
+        if (permStatus.speechRecognition !== 'granted') {
+          const req = await SpeechRecognition.requestPermissions();
+          if (req.speechRecognition !== 'granted') {
+            this.isContinuousMode = false;
+            this.isListening = false;
+            this.onListeningChange?.(false);
+            this.onErrorCallback?.('not-allowed');
+            return;
+          }
+        }
+      } catch (permErr) {
+        console.warn('SpeechRecognition permission check notice:', permErr);
+      }
+
+      if (session !== this.nativeRecognitionSession) return;
+
+      // 2. Check service availability
+      let isAvail = true;
+      try {
+        const availRes = await SpeechRecognition.available();
+        isAvail = !!availRes?.available;
+      } catch (availErr) {
+        console.warn('SpeechRecognition.available check notice:', availErr);
+      }
+
+      if (!isAvail) {
+        console.warn('Native speech recognition service is unavailable on this device, switching to MediaRecorder...');
         void this.startMediaRecorderListening();
         return;
       }
-
-      const permission = await SpeechRecognition.requestPermissions();
-      if (permission.speechRecognition !== 'granted') {
-        this.isContinuousMode = false;
-        this.onErrorCallback?.('not-allowed');
-        return;
-      }
-      if (session !== this.nativeRecognitionSession) return;
 
       if (this.isNativeRecognitionActive) {
         try {
           await SpeechRecognition.stop();
         } catch {}
-        await new Promise((r) => setTimeout(r, 120));
+        await new Promise((r) => setTimeout(r, 100));
       }
       if (session !== this.nativeRecognitionSession) return;
 
       this.isNativeRecognitionActive = true;
-      this.isListening = true;
-      this.onListeningChange?.(true);
       this.onTranscriptCallback?.('Listening (speak now)...', false);
 
       const { matches } = await SpeechRecognition.start({
@@ -571,7 +591,6 @@ export class VoiceAssistantEngine {
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
           this.consecutiveErrorCount++;
-          // Generous human pause so Android AudioRecord session is never thrashed
           const restartDelay = Math.min(2500, 1000 + this.consecutiveErrorCount * 400);
           this.scheduleAutoRestart(restartDelay);
           return;
@@ -586,12 +605,13 @@ export class VoiceAssistantEngine {
 
       if (/permission|denied/i.test(message)) {
         this.isContinuousMode = false;
+        this.isListening = false;
+        this.onListeningChange?.(false);
         this.onErrorCallback?.('not-allowed');
       } else if (/not available|recognition service not/i.test(message)) {
         console.warn('Speech Services by Google not available, falling back to MediaRecorder...');
         void this.startMediaRecorderListening();
       } else if (/no match|no speech|timeout|aborted/i.test(message)) {
-        // Natural pause/silence from user in hands-free mode or programmatic stop -> gentle re-arm
         this.consecutiveErrorCount++;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.isNativeRecognitionActive = false;
@@ -601,7 +621,6 @@ export class VoiceAssistantEngine {
         }
         return;
       } else if (/busy|audio recording/i.test(message)) {
-        // Audio focus collision or device busy -> wait for audio focus release and retry
         this.isNativeRecognitionActive = false;
         if (this.isContinuousMode && !this.isSpeakingNow && !this.isThinkingNow) {
           this.consecutiveErrorCount++;

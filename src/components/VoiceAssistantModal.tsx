@@ -3641,34 +3641,36 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       speechEngine.stopSpeaking();
       speechEngine.unlockAudio();
       speechEngine.setContinuousMode(isHandsFreeRef.current);
+      setIsListening(true);
       speechEngine.startListening();
       return;
     }
 
     if (isListening) {
-      if (liveTranscript.trim()) {
-        speechEngine.commitCurrentSpeech();
-      } else {
-        speechEngine.stopListening(true);
-      }
-    } else {
-      speechEngine.unlockAudio();
-      setMicStatusMessage(null);
+      // User tapped mic while listening -> immediate clean STOP / MUTE
       speechEngine.stopSpeaking();
-      speechEngine.setContinuousMode(isHandsFreeRef.current);
+      speechEngine.stopListening(true);
+      setIsListening(false);
+      setLiveTranscript('');
+      return;
+    }
 
-      if (typeof window !== 'undefined' && !window.isSecureContext) {
-        setMicStatusMessage('Microphone access requires a secure connection (HTTPS or localhost). If connecting from mobile over Wi-Fi IP, access via HTTPS or use USB forwarding (adb reverse tcp:3000 tcp:3000 to open http://localhost:3000).');
-        return;
-      }
+    // User tapped mic while idle -> immediate START / UNMUTE
+    speechEngine.unlockAudio();
+    setMicStatusMessage(null);
+    speechEngine.stopSpeaking();
+    speechEngine.setContinuousMode(isHandsFreeRef.current);
+    setIsListening(true);
 
-      // Start listening SYNCHRONOUSLY within this user tap gesture!
-      // This preserves the active User Activation token on iOS Safari and Android Chrome,
-      // allowing the browser to immediately display the native mic permission prompt without expiring.
+    try {
       const started = speechEngine.startListening();
       if (!started) {
-        setMicStatusMessage('Speech recognition could not be started in this browser. Please check your browser microphone settings, or type below.');
+        setIsListening(false);
+        setMicStatusMessage('Speech recognition could not be started. Please check microphone permissions, or type below.');
       }
+    } catch (e: any) {
+      setIsListening(false);
+      setMicStatusMessage(e?.message || 'Unable to access microphone.');
     }
   };
 
@@ -4453,8 +4455,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             {/* Glowing Orb */}
             <button
               type="button"
-              onClick={toggleMic}
-              className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 z-10 cursor-pointer active:scale-95 ${
+              onClick={(e) => {
+                e.preventDefault();
+                toggleMic();
+              }}
+              className={`w-20 h-20 rounded-full flex items-center justify-center shadow-2xl transition-all duration-500 z-10 cursor-pointer active:scale-95 touch-manipulation select-none ${
                 isSpeaking
                   ? 'bg-gradient-to-tr from-purple-600 via-indigo-500 to-pink-500 shadow-purple-500/40 scale-105 ring-4 ring-purple-500/40'
                   : isListening
@@ -5163,8 +5168,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           {/* 2. Bottom Bar Mic Toggle (Original hardware mic override: Mute/Unmute speech recognition) */}
           <button
             type="button"
-            onClick={toggleMic}
-            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 shrink-0 cursor-pointer ${
+            onClick={(e) => {
+              e.preventDefault();
+              toggleMic();
+            }}
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow-lg active:scale-95 shrink-0 cursor-pointer touch-manipulation select-none ${
               isListening
                 ? 'bg-rose-500 hover:bg-rose-600 text-white shadow-rose-500/30 animate-pulse'
                 : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/30'
