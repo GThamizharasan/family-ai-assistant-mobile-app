@@ -58,6 +58,7 @@ import { TabKey } from './BottomNav';
 import { uploadBookToDrive } from '../services/appleBooksDrive';
 import { parsePdfFileToBook, syncBookToSqlite } from '../utils/pdfHelper';
 import { saveBookToSqliteStore } from '../services/offlineSyncService';
+import { parsePhoneAppVoiceIntent, launchPhoneApp } from '../services/phoneControlService';
 import { Book } from '../types/book';
 import {
   createReminder,
@@ -976,6 +977,33 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower === 'home' ||
       lower === 'home hub' ||
       lower === 'go home';
+
+    // =========================================================================
+    // AURO VOICE INTENT: PHONE ACCESS & EXTERNAL APP CONTROL
+    // Controls phone access on voice command: "open whatsapp", "open facebook",
+    // "open youtube", "open instagram", "open camera", "open spotify", etc.
+    // =========================================================================
+    const phoneAppIntent = parsePhoneAppVoiceIntent(spokenText);
+    if (phoneAppIntent && !selectedFile && !lower.includes('on screen') && !lower.includes('in app')) {
+      const { app, isTamil } = phoneAppIntent;
+      setIsThinking(false);
+
+      const rep = isTamil
+        ? `உங்கள் மொபைலில் ${app.tamilName} செயலியை இப்போது திறக்கிறேன்.`
+        : `Opening ${app.name} on your device now.`;
+
+      addVoiceMessage({
+        role: 'assistant',
+        content: rep,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        emotion: 'attentive & responsive',
+        actionSuggestion: `Phone Access: ${app.name} (${app.icon})`,
+      });
+
+      speakWithAuro(rep);
+      launchPhoneApp(app);
+      return;
+    }
 
     // Screen navigation intents should ONLY run when the user explicitly commands navigation and no file is being analyzed
     const shouldCheckNavigation = isExplicitNavigation && !selectedFile;
@@ -3661,6 +3689,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
   handleUserSpeechRef.current = handleUserSpeech;
 
   const quickPrompts = [
+    { label: '💬 Open WhatsApp', text: 'Open WhatsApp' },
+    { label: '📘 Open Facebook', text: 'Open Facebook' },
+    { label: '▶️ Open YouTube', text: 'Open YouTube' },
+    { label: '📷 Open Instagram', text: 'Open Instagram' },
+    { label: '📸 Open Camera', text: 'Open Camera' },
     { label: '🎙️ Open Voice Memo', text: 'Open voice memo' },
     { label: '🗣️ Speech to Text', text: 'Open speech to text' },
     { label: '🎵 Open Apple Music', text: 'Open Apple Music' },

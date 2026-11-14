@@ -135,8 +135,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { key: 'docs', label: 'Docs & Demo', category: 'Core', icon: FileText },
   ];
 
-  // Auto-scroll the active tab into view when changed
+  // Scrollable tabs in the bottom bar (Home Hub is pinned separately on the left)
+  const scrollableTabs = allTabs.filter((t) => t.key !== 'home');
+
+  // Auto-scroll the active tab into view when changed (if in the scrollable track)
   useEffect(() => {
+    if (currentTab === 'home') return;
     const el = navScrollRef.current?.querySelector(`[data-tab="${currentTab}"]`) as HTMLElement;
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
@@ -185,22 +189,47 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     <>
       {/* =========================================================================
           SLIDING BOTTOM NAVIGATION DOCK
-          1. Continuous horizontally scrollable track of all 26 features (Hub, Weather, etc.)
-          2. Active Realtime Voice Assistant (AURO) pinned and prominent
-          3. All Feature Grid Launcher pinned at the end
+          1. Fixed Home Hub button permanently docked on the left
+          2. Continuous horizontally scrollable track of all other features (Weather, etc.)
+          3. Pinned All Feature Grid Launcher on the right
           ========================================================================= */}
       <nav
         aria-label="Application Navigation"
         className="fixed bottom-0 left-0 right-0 z-40 safe-area-bottom bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/80 px-1 sm:px-3 py-1.5 max-w-2xl mx-auto shadow-2xl transition-all"
       >
         <div className="relative flex items-center h-14 w-full gap-1">
-          {/* Continuous Horizontally Scrollable Track of all Features */}
+          {/* FIXED AT THE START: Home Hub Button */}
+          <div className="shrink-0 pr-1 border-r border-slate-800/80">
+            <button
+              data-tab="home"
+              onClick={() => onSelectTab('home')}
+              className={`flex flex-col items-center justify-center min-w-[54px] sm:min-w-[60px] py-1 px-1 rounded-2xl transition-all relative shrink-0 cursor-pointer ${
+                currentTab === 'home'
+                  ? 'bg-indigo-600/20 text-indigo-300 font-bold border border-indigo-500/40 shadow-md shadow-indigo-950'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+              }`}
+              title="Home Hub"
+              aria-label="Home Hub"
+            >
+              <div className="relative">
+                <Home className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-transform ${currentTab === 'home' ? 'scale-110 text-indigo-400' : ''}`} />
+              </div>
+              <span className="text-[10px] mt-1 tracking-tight truncate max-w-[54px] sm:max-w-[60px]">
+                Hub
+              </span>
+              {currentTab === 'home' && (
+                <span className="w-1.5 h-1 rounded-full bg-indigo-400 absolute bottom-0.5" />
+              )}
+            </button>
+          </div>
+
+          {/* Continuous Horizontally Scrollable Track of all other Features */}
           <div
             ref={navScrollRef}
             className="flex-1 flex items-center justify-start gap-1 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 min-w-0"
             style={{ WebkitOverflowScrolling: 'touch' }}
           >
-            {allTabs.map((tab) => renderTabButton(tab))}
+            {scrollableTabs.map((tab) => renderTabButton(tab))}
           </div>
 
           {/* DOCKED PROMINENT: Active Real-Time Voice Assistant (AURO) - Hidden as requested, can toggle via SHOW_BOTTOM_BAR_MIC */}
