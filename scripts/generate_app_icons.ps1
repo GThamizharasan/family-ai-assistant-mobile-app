@@ -81,6 +81,12 @@ function Resize-Image {
     return $dest
 }
 
+# Remove stale default vector XML templates that shadow the real logo.png launcher
+$staleForeground = Join-Path $resDir "drawable-v24\ic_launcher_foreground.xml"
+if (Test-Path $staleForeground) { Remove-Item $staleForeground -Force; Write-Host "Removed stale drawable-v24/ic_launcher_foreground.xml" }
+$staleBg = Join-Path $resDir "drawable\ic_launcher_background.xml"
+if (Test-Path $staleBg) { Remove-Item $staleBg -Force; Write-Host "Removed stale drawable/ic_launcher_background.xml" }
+
 # 1. Generate Android Mipmaps
 $mipmapConfigs = @(
     @{ Name = "mipmap-mdpi"; Size = 48; FgSize = 108 },
@@ -150,6 +156,43 @@ $appleIcon.Dispose()
 $fav = Resize-Image -Source $sourceImg -TargetWidth 64 -TargetHeight 64
 $fav.Save((Join-Path $publicDir "favicon.ico"), [System.Drawing.Imaging.ImageFormat]::Icon)
 $fav.Dispose()
+
+# 3. Generate Android Native Splash Screens with logo.png
+Write-Host "Generating Android Native Splash screens from logo.png..."
+$splashConfigs = @(
+    @{ Folder = "drawable"; W = 480; H = 320 },
+    @{ Folder = "drawable-land-mdpi"; W = 480; H = 320 },
+    @{ Folder = "drawable-land-hdpi"; W = 800; H = 480 },
+    @{ Folder = "drawable-land-xhdpi"; W = 1280; H = 720 },
+    @{ Folder = "drawable-land-xxhdpi"; W = 1600; H = 960 },
+    @{ Folder = "drawable-land-xxxhdpi"; W = 1920; H = 1280 },
+    @{ Folder = "drawable-port-mdpi"; W = 320; H = 480 },
+    @{ Folder = "drawable-port-hdpi"; W = 480; H = 800 },
+    @{ Folder = "drawable-port-xhdpi"; W = 720; H = 1280 },
+    @{ Folder = "drawable-port-xxhdpi"; W = 960; H = 1600 },
+    @{ Folder = "drawable-port-xxxhdpi"; W = 1280; H = 1920 }
+)
+
+foreach ($sc in $splashConfigs) {
+    $folderPath = Join-Path $resDir $sc.Folder
+    if (-not (Test-Path $folderPath)) { New-Item -ItemType Directory -Path $folderPath -Force | Out-Null }
+    
+    $splash = [System.Drawing.Bitmap]::new($sc.W, $sc.H, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $g = [System.Drawing.Graphics]::FromImage($splash)
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $g.Clear($bgSample)
+    
+    $logoSize = [int]([Math]::Min($sc.W, $sc.H) * 0.45)
+    $x = [int](($sc.W - $logoSize) / 2)
+    $y = [int](($sc.H - $logoSize) / 2)
+    $g.DrawImage($sourceImg, $x, $y, $logoSize, $logoSize)
+    $g.Dispose()
+    
+    $splash.Save((Join-Path $folderPath "splash.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    $splash.Dispose()
+}
 
 $sourceImg.Dispose()
 $ms.Dispose()

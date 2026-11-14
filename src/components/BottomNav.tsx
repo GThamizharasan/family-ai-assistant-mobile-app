@@ -93,10 +93,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onOpenOfflineSyncCenter,
 }) => {
   const { tasks, familyMembers, whatsAppContacts } = useApp();
-  const navScrollRef = useRef<HTMLDivElement>(null);
-
-  // Toggle flag: easily re-enable bottom bar AURO Voice trigger when needed
-  const SHOW_BOTTOM_BAR_MIC = false;
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
 
   const [isAllFeaturesSheetOpen, setIsAllFeaturesSheetOpen] = useState(false);
   const [featureSearchQuery, setFeatureSearchQuery] = useState('');
@@ -135,15 +133,50 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     { key: 'docs', label: 'Docs & Demo', category: 'Core', icon: FileText },
   ];
 
-  // Scrollable tabs in the bottom bar (Home Hub is pinned separately on the left)
-  const scrollableTabs = allTabs.filter((t) => t.key !== 'home');
+  // Left wing scrollable features (between fixed Home Hub on left and center Mic)
+  const leftTabs: TabItem[] = [
+    { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },
+    { key: 'navigation', label: 'Navigation', category: 'Core', icon: Navigation, offlineReady: true },
+    { key: 'scanner', label: 'Adobe Scanner', category: 'Intelligence', icon: ScanLine, offlineReady: true },
+    { key: 'ibooks', label: 'Apple Books', category: 'Intelligence', icon: BookOpen, offlineReady: true },
+    { key: 'music', label: 'Apple Music', category: 'Intelligence', icon: Music, offlineReady: true },
+    { key: 'memos', label: 'Voice Memos', category: 'Intelligence', icon: Mic, offlineReady: true },
+    { key: 'tts', label: 'Text to Speech', category: 'Intelligence', icon: Volume2, offlineReady: true },
+    { key: 'stt', label: 'Speech to Text', category: 'Intelligence', icon: Radio, offlineReady: true },
+    { key: 'translate', label: 'Translator', category: 'Intelligence', icon: Languages, offlineReady: true },
+    { key: 'clock', label: 'Clock & Alarm', category: 'Core', icon: Clock },
+    { key: 'ai-studio', label: 'AI Studio', category: 'Intelligence', icon: Sparkles },
+  ];
 
-  // Auto-scroll the active tab into view when changed (if in the scrollable track)
+  // Right wing scrollable features (between center Mic and fixed All Apps on right)
+  const rightTabs: TabItem[] = [
+    { key: 'whatsapp', label: 'WhatsApp', category: 'Core', icon: MessageSquare, badge: totalUnreadWhatsApp },
+    { key: 'family', label: 'Family Radar', category: 'Family & Safety', icon: Users, badge: emergencyAlertCount },
+    { key: 'phone', label: 'Phone', category: 'Core', icon: Phone },
+    { key: 'google', label: 'Google Suite', category: 'Core', icon: Mail, badge: 3, offlineReady: true },
+    { key: 'finance', label: 'Wealth', category: 'Wealth', icon: Wallet },
+    { key: 'billionaire', label: 'Blueprint', category: 'Wealth', icon: TrendingUp },
+    { key: 'productivity', label: 'Tasks', category: 'Lifestyle', icon: CheckSquare, badge: pendingTasksCount },
+    { key: 'wellness', label: 'Health & Wellness', category: 'Lifestyle', icon: HeartPulse, offlineReady: true },
+    { key: 'mood', label: 'Mood Journal', category: 'Lifestyle', icon: Smile },
+    { key: 'writing', label: 'Writing Coach', category: 'Intelligence', icon: PenTool },
+    { key: 'vault', label: 'Memory Vault', category: 'Family & Safety', icon: HardDrive },
+    { key: 'devices', label: 'Smart IoT', category: 'Family & Safety', icon: Cctv },
+    { key: 'billing', label: 'GCP Billing', category: 'Wealth', icon: CreditCard },
+    { key: 'docs', label: 'Docs & Demo', category: 'Core', icon: FileText },
+  ];
+
+  // Auto-scroll the active tab into view when changed
   useEffect(() => {
     if (currentTab === 'home') return;
-    const el = navScrollRef.current?.querySelector(`[data-tab="${currentTab}"]`) as HTMLElement;
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    const leftEl = leftScrollRef.current?.querySelector(`[data-tab="${currentTab}"]`) as HTMLElement;
+    if (leftEl) {
+      leftEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      return;
+    }
+    const rightEl = rightScrollRef.current?.querySelector(`[data-tab="${currentTab}"]`) as HTMLElement;
+    if (rightEl) {
+      rightEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
     }
   }, [currentTab]);
 
@@ -189,80 +222,95 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     <>
       {/* =========================================================================
           SLIDING BOTTOM NAVIGATION DOCK
-          1. Fixed Home Hub button permanently docked on the left
-          2. Continuous horizontally scrollable track of all other features (Weather, etc.)
-          3. Pinned All Feature Grid Launcher on the right
+          1. Fixed Home Hub button permanently docked on the far left
+          2. Left wing horizontally scrollable features track
+          3. Fixed & fitted Voice Assistant Mic icon static in the exact center
+          4. Right wing horizontally scrollable features track
+          5. Pinned All Feature Grid Launcher on the far right
           ========================================================================= */}
       <nav
         aria-label="Application Navigation"
-        className="fixed bottom-0 left-0 right-0 z-40 safe-area-bottom bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/80 px-1 sm:px-3 py-1.5 max-w-2xl mx-auto shadow-2xl transition-all"
+        className="fixed bottom-0 left-0 right-0 z-40 safe-area-bottom bg-slate-950/95 backdrop-blur-2xl border-t border-slate-800/80 px-1 sm:px-2 py-1.5 max-w-2xl mx-auto shadow-2xl transition-all"
       >
-        <div className="relative flex items-center h-14 w-full gap-1">
-          {/* FIXED AT THE START: Home Hub Button */}
-          <div className="shrink-0 pr-1 border-r border-slate-800/80">
-            <button
-              data-tab="home"
-              onClick={() => onSelectTab('home')}
-              className={`flex flex-col items-center justify-center min-w-[54px] sm:min-w-[60px] py-1 px-1 rounded-2xl transition-all relative shrink-0 cursor-pointer ${
-                currentTab === 'home'
-                  ? 'bg-indigo-600/20 text-indigo-300 font-bold border border-indigo-500/40 shadow-md shadow-indigo-950'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-              }`}
-              title="Home Hub"
-              aria-label="Home Hub"
-            >
-              <div className="relative">
-                <Home className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-transform ${currentTab === 'home' ? 'scale-110 text-indigo-400' : ''}`} />
-              </div>
-              <span className="text-[10px] mt-1 tracking-tight truncate max-w-[54px] sm:max-w-[60px]">
-                Hub
-              </span>
-              {currentTab === 'home' && (
-                <span className="w-1.5 h-1 rounded-full bg-indigo-400 absolute bottom-0.5" />
-              )}
-            </button>
-          </div>
-
-          {/* Continuous Horizontally Scrollable Track of all other Features */}
-          <div
-            ref={navScrollRef}
-            className="flex-1 flex items-center justify-start gap-1 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 min-w-0"
-            style={{ WebkitOverflowScrolling: 'touch' }}
-          >
-            {scrollableTabs.map((tab) => renderTabButton(tab))}
-          </div>
-
-          {/* DOCKED PROMINENT: Active Real-Time Voice Assistant (AURO) - Hidden as requested, can toggle via SHOW_BOTTOM_BAR_MIC */}
-          {SHOW_BOTTOM_BAR_MIC && (
-            <div className="shrink-0 flex flex-col items-center justify-center px-1 border-l border-slate-800/80">
+        <div className="relative flex items-center h-14 w-full">
+          {/* LEFT WING: Fixed Home Hub + Left Features Scrollable Track */}
+          <div className="w-[calc(50%-32px)] sm:w-[calc(50%-36px)] flex items-center justify-between min-w-0 pr-1">
+            {/* FIXED AT THE START: Home Hub Button */}
+            <div className="shrink-0 pr-1 border-r border-slate-800/80">
               <button
-                onClick={onOpenVoice}
-                className="w-11 h-11 sm:w-12 sm:h-12 -translate-y-1 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all ring-2 sm:ring-4 ring-slate-950 group relative cursor-pointer"
-                title="Activate Active Real-Time Voice Assistant (AURO)"
-                aria-label="Activate Real-Time Voice Assistant"
+                data-tab="home"
+                onClick={() => onSelectTab('home')}
+                className={`flex flex-col items-center justify-center min-w-[48px] sm:min-w-[54px] py-1 px-1 rounded-2xl transition-all relative shrink-0 cursor-pointer ${
+                  currentTab === 'home'
+                    ? 'bg-indigo-600/20 text-indigo-300 font-bold border border-indigo-500/40 shadow-md shadow-indigo-950'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                }`}
+                title="Home Hub"
+                aria-label="Home Hub"
               >
-                {/* Outer pulsing radar ring */}
-                <span className="absolute inset-0 rounded-full bg-pink-500/30 animate-ping pointer-events-none" />
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-950" />
-                <Mic className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
+                <div className="relative">
+                  <Home className={`w-4 h-4 sm:w-4.5 sm:h-4.5 transition-transform ${currentTab === 'home' ? 'scale-110 text-indigo-400' : ''}`} />
+                </div>
+                <span className="text-[10px] mt-0.5 sm:mt-1 tracking-tight truncate max-w-[48px] sm:max-w-[54px]">
+                  Hub
+                </span>
+                {currentTab === 'home' && (
+                  <span className="w-1.5 h-1 rounded-full bg-indigo-400 absolute bottom-0.5" />
+                )}
               </button>
-              <span className="text-[8px] sm:text-[9px] font-mono font-bold text-indigo-300 -mt-0.5 tracking-tight uppercase">
-                AURO Voice
-              </span>
             </div>
-          )}
 
-          {/* AT THE LAST: All Feature Grid Button */}
-          <div className="shrink-0 pl-1 border-l border-slate-800/80">
-            <button
-              onClick={() => setIsAllFeaturesSheetOpen(true)}
-              className="flex flex-col items-center justify-center py-1 px-1.5 sm:px-2 rounded-2xl text-slate-300 hover:text-white hover:bg-slate-900 border border-slate-800/80 transition-colors cursor-pointer"
-              title="All Features Grid"
-              aria-label="Open All Features Grid"
+            {/* Continuous Horizontally Scrollable Track of Left Features */}
+            <div
+              ref={leftScrollRef}
+              className="flex-1 flex items-center justify-start gap-1 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 min-w-0"
+              style={{ WebkitOverflowScrolling: 'touch' }}
             >
-              <Grid className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-indigo-400" />
-              <span className="text-[9px] mt-0.5 font-bold tracking-tight text-slate-400 whitespace-nowrap">All Apps</span>
+              {leftTabs.map((tab) => renderTabButton(tab))}
+            </div>
+          </div>
+
+          {/* EXACT CENTRE: Active Real-Time Voice Assistant (Always fitted and fixed) */}
+          <div className="w-[64px] sm:w-[72px] shrink-0 flex flex-col items-center justify-center relative z-30">
+            <button
+              onClick={onOpenVoice}
+              className="w-11 h-11 sm:w-12 sm:h-12 -translate-y-2.5 rounded-full bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/40 hover:scale-105 active:scale-95 transition-all ring-3 sm:ring-4 ring-slate-950 group relative cursor-pointer"
+              title="Activate Active Real-Time Voice Assistant (AURO)"
+              aria-label="Activate Real-Time Voice Assistant"
+            >
+              {/* Outer pulsing radar ring */}
+              <span className="absolute inset-0 rounded-full bg-pink-500/30 animate-ping pointer-events-none" />
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-950" />
+              <Mic className="w-5 h-5 text-white group-hover:scale-110 transition-transform" />
             </button>
+            <span className="text-[9px] font-mono font-bold text-indigo-300 -mt-1.5 tracking-tight uppercase">
+              Aura
+            </span>
+          </div>
+
+          {/* RIGHT WING: Right Features Scrollable Track + Fixed All Apps Button */}
+          <div className="w-[calc(50%-32px)] sm:w-[calc(50%-36px)] flex items-center justify-between min-w-0 pl-1">
+            {/* Continuous Horizontally Scrollable Track of Right Features */}
+            <div
+              ref={rightScrollRef}
+              className="flex-1 flex items-center justify-start gap-1 overflow-x-auto no-scrollbar scroll-smooth py-1 px-1 min-w-0"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+              {rightTabs.map((tab) => renderTabButton(tab))}
+            </div>
+
+            {/* FIXED AT THE END: All Feature Grid Button */}
+            <div className="shrink-0 pl-1 border-l border-slate-800/80">
+              <button
+                onClick={() => setIsAllFeaturesSheetOpen(true)}
+                className="flex flex-col items-center justify-center py-1 px-1 sm:px-2 rounded-2xl text-slate-300 hover:text-white hover:bg-slate-900 border border-slate-800/80 transition-colors cursor-pointer min-w-[46px] sm:min-w-[50px]"
+                title="All Features Grid"
+                aria-label="Open All Features Grid"
+              >
+                <Grid className="w-4 h-4 sm:w-4.5 sm:h-4.5 text-indigo-400" />
+                <span className="text-[9px] mt-0.5 font-bold tracking-tight text-slate-400 whitespace-nowrap">All Apps</span>
+              </button>
+            </div>
           </div>
         </div>
       </nav>

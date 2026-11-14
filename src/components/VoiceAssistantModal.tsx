@@ -5148,23 +5148,60 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           onChange={handleFileChange}
         />
 
-        {/* Input Dock & Big Mic Trigger */}
-        <div className="p-3 sm:p-4 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
+        {/* Input Dock & Bottom Bar Controls */}
+        <div className="p-2 sm:p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-1.5 sm:gap-2">
+          {/* 1. Home Button */}
           <button
             onClick={handleCancelAndGoHome}
-            className="p-3.5 rounded-2xl flex items-center justify-center bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 transition-all shadow active:scale-95 cursor-pointer shrink-0"
+            className="p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center bg-slate-900 hover:bg-rose-950/50 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 transition-all shadow active:scale-95 cursor-pointer shrink-0"
             title="Cancel and return to Home Hub"
             aria-label="Cancel and go back to home"
           >
             <Home className="w-5 h-5" />
           </button>
 
-          {/* Action Hub / Plus (+) Button & Options Menu */}
-          <div className="relative">
+          {/* 2. Voice Assistant Mic Button (Positioned right after Home icon) */}
+          <button
+            type="button"
+            onClick={toggleMic}
+            className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 shrink-0 relative ${
+              isListening
+                ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 text-white border-emerald-400 ring-2 ring-emerald-400/40 animate-pulse'
+                : isSpeaking
+                ? 'bg-gradient-to-tr from-purple-600 to-pink-500 text-white border-purple-400 ring-2 ring-purple-400/40'
+                : isThinking
+                ? 'bg-gradient-to-tr from-amber-600 to-orange-500 text-white border-amber-400 animate-spin'
+                : 'bg-slate-900 hover:bg-indigo-950/60 text-indigo-400 hover:text-indigo-200 border-slate-800 hover:border-indigo-500/40'
+            }`}
+            title={
+              isListening
+                ? 'Listening... tap to pause or send speech'
+                : isSpeaking
+                ? 'Aura speaking... tap to interrupt'
+                : 'Tap to speak with Aura'
+            }
+            aria-label={isListening ? 'Stop microphone' : 'Start microphone'}
+          >
+            {isListening && (
+              <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-slate-950 animate-ping" />
+            )}
+            {isListening ? (
+              <Mic className="w-5 h-5 text-white animate-bounce" />
+            ) : isSpeaking ? (
+              <Volume2 className="w-5 h-5 text-white animate-pulse" />
+            ) : isThinking ? (
+              <Sparkles className="w-5 h-5 text-amber-200" />
+            ) : (
+              <Mic className="w-5 h-5" />
+            )}
+          </button>
+
+          {/* 3. Action Hub / Plus (+) Button & Options Menu */}
+          <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setShowPlusMenu((prev) => !prev)}
-              className={`p-3.5 rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 ${
+              className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all shadow border cursor-pointer active:scale-95 ${
                 showPlusMenu
                   ? 'bg-indigo-600 text-white border-indigo-400 ring-2 ring-indigo-400/40'
                   : selectedFile
@@ -5320,25 +5357,25 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             )}
           </div>
 
-          <form onSubmit={handleManualSend} className="flex-1 flex items-center gap-2">
+          <form onSubmit={handleManualSend} className="flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2">
             <input
               type="text"
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
               placeholder={
                 selectedFile
-                  ? `Attached: ${selectedFile.name} (Tap Send or Upload to Drive)`
+                  ? `Attached: ${selectedFile.name}`
                   : isLocalVoiceMode
-                  ? 'Speak to transcribe, or edit transcript...'
+                  ? 'Speak to transcribe...'
                   : 'Talk or type with Aura...'
               }
-              className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500"
+              className="flex-1 min-w-0 bg-slate-900 border border-slate-800 rounded-xl px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500"
             />
             <button
               type="submit"
               disabled={(!textInput.trim() && !selectedFile) || isLocalVoiceMode}
               title={isLocalVoiceMode ? 'AI replies require a configured backend' : 'Send message'}
-              className="p-3 rounded-xl bg-slate-800 hover:bg-indigo-600 disabled:opacity-40 text-white transition-colors cursor-pointer"
+              className="p-2.5 sm:p-3 rounded-xl bg-slate-800 hover:bg-indigo-600 disabled:opacity-40 text-white transition-colors cursor-pointer shrink-0"
             >
               <Send className="w-4 h-4" />
             </button>

@@ -1,0 +1,45 @@
+{
+  "id": "/",
+  "name": "AuraFamily AI - Family Personal Assistant & Life OS",
+  "short_name": "AuraFamily",
+  "description": "Comprehensive Family Personal AI Assistant, billionaire milestone roadmap, encrypted life vault, and family geofence tracking.",
+  "theme_color": "#090d16",
+  "background_color": "#090d16",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "600x600",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "600x600",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
+
