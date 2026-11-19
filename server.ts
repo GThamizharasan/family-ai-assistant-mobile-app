@@ -1109,6 +1109,7 @@ app.post('/api/adaptive-learning/recognize-ink', async (req, res) => {
       localGeometryHint = null,
       geminiApiKey,
       modelOverride,
+      practiceMode,
     } = req.body;
 
     if (!imageBase64 || typeof imageBase64 !== 'string') {
@@ -1134,7 +1135,26 @@ app.post('/api/adaptive-learning/recognize-ink', async (req, res) => {
     const isTamil =
       subjectId === 'tamil' || String(language).toLowerCase().startsWith('ta');
 
-    const systemInstruction = `You are Aura Smart Whiteboard's real-time Handwriting, Math & Sketch Intelligence Engine.
+    const isMathAnswerCheck = practiceMode === 'math_answer_check';
+    const systemInstruction = isMathAnswerCheck
+      ? `You are a strict optical digit reader for a child's handwritten math answer box on a clean white background.
+YOUR ONLY JOB: Transcribe the exact digits visually drawn inside the image (single or multi-digit integer, with an optional leading minus sign "-").
+CRITICAL RULES:
+1. NEVER solve, calculate, infer, or guess what the right answer might be — strictly transcribe ONLY the digits visually present in the image, even if wrong, messy, tilted, or wide-spaced.
+2. If the image is blank or unreadable, return "".
+3. Do NOT output spaces between digits (e.g. write "42", not "4 2").
+4. Return STRICT JSON matching:
+{
+  "detectedCategory": "text_characters",
+  "recognizedText": "<exact digits or empty string>",
+  "detectedPurpose": "Child handwritten math answer",
+  "solvedAnswer": null,
+  "visualQuery": null,
+  "customScene": null,
+  "confidence": 0.95,
+  "spokenFeedback": ""
+}`
+      : `You are Aura Smart Whiteboard's real-time Handwriting, Math & Sketch Intelligence Engine.
 You are analyzing a high-contrast snapshot of ONLY the user's freehand pen strokes drawn inside a ${subjectName} ("${conceptTitle}") classroom session.
 
 YOUR JOB:
@@ -1197,7 +1217,9 @@ Return STRICT JSON matching:
                 },
               },
               {
-                text: `Identify and translate this freeform ink inside ${subjectName} (${conceptTitle}). ${hintNote}`,
+                text: isMathAnswerCheck
+                  ? 'Read the exact handwritten number drawn in this answer box. Return only the digits visually written.'
+                  : `Identify and translate this freeform ink inside ${subjectName} (${conceptTitle}). ${hintNote}`,
               },
             ],
           },
@@ -1213,7 +1235,13 @@ Return STRICT JSON matching:
           .replace(/```\s*$/i, '')
           .trim();
         const candidateJson = JSON.parse(rawText);
-        if (candidateJson && (candidateJson.recognizedText || candidateJson.visualQuery || candidateJson.customScene)) {
+        if (
+          candidateJson &&
+          (candidateJson.recognizedText ||
+            candidateJson.visualQuery ||
+            candidateJson.customScene ||
+            (isMathAnswerCheck && typeof candidateJson.recognizedText === 'string'))
+        ) {
           parsedResult = candidateJson;
           modelUsed = model;
           break;

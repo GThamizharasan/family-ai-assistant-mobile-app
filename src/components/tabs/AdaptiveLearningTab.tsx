@@ -112,6 +112,10 @@ export const AdaptiveLearningTab: React.FC = () => {
   );
   const [pendingBoardSnapshot, setPendingBoardSnapshot] =
     useState<BlackboardSnapshot | null>(null);
+  const [blackboardModeRequest, setBlackboardModeRequest] = useState<{
+    mode: 'free' | 'math_practice';
+    nonce: number;
+  }>({ mode: 'free', nonce: 0 });
 
   // Live Classroom Nervous System Telemetry
   const [isTelemetryLive, setIsTelemetryLive] = useState(true);
@@ -483,14 +487,30 @@ export const AdaptiveLearningTab: React.FC = () => {
               </span>
             </div>
 
-            <button
-              type="button"
-              onClick={handleTriggerLiveDemo}
-              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Pulse Telemetry</span>
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  handleSelectSubject('maths');
+                  setBlackboardModeRequest({ mode: 'math_practice', nonce: Date.now() });
+                  setActivePillar('blackboard');
+                  showToast('✏️ Paperless Kids Math Practice (+ − × ÷) Ready!');
+                }}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-400 hover:from-emerald-300 hover:to-teal-300 text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+              >
+                <PenTool className="w-3.5 h-3.5" />
+                <span>✏️ Kids Math Practice (+ − × ÷)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTriggerLiveDemo}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Pulse Telemetry</span>
+              </button>
+            </div>
           </div>
         </div>
       </motion.div>
@@ -643,6 +663,7 @@ export const AdaptiveLearningTab: React.FC = () => {
             onMasteryUpdate={handleMasteryUpdate}
             onSendConceptToBlackboard={(concept) => {
               setSelectedConceptId(concept.id);
+              setBlackboardModeRequest({ mode: 'free', nonce: Date.now() });
               setActivePillar('blackboard');
               showToast(`Loaded "${concept.title}" onto Smart Blackboard`);
             }}
@@ -657,6 +678,8 @@ export const AdaptiveLearningTab: React.FC = () => {
           <SmartBlackboardView
             subject={activeSubject}
             activeConcept={activeConceptObj}
+            initialMode={blackboardModeRequest.mode}
+            modeNonce={blackboardModeRequest.nonce}
             onBlackboardActivity={handleBlackboardActivity}
             onExportToGrader={(snapshot) => {
               setPendingBoardSnapshot(snapshot);

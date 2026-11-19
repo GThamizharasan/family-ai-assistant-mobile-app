@@ -338,3 +338,37 @@ export interface InkRecognitionResult {
   modelUsed: string;
 }
 
+export type ArithmeticOp = 'add' | 'sub' | 'mul' | 'div';
+export type ArithmeticFilter = ArithmeticOp | 'mixed';
+export type ArithmeticTier = 'starter' | 'builder' | 'champion';
+export type ArithmeticLayout = 'column' | 'horizontal';
+
+export interface ArithmeticProblem {
+  id: string;
+  op: ArithmeticOp;
+  symbol: '+' | '−' | '×' | '÷';
+  operandA: number;
+  operandB: number;
+  correctAnswer: number;
+  tier: ArithmeticTier;
+  displayHorizontal: string;
+  hintSteps: string[];
+  visualHintKind: 'dots_add' | 'dots_sub' | 'array_mul' | 'groups_div' | 'place_value';
+  status: 'pending' | 'correct' | 'tried';
+  attempts: number;
+  studentAnswer?: number;
+}
+
+export interface MathAnswerCheckResult {
+  recognizedNumber: number | null;
+  rawRecognizedText: string;
+  isCorrect: boolean;
+  expectedAnswer: number;
+  feedbackMessage: string;
+  spokenFeedback: string;
+  confidence: number;
+  usedOfflineFallback: boolean;
+  modelUsed: string;
+}
+
+
