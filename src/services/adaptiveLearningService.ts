@@ -13,12 +13,15 @@ import {
   LearningStyle,
   RubricDimension,
   SubjectDefinition,
+  WhiteboardPrimitive,
+  WhiteboardVisualScene,
 } from '../types/adaptiveLearning';
 import { SUBJECT_CATALOG } from '../data/adaptiveCurriculumData';
 import { sendMultiTurnChat } from './aiSuite';
 import { getApiUrl } from './api';
 import { syncAnyAiOutputToDrive } from './guidedLearningService';
 import { getActiveAiModel, getActiveAiProvider } from './aiConfig';
+import { buildParametricVisualScene } from './whiteboardVisualEngine';
 
 const MASTERY_STORAGE_KEY = 'aura_adaptive_mastery_v1';
 const GRADING_STORAGE_KEY = 'aura_adaptive_grades_v1';
@@ -736,5 +739,197 @@ Return STRICT JSON only (no markdown fences):
         : `Review ${subject.concepts[0].title} interactive node in Adaptive Engine, focusing on ${missingKeywords.slice(0, 2).join(' & ') || 'core principles'}.`,
     modelUsed: 'Aura Rubric Evaluator (Local Engine)',
     gradedAt: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 5. Universal Topic-Driven Whiteboard Visual Synthesizer
+// ---------------------------------------------------------------------------
+const VALID_PRIMITIVE_TYPES = new Set([
+  'coordinate_graph',
+  'circle',
+  'ellipse',
+  'rect',
+  'polygon',
+  'line',
+  'curve_path',
+  'bar_chart',
+  'text',
+]);
+
+function clampNum(v: any, min: number, max: number, fallback: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+export function sanitizeWhiteboardPrimitives(rawList: any[]): WhiteboardPrimitive[] {
+  if (!Array.isArray(rawList)) return [];
+  const clean: WhiteboardPrimitive[] = [];
+
+  for (const item of rawList.slice(0, 24)) {
+    if (!item || typeof item !== 'object' || !VALID_PRIMITIVE_TYPES.has(item.type)) continue;
+
+    switch (item.type) {
+      case 'circle':
+        clean.push({
+          ...item,
+          cx: clampNum(item.cx, 50, 950, 500),
+          cy: clampNum(item.cy, 50, 950, 500),
+          r: clampNum(item.r, 15, 420, 180),
+        });
+        break;
+      case 'ellipse':
+        clean.push({
+          ...item,
+          cx: clampNum(item.cx, 50, 950, 500),
+          cy: clampNum(item.cy, 50, 950, 500),
+          rx: clampNum(item.rx, 15, 420, 180),
+          ry: clampNum(item.ry, 15, 420, 120),
+        });
+        break;
+      case 'rect':
+        clean.push({
+          ...item,
+          x: clampNum(item.x, 20, 880, 200),
+          y: clampNum(item.y, 20, 880, 200),
+          width: clampNum(item.width, 20, 880, 400),
+          height: clampNum(item.height, 20, 880, 300),
+        });
+        break;
+      case 'polygon':
+        if (Array.isArray(item.points) && item.points.length >= 3) {
+          clean.push({
+            ...item,
+            points: item.points.map((p: any) => ({
+              x: clampNum(p?.x, 30, 970, 500),
+              y: clampNum(p?.y, 30, 970, 500),
+              vertexLabel: typeof p?.vertexLabel === 'string' ? p.vertexLabel : undefined,
+            })),
+          });
+        }
+        break;
+      case 'line':
+        clean.push({
+          ...item,
+          x1: clampNum(item.x1, 20, 980, 150),
+          y1: clampNum(item.y1, 20, 980, 500),
+          x2: clampNum(item.x2, 20, 980, 850),
+          y2: clampNum(item.y2, 20, 980, 500),
+        });
+        break;
+      case 'curve_path':
+        if (Array.isArray(item.points) && item.points.length >= 2) {
+          clean.push({
+            ...item,
+            points: item.points.map((p: any) => ({
+              x: clampNum(p?.x, 20, 980, 500),
+              y: clampNum(p?.y, 20, 980, 500),
+            })),
+          });
+        }
+        break;
+      case 'coordinate_graph':
+        clean.push({
+          ...item,
+          xMin: clampNum(item.xMin, -100, 100, -6),
+          xMax: clampNum(item.xMax, -100, 100, 6),
+          yMin: clampNum(item.yMin, -100, 100, -6),
+          yMax: clampNum(item.yMax, -100, 100, 6),
+        });
+        break;
+      case 'bar_chart':
+        if (Array.isArray(item.bars) && item.bars.length > 0) {
+          clean.push(item);
+        }
+        break;
+      case 'text':
+        if (typeof item.text === 'string' && item.text.trim()) {
+          clean.push({
+            ...item,
+            x: clampNum(item.x, 30, 970, 500),
+            y: clampNum(item.y, 40, 960, 500),
+          });
+        }
+        break;
+    }
+  }
+
+  return clean;
+}
+
+export async function generateTopicVisualScene(
+  subject: SubjectDefinition,
+  query: string,
+  existingBoardText = ''
+): Promise<WhiteboardVisualScene> {
+  // 1. Check exact local parametric math/geometry/concept engine first (instant & exact!)
+  const { scene: localScene, isExactMatch } = buildParametricVisualScene(query, subject);
+  if (isExactMatch) {
+    return {
+      ...localScene,
+      modelUsed: 'Parametric Precision Visual Engine',
+    };
+  }
+
+  // 2. Ask Active AI Model to compose a declarative vector scene on the 0..1000 stage
+  const provider = getActiveAiProvider();
+  const model = getActiveAiModel(provider);
+
+  const prompt = `You are a Visual Whiteboard Illustrator for ${subject.name} (${subject.nativeName}).
+Generate a clear, educational vector scene as STRICT JSON (no markdown fences) for: "${query}"
+Existing board notes context: "${existingBoardText.slice(0, 200)}"
+
+Visual Stage uses normalized coordinates 0..1000 (x: 0 left -> 1000 right, y: 0 top -> 1000 bottom). Keep shapes cleanly inside x:[120..880], y:[120..880].
+Supported primitive objects in "primitives":
+- { "type": "coordinate_graph", "title": "...", "xMin": -5, "xMax": 5, "yMin": -5, "yMax": 10, "xLabel": "x", "yLabel": "y", "curves": [{"expression": "x^2", "label": "y=x²", "color": "#2563eb"}], "slopeSegment": {"x1": 0, "y1": 0, "x2": 2, "y2": 4, "showTriangle": true}, "points": [{"x": 2, "y": 4, "label": "(2,4)"}] }
+- { "type": "circle", "cx": 500, "cy": 500, "r": 180, "label": "...", "radiusLabel": "r=...", "stroke": "#2563eb", "fill": "rgba(37,99,235,0.12)" }
+- { "type": "ellipse", "cx": 500, "cy": 500, "rx": 180, "ry": 110, "label": "...", "stroke": "#059669" }
+- { "type": "rect", "x": 250, "y": 250, "width": 500, "height": 300, "label": "...", "widthLabel": "...", "heightLabel": "...", "stroke": "#7c3aed" }
+- { "type": "polygon", "points": [{"x": 200, "y": 750, "vertexLabel": "A"}, {"x": 800, "y": 750, "vertexLabel": "B"}, {"x": 500, "y": 220, "vertexLabel": "C"}], "edgeLabels": ["...","...","..."], "stroke": "#dc2626" }
+- { "type": "line", "x1": 200, "y1": 500, "x2": 800, "y2": 500, "label": "...", "arrowEnd": true, "dashed": false, "stroke": "#d97706" }
+- { "type": "curve_path", "points": [{"x": 150, "y": 600}, {"x": 500, "y": 250}, {"x": 850, "y": 600}], "stroke": "#2563eb", "label": "..." }
+- { "type": "bar_chart", "title": "...", "bars": [{"label": "A", "value": 40, "color": "#2563eb"}] }
+- { "type": "text", "x": 500, "y": 140, "text": "...", "fontSize": 24, "bold": true, "align": "center", "boxed": true }
+
+Return STRICT JSON:
+{
+  "title": "Concise visual topic title",
+  "subtitle": "Key property or relationship",
+  "formulaBox": "Core formula, quote, or law (optional)",
+  "steps": ["1. Step one...", "2. Step two...", "3. Step three...", "4. Conclusion"],
+  "primitives": [ ...2 to 9 vector primitives visualizing the concept clearly... ],
+  "spokenSummary": "1-2 sentence explanation for TTS readout"
+}`;
+
+  try {
+    const res = await sendMultiTurnChat([{ role: 'user', text: prompt }], {
+      role: 'adaptive_learning_tutor',
+      taskComplexity: 'complex',
+      provider,
+      modelOverride: model,
+    });
+
+    const parsed = safeParseJson<WhiteboardVisualScene>(res.reply);
+    if (parsed && parsed.title && Array.isArray(parsed.primitives)) {
+      const sanitized = sanitizeWhiteboardPrimitives(parsed.primitives);
+      if (sanitized.length > 0) {
+        return {
+          title: parsed.title,
+          subtitle: parsed.subtitle || subject.name,
+          formulaBox: parsed.formulaBox,
+          steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 5) : [],
+          primitives: sanitized,
+          spokenSummary: parsed.spokenSummary || parsed.title,
+          modelUsed: res.modelUsed || model,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[WhiteboardVisual] Falling back to local subject visual scene:', err);
+  }
+
+  return {
+    ...localScene,
+    modelUsed: 'Aura Visual Whiteboard Engine',
   };
 }

@@ -18,14 +18,36 @@ import {
   Send,
   Zap,
   Wand2,
+  Sun,
+  Moon,
+  Sliders,
+  Brain,
+  X,
 } from 'lucide-react';
 import {
   BlackboardSnapshot,
+  BoardTheme,
   ConceptNode,
-  DiagramStampType,
+  InkRecognitionResult,
+  InkStroke,
+  InteractiveControlConfig,
   SubjectDefinition,
+  SubjectId,
+  WhiteboardVisualScene,
 } from '../../types/adaptiveLearning';
-import { solveVoiceQueryOnBlackboard } from '../../services/adaptiveLearningService';
+import { generateTopicVisualScene } from '../../services/adaptiveLearningService';
+import { recognizeAndTranslateFreehandInk } from '../../services/inkRecognitionEngine';
+import {
+  buildCircleScene,
+  buildCurveGraphScene,
+  buildLinearSlopeGraphScene,
+  buildRectangleScene,
+  buildSceneForDiagramStamp,
+  buildSquareScene,
+  buildTriangleScene,
+  paintBoardSurface,
+  renderWhiteboardSceneToCanvas,
+} from '../../services/whiteboardVisualEngine';
 import { speechEngine } from '../../services/speech';
 
 interface SmartBlackboardViewProps {
@@ -36,12 +58,21 @@ interface SmartBlackboardViewProps {
   onSyncToDrive: (title: string, content: string) => void;
 }
 
-type BoardBgStyle = 'slate' | 'grid' | 'lined' | 'dots';
+type BoardBgStyle = 'grid' | 'plain' | 'lined' | 'dots';
 
 const BOARD_WIDTH = 1200;
 const BOARD_HEIGHT = 680;
 
-const CHALK_COLORS = [
+const WHITEBOARD_INKS = [
+  { name: 'Jet Marker', hex: '#0f172a' },
+  { name: 'Royal Blue', hex: '#2563eb' },
+  { name: 'Crimson Red', hex: '#dc2626' },
+  { name: 'Emerald Green', hex: '#059669' },
+  { name: 'Violet Marker', hex: '#7c3aed' },
+  { name: 'Amber Marker', hex: '#d97706' },
+];
+
+const BLACKBOARD_CHALKS = [
   { name: 'Chalk White', hex: '#f8fafc' },
   { name: 'Neon Cyan', hex: '#22d3ee' },
   { name: 'Saffron Amber', hex: '#fbbf24' },
@@ -49,6 +80,44 @@ const CHALK_COLORS = [
   { name: 'Chlorophyll Green', hex: '#34d399' },
   { name: 'Electric Violet', hex: '#c084fc' },
 ];
+
+const SUBJECT_ADVANCED_CHIPS: Record<
+  SubjectId,
+  Array<{ label: string; emoji: string; query: string }>
+> = {
+  maths: [
+    { label: 'Parabola y=x²-4', emoji: '📐', query: 'graph y = x^2 - 4' },
+    { label: 'Sine Wave', emoji: '〰️', query: 'plot sin(x)' },
+  ],
+  physics: [
+    { label: 'Projectile Arc', emoji: '🚀', query: 'projectile motion trajectory' },
+    { label: 'Ohm’s Circuit', emoji: '⚡', query: 'electric circuit ohms law' },
+    { label: 'Lens Optics', emoji: '🔍', query: 'convex lens ray optics' },
+  ],
+  chemistry: [
+    { label: 'Bohr Atom', emoji: '⚛️', query: 'bohr atom orbitals' },
+    { label: 'pH Titration', emoji: '🧪', query: 'titration pH curve' },
+    { label: 'Benzene Ring', emoji: '⬡', query: 'benzene aromatic ring' },
+  ],
+  botany: [
+    { label: 'Punnett Square', emoji: '🧬', query: 'punnett square Tt x Tt' },
+    { label: 'Plant Cell', emoji: '🌿', query: 'plant cell chloroplast' },
+    { label: 'Photosynthesis', emoji: '☀️', query: 'photosynthesis flow' },
+  ],
+  zoology: [
+    { label: 'DNA Helix', emoji: '🧬', query: 'dna double helix' },
+    { label: 'Action Potential', emoji: '⚡', query: 'action potential -70 mv' },
+    { label: 'Heart Chambers', emoji: '🫀', query: '4 chamber heart circulation' },
+  ],
+  tamil: [
+    { label: 'திருக்குறள்', emoji: '📜', query: 'thirukkural frame' },
+    { label: 'கதை வளைவு', emoji: '🎭', query: 'story arc climax' },
+  ],
+  english: [
+    { label: 'Story Arc', emoji: '📈', query: 'story arc pyramid' },
+    { label: 'Triangle Logic', emoji: '🔺', query: 'equilateral triangle' },
+  ],
+};
 
 export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   subject,
@@ -60,19 +129,37 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDrawingRef = useRef(false);
   const lastPtRef = useRef<{ x: number; y: number } | null>(null);
+  const cancelAnimRef = useRef<(() => void) | null>(null);
 
-  // Brush & Board Controls
-  const [chalkColor, setChalkColor] = useState<string>('#22d3ee');
+  // Whiteboard vs Blackboard Theme + Drawing State
+  const [boardTheme, setBoardTheme] = useState<BoardTheme>('whiteboard');
+  const [inkColor, setInkColor] = useState<string>('#2563eb');
   const [brushSize, setBrushSize] = useState<number>(4);
   const [isEraser, setIsEraser] = useState<boolean>(false);
-  const [neonGlow, setNeonGlow] = useState<boolean>(true);
+  const [neonGlow, setNeonGlow] = useState<boolean>(false);
   const [bgStyle, setBgStyle] = useState<BoardBgStyle>('grid');
 
-  // Undo / Redo ImageData stack
+  // Undo / Redo ImageData Stack
   const historyRef = useRef<ImageData[]>([]);
   const historyIdxRef = useRef<number>(-1);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
+
+  // Visual Scene & Live Interactive Controls
+  const [activeScene, setActiveScene] = useState<WhiteboardVisualScene | null>(null);
+  const [interactiveControl, setInteractiveControl] =
+    useState<InteractiveControlConfig | null>(null);
+
+  // Real-Time Freehand Smart Ink Translation State & Refs
+  const freehandStrokesRef = useRef<InkStroke[]>([]);
+  const currentStrokeRef = useRef<InkStroke | null>(null);
+  const preInkBoardSnapshotRef = useRef<ImageData | null>(null);
+  const autoInkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [smartInkEnabled, setSmartInkEnabled] = useState<boolean>(true);
+  const [pendingStrokeCount, setPendingStrokeCount] = useState<number>(0);
+  const [isRecognizingInk, setIsRecognizingInk] = useState<boolean>(false);
+  const [lastInkResult, setLastInkResult] = useState<InkRecognitionResult | null>(null);
 
   // Local Independent Speech Recognition State (never mutates global speechEngine callbacks)
   const [isListening, setIsListening] = useState(false);
@@ -81,77 +168,18 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   );
   const [liveTranscript, setLiveTranscript] = useState('');
   const [chalkNotesLog, setChalkNotesLog] = useState<string[]>([]);
-  const [spokenInputQuery, setSpokenInputQuery] = useState('');
-  const [isSolvingAi, setIsSolvingAi] = useState(false);
+  const [topicQuery, setTopicQuery] = useState('');
+  const [isRenderingVisual, setIsRenderingVisual] = useState(false);
   const [speakAiAnswer, setSpeakAiAnswer] = useState(true);
   const [micNotice, setMicNotice] = useState<string | null>(null);
 
   const webRecognitionRef = useRef<any>(null);
   const nativeActiveRef = useRef(false);
-  const chalkCursorYRef = useRef<number>(95);
+  const textCursorYRef = useRef<number>(92);
 
-  // Update default dictation language when switching subjects (Tamil -> ta-IN)
   useEffect(() => {
     setSpeechLang(subject.defaultLanguage === 'ta-IN' ? 'ta-IN' : 'en-IN');
   }, [subject]);
-
-  // Draw crisp background pattern onto blackboard canvas
-  const paintBackground = useCallback(
-    (ctx: CanvasRenderingContext2D, style: BoardBgStyle) => {
-      const grad = ctx.createLinearGradient(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
-      grad.addColorStop(0, '#0a111e');
-      grad.addColorStop(1, '#060a12');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
-
-      if (style === 'grid') {
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.08)';
-        ctx.lineWidth = 1;
-        for (let x = 0; x <= BOARD_WIDTH; x += 40) {
-          ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, BOARD_HEIGHT);
-          ctx.stroke();
-        }
-        for (let y = 0; y <= BOARD_HEIGHT; y += 40) {
-          ctx.beginPath();
-          ctx.moveTo(0, y);
-          ctx.lineTo(BOARD_WIDTH, y);
-          ctx.stroke();
-        }
-      } else if (style === 'lined') {
-        ctx.strokeStyle = 'rgba(148, 163, 184, 0.12)';
-        ctx.lineWidth = 1;
-        for (let y = 60; y < BOARD_HEIGHT; y += 44) {
-          ctx.beginPath();
-          ctx.moveTo(30, y);
-          ctx.lineTo(BOARD_WIDTH - 30, y);
-          ctx.stroke();
-        }
-      } else if (style === 'dots') {
-        ctx.fillStyle = 'rgba(148, 163, 184, 0.2)';
-        for (let x = 30; x < BOARD_WIDTH; x += 36) {
-          for (let y = 30; y < BOARD_HEIGHT; y += 36) {
-            ctx.beginPath();
-            ctx.arc(x, y, 1.3, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-
-      // Header watermark on board
-      ctx.save();
-      ctx.font = 'bold 18px monospace';
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.35)';
-      ctx.fillText(
-        `AURA SMART BLACKBOARD • ${subject.name.toUpperCase()} • ${activeConcept.title.toUpperCase()}`,
-        28,
-        34
-      );
-      ctx.restore();
-    },
-    [subject.name, activeConcept.title]
-  );
 
   const pushHistory = useCallback(() => {
     const canvas = canvasRef.current;
@@ -168,459 +196,241 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     setCanRedo(false);
   }, []);
 
-  // Stamp any of the 12 subject educational diagrams in glowing neon chalk
-  const drawDiagramStampOnCanvas = useCallback(
-    (stamp: DiagramStampType) => {
+  // Draw any WhiteboardVisualScene onto the canvas cleanly
+  const renderSceneToBoard = useCallback(
+    (
+      scene: WhiteboardVisualScene,
+      opts?: { animate?: boolean; overrideTheme?: BoardTheme; overrideBg?: BoardBgStyle }
+    ) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      ctx.save();
-      ctx.shadowColor = subject.accentHex;
-      ctx.shadowBlur = 10;
-      ctx.lineWidth = 3;
-      ctx.font = 'bold 20px sans-serif';
+      cancelAnimRef.current?.();
+      const targetTheme = opts?.overrideTheme || boardTheme;
+      const targetBg = opts?.overrideBg || bgStyle;
 
-      // Right-hand side dedicated diagram stage so left side holds chalk notes cleanly
-      const ox = 740;
-      const oy = 110;
-      const w = 420;
-      const h = 440;
-
-      // Translucent diagram frame
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
-      ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(ox, oy, w, h, 18);
-      ctx.fill();
-      ctx.stroke();
-
-      const cx = ox + w / 2;
-      const cy = oy + h / 2 + 12;
-
-      if (stamp === 'parabola') {
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(ox + 35, cy + 80);
-        ctx.lineTo(ox + w - 35, cy + 80);
-        ctx.moveTo(cx, oy + 65);
-        ctx.lineTo(cx, oy + h - 30);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#c084fc';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        for (let dx = -140; dx <= 140; dx += 4) {
-          const px = cx + dx;
-          const py = cy + 60 - (dx * dx) / 72;
-          const actualY = cy + 80 - (dx * dx) / 75;
-          if (dx === -140) ctx.moveTo(px, actualY);
-          else ctx.lineTo(px, actualY);
-          void py;
-        }
-        ctx.stroke();
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillText('Parabola: y = -ax² + k', ox + 28, oy + 38);
-        ctx.font = '15px monospace';
-        ctx.fillText('Vertex Max (0, k) • Roots x₁, x₂', ox + 65, oy + h - 18);
-      } else if (stamp === 'sine_wave') {
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(ox + 30, cy);
-        ctx.lineTo(ox + w - 30, cy);
-        ctx.moveTo(ox + 60, oy + 60);
-        ctx.lineTo(ox + 60, oy + h - 40);
-        ctx.stroke();
-
-        ctx.strokeStyle = '#22d3ee';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        for (let t = 0; t <= 330; t += 4) {
-          const px = ox + 60 + t;
-          const py = cy - Math.sin((t / 330) * Math.PI * 3) * 95;
-          if (t === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.fillStyle = '#22d3ee';
-        ctx.fillText('Harmonic Wave: y = A·sin(ωx)', ox + 28, oy + 38);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = '15px monospace';
-        ctx.fillText('Amplitude A   |   Wavelength λ = 2π/ω', ox + 45, oy + h - 18);
-      } else if (stamp === 'free_body') {
-        // Inclined plane triangle
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.moveTo(ox + 50, oy + h - 60);
-        ctx.lineTo(ox + w - 45, oy + h - 60);
-        ctx.lineTo(ox + w - 45, oy + 120);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Block on incline
-        ctx.save();
-        ctx.translate(cx + 10, cy + 12);
-        ctx.rotate(-0.62);
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.25)';
-        ctx.strokeStyle = '#fbbf24';
-        ctx.fillRect(-35, -24, 70, 48);
-        ctx.strokeRect(-35, -24, 70, 48);
-        ctx.restore();
-
-        // Gravity downward vector
-        ctx.strokeStyle = '#f43f5e';
-        ctx.beginPath();
-        ctx.moveTo(cx + 10, cy + 12);
-        ctx.lineTo(cx + 10, cy + 115);
-        ctx.stroke();
-
-        ctx.fillStyle = '#22d3ee';
-        ctx.fillText('Free-Body Diagram (FBD)', ox + 28, oy + 38);
-        ctx.fillStyle = '#f43f5e';
-        ctx.font = '15px monospace';
-        ctx.fillText('mg↓  |  N ⊥ Surface  |  F∥ = mg·sinθ', ox + 45, oy + h - 18);
-      } else if (stamp === 'ray_optics') {
-        // Optical axis
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(ox + 25, cy);
-        ctx.lineTo(ox + w - 25, cy);
-        ctx.stroke();
-
-        // Convex lens
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, 18, 115, 0, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Parallel incident rays -> focus
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 2.5;
-        [-70, -35, 35, 70].forEach((offset) => {
-          ctx.beginPath();
-          ctx.moveTo(ox + 35, cy + offset);
-          ctx.lineTo(cx, cy + offset);
-          ctx.lineTo(ox + w - 55, cy);
-          ctx.stroke();
-        });
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(ox + w - 55, cy, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillText('F', ox + w - 62, cy + 28);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillText('Convex Lens Converging Rays', ox + 28, oy + 38);
-      } else if (stamp === 'bohr_atom') {
-        ctx.fillStyle = '#f43f5e';
-        ctx.beginPath();
-        ctx.arc(cx, cy, 16, 0, Math.PI * 2);
-        ctx.fill();
-
-        [52, 92, 134].forEach((r, idx) => {
-          ctx.strokeStyle = idx === 0 ? '#34d399' : idx === 1 ? '#22d3ee' : '#a855f7';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(cx, cy, r, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Electrons on orbit
-          const eCount = idx === 0 ? 2 : idx === 1 ? 6 : 4;
-          for (let k = 0; k < eCount; k++) {
-            const ang = (k / eCount) * Math.PI * 2 + idx;
-            const ex = cx + Math.cos(ang) * r;
-            const ey = cy + Math.sin(ang) * r;
-            ctx.fillStyle = '#fbbf24';
-            ctx.beginPath();
-            ctx.arc(ex, ey, 5, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        });
-        ctx.fillStyle = '#34d399';
-        ctx.fillText('Bohr Quantized Shells (2n²)', ox + 28, oy + 38);
-      } else if (stamp === 'benzene_ring') {
-        const R = 105;
-        ctx.strokeStyle = '#34d399';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-          const ang = (i * Math.PI) / 3 - Math.PI / 2;
-          const px = cx + Math.cos(ang) * R;
-          const py = cy + Math.sin(ang) * R;
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
-        }
-        ctx.closePath();
-        ctx.stroke();
-
-        // Delocalized pi ring
-        ctx.strokeStyle = '#fbbf24';
-        ctx.setLineDash([8, 6]);
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(cx, cy, 62, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        ctx.fillStyle = '#34d399';
-        ctx.fillText('Benzene C₆H₆ (6π Aromatic Ring)', ox + 28, oy + 38);
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = '15px monospace';
-        ctx.fillText('sp² Planar • 120° • Hückel (4n+2)', ox + 55, oy + h - 18);
-      } else if (stamp === 'plant_cell') {
-        // Cell wall & membrane
-        ctx.strokeStyle = '#22c55e';
-        ctx.lineWidth = 6;
-        ctx.strokeRect(cx - 140, cy - 110, 280, 220);
-        ctx.strokeStyle = '#34d399';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(cx - 130, cy - 100, 260, 200);
-
-        // Large central vacuole
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.22)';
-        ctx.strokeStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.ellipse(cx - 20, cy + 5, 72, 58, 0.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        // Nucleus
-        ctx.fillStyle = 'rgba(192, 132, 252, 0.35)';
-        ctx.strokeStyle = '#c084fc';
-        ctx.beginPath();
-        ctx.arc(cx + 80, cy - 45, 28, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        // Chloroplasts
-        [
-          [cx - 95, cy - 70],
-          [cx + 80, cy + 62],
-          [cx - 88, cy + 70],
-        ].forEach(([lx, ly]) => {
-          ctx.fillStyle = '#22c55e';
-          ctx.beginPath();
-          ctx.ellipse(lx, ly, 20, 10, 0.4, 0, Math.PI * 2);
-          ctx.fill();
-        });
-
-        ctx.fillStyle = '#22c55e';
-        ctx.fillText('Plant Cell Ultrastructure', ox + 28, oy + 38);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '14px monospace';
-        ctx.fillText('Cell Wall • Vacuole • Chloroplasts', ox + 55, oy + h - 18);
-      } else if (stamp === 'photosynthesis') {
-        // Sun rays
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(ox + 95, oy + 125, 30, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Glowing Leaf oval
-        ctx.fillStyle = 'rgba(34, 197, 94, 0.28)';
-        ctx.strokeStyle = '#22c55e';
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy + 20, 115, 58, -0.2, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 18px monospace';
-        ctx.fillText('6CO₂ + 6H₂O + Light', ox + 95, oy + h - 85);
-        ctx.fillStyle = '#34d399';
-        ctx.fillText('→ C₆H₁₂O₆ + 6O₂ ↑', ox + 100, oy + h - 55);
-        ctx.fillStyle = '#22c55e';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText('Photosynthesis Bio-Reactor', ox + 28, oy + 38);
-      } else if (stamp === 'neuron_synapse') {
-        // Soma star
-        ctx.fillStyle = 'rgba(244, 63, 94, 0.28)';
-        ctx.strokeStyle = '#f43f5e';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(ox + 105, cy, 42, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        // Axon & Myelin sheaths
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(ox + 147, cy);
-        ctx.lineTo(ox + w - 80, cy);
-        ctx.stroke();
-
-        [170, 225, 280].forEach((mx) => {
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.35)';
-          ctx.strokeStyle = '#38bdf8';
-          ctx.beginPath();
-          ctx.roundRect(ox + mx, cy - 16, 42, 32, 8);
-          ctx.fill();
-          ctx.stroke();
-        });
-
-        // Synaptic terminal
-        ctx.strokeStyle = '#c084fc';
-        ctx.beginPath();
-        ctx.moveTo(ox + w - 80, cy);
-        ctx.lineTo(ox + w - 42, cy - 34);
-        ctx.moveTo(ox + w - 80, cy);
-        ctx.lineTo(ox + w - 42, cy + 34);
-        ctx.stroke();
-
-        ctx.fillStyle = '#f43f5e';
-        ctx.fillText('Neuron & Saltatory Synapse', ox + 28, oy + 38);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '14px monospace';
-        ctx.fillText('Soma → Myelin Nodes → Neurotransmitters', ox + 36, oy + h - 18);
-      } else if (stamp === 'heart_chambers') {
-        ctx.strokeStyle = '#f43f5e';
-        ctx.lineWidth = 3.5;
-        ctx.beginPath();
-        ctx.roundRect(cx - 105, cy - 95, 210, 190, 32);
-        ctx.stroke();
-
-        // Septum cross
-        ctx.strokeStyle = '#94a3b8';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(cx, cy - 95);
-        ctx.lineTo(cx, cy + 95);
-        ctx.moveTo(cx - 105, cy - 8);
-        ctx.lineTo(cx + 105, cy - 8);
-        ctx.stroke();
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 16px monospace';
-        ctx.fillText('RA', cx - 65, cy - 45);
-        ctx.fillText('RV', cx - 65, cy + 45);
-        ctx.fillStyle = '#f43f5e';
-        ctx.fillText('LA', cx + 40, cy - 45);
-        ctx.fillText('LV (Thick)', cx + 16, cy + 45);
-
-        ctx.fillStyle = '#f43f5e';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText('4-Chamber Double Circulation', ox + 28, oy + 38);
-      } else if (stamp === 'thirukkural_frame') {
-        ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 4;
-        ctx.strokeRect(ox + 28, oy + 70, w - 56, h - 130);
-        ctx.strokeStyle = 'rgba(245, 158, 11, 0.45)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(ox + 38, oy + 80, w - 76, h - 150);
-
-        ctx.fillStyle = '#fbbf24';
-        ctx.font = 'bold 20px sans-serif';
-        ctx.fillText('திருக்குறள் — குறள் வெண்பா', ox + 28, oy + 38);
-
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 21px sans-serif';
-        ctx.fillText('கற்க கசடறக் கற்பவை', ox + 65, cy - 35);
-        ctx.fillText('கற்றபின் நிற்க அதற்குத் தக.', ox + 65, cy + 12);
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = '15px sans-serif';
-        ctx.fillText('அடி 1: 4 சீர்  |  அடி 2: 3 சீர் (குறள் 391)', ox + 60, oy + h - 85);
+      setActiveScene(scene);
+      if (scene.interactiveControl !== undefined) {
+        setInteractiveControl(scene.interactiveControl);
       } else {
-        // story_arc
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.moveTo(ox + 35, oy + h - 65);
-        ctx.lineTo(ox + 125, oy + h - 65);
-        ctx.lineTo(cx, oy + 95);
-        ctx.lineTo(ox + w - 105, oy + h - 65);
-        ctx.lineTo(ox + w - 35, oy + h - 65);
-        ctx.stroke();
-
-        ctx.fillStyle = '#fbbf24';
-        ctx.beginPath();
-        ctx.arc(cx, oy + 95, 7, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillText('Climax', cx - 32, oy + 82);
-        ctx.fillStyle = '#38bdf8';
-        ctx.fillText('Freytag Narrative Story Arc', ox + 28, oy + 38);
-        ctx.fillStyle = '#cbd5e1';
-        ctx.font = '13px monospace';
-        ctx.fillText('Exposition → Rising → Climax → Resolution', ox + 42, oy + h - 22);
+        setInteractiveControl(null);
       }
 
-      ctx.restore();
-      pushHistory();
-      onBlackboardActivity('draw', `Stamped ${stamp.replace('_', ' ')} diagram on blackboard`);
+      cancelAnimRef.current = renderWhiteboardSceneToCanvas(ctx, scene, {
+        theme: targetTheme,
+        bgStyle: targetBg,
+        boardWidth: BOARD_WIDTH,
+        boardHeight: BOARD_HEIGHT,
+        subjectName: subject.name,
+        animate: opts?.animate ?? true,
+        onComplete: () => {
+          pushHistory();
+        },
+      });
     },
-    [subject.accentHex, pushHistory, onBlackboardActivity]
+    [boardTheme, bgStyle, subject.name, pushHistory]
   );
 
-  // Initialize board and stamp the active concept's diagram automatically
+  // Translate pending freehand strokes into clean characters, solved numbers, lines, or diagrams
+  const handleTranslateFreehandInk = useCallback(async () => {
+    if (autoInkTimerRef.current) {
+      clearTimeout(autoInkTimerRef.current);
+      autoInkTimerRef.current = null;
+    }
+
+    const strokes = [...freehandStrokesRef.current];
+    if (strokes.length === 0) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (!canvas || !ctx) return;
+
+    setIsRecognizingInk(true);
+    try {
+      const result = await recognizeAndTranslateFreehandInk(
+        strokes,
+        subject,
+        activeConcept,
+        speechLang
+      );
+
+      // Ensure raw hand-drawn ink snapshot sits at the top of Undo history so "Keep Raw Sketch" restores it!
+      pushHistory();
+
+      // Clear pending ink queue now that strokes are processed
+      freehandStrokesRef.current = [];
+      setPendingStrokeCount(0);
+
+      if (result.detectedCategory === 'straight_line' && result.inlineLine) {
+        if (preInkBoardSnapshotRef.current) {
+          ctx.putImageData(preInkBoardSnapshotRef.current, 0, 0);
+        }
+        const { x1, y1, x2, y2, angleDeg } = result.inlineLine;
+        const lineColor = boardTheme === 'whiteboard' ? '#2563eb' : '#22d3ee';
+        ctx.save();
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = Math.max(3.5, brushSize);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.fillStyle = lineColor;
+        ctx.font = 'bold 14px monospace';
+        ctx.fillText(`${angleDeg}°`, (x1 + x2) / 2 + 8, (y1 + y2) / 2 - 10);
+        ctx.restore();
+        pushHistory();
+      } else if (
+        (result.detectedCategory === 'geometry_diagram' ||
+          result.detectedCategory === 'graph_plot' ||
+          result.detectedCategory === 'science_diagram' ||
+          result.detectedCategory === 'mixed_scene') &&
+        result.scene
+      ) {
+        renderSceneToBoard(result.scene, { animate: true });
+      } else {
+        // 'text_characters' or 'equation_solve': replace raw ink with crisp typeset card right at bbox
+        if (preInkBoardSnapshotRef.current) {
+          ctx.putImageData(preInkBoardSnapshotRef.current, 0, 0);
+        }
+        const bbox = result.boundingBox;
+        const displayStr = result.solvedAnswer
+          ? `${result.recognizedText}  ⇒  ${result.solvedAnswer}`
+          : result.recognizedText;
+
+        ctx.save();
+        const fontSize = Math.min(34, Math.max(22, Math.round(bbox.height * 0.45)));
+        ctx.font = `bold ${fontSize}px "Plus Jakarta Sans", sans-serif`;
+        const metrics = ctx.measureText(displayStr);
+        const pillW = Math.min(BOARD_WIDTH - 48, metrics.width + 32);
+        const pillH = fontSize + 24;
+        const pillX = Math.max(24, Math.min(BOARD_WIDTH - pillW - 24, bbox.minX));
+        const pillY = Math.max(48, Math.min(BOARD_HEIGHT - pillH - 24, bbox.minY));
+
+        ctx.fillStyle =
+          boardTheme === 'whiteboard'
+            ? 'rgba(255, 255, 255, 0.94)'
+            : 'rgba(15, 23, 42, 0.92)';
+        ctx.strokeStyle =
+          result.solvedAnswer
+            ? '#10b981'
+            : boardTheme === 'whiteboard'
+            ? '#2563eb'
+            : '#22d3ee';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.roundRect(pillX, pillY, pillW, pillH, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw recognized base text
+        const baseText = result.recognizedText;
+        const baseMetrics = ctx.measureText(baseText);
+        ctx.fillStyle = boardTheme === 'whiteboard' ? '#0f172a' : '#f8fafc';
+        ctx.fillText(baseText, pillX + 16, pillY + fontSize + 6);
+
+        // Highlight solved equation answer in emerald
+        if (result.solvedAnswer) {
+          ctx.fillStyle = boardTheme === 'whiteboard' ? '#059669' : '#34d399';
+          ctx.fillText(
+            ` = ${result.solvedAnswer}`,
+            pillX + 16 + baseMetrics.width,
+            pillY + fontSize + 6
+          );
+        }
+        ctx.restore();
+        pushHistory();
+      }
+
+      preInkBoardSnapshotRef.current = null;
+      setLastInkResult(result);
+      setChalkNotesLog((prev) => [
+        ...prev,
+        result.solvedAnswer
+          ? `${result.recognizedText} = ${result.solvedAnswer}`
+          : result.recognizedText,
+      ]);
+      onBlackboardActivity('ai_solve', `Smart Ink: ${result.recognizedText.slice(0, 34)}`);
+
+      if (speakAiAnswer && result.spokenFeedback) {
+        speechEngine.speak(result.spokenFeedback);
+      }
+    } finally {
+      setIsRecognizingInk(false);
+    }
+  }, [
+    subject,
+    activeConcept,
+    speechLang,
+    boardTheme,
+    brushSize,
+    pushHistory,
+    renderSceneToBoard,
+    onBlackboardActivity,
+    speakAiAnswer,
+  ]);
+
+  // Initialize board and render current concept's visual scene
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     canvas.width = BOARD_WIDTH;
     canvas.height = BOARD_HEIGHT;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    paintBackground(ctx, bgStyle);
-    chalkCursorYRef.current = 95;
-    historyRef.current = [ctx.getImageData(0, 0, BOARD_WIDTH, BOARD_HEIGHT)];
-    historyIdxRef.current = 0;
-    setCanUndo(false);
-    setCanRedo(false);
-    drawDiagramStampOnCanvas(activeConcept.diagramStamp);
+    const initialScene = buildSceneForDiagramStamp(
+      activeConcept.diagramStamp,
+      subject,
+      activeConcept
+    );
+    renderSceneToBoard(initialScene, { animate: true });
+    return () => {
+      cancelAnimRef.current?.();
+      if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
+    };
   }, [subject.id, activeConcept.id]);
 
-  // Write chalk text neatly in the left column of the blackboard
-  const writeChalkTextToCanvas = useCallback(
-    (text: string, color = '#f8fafc', fontSize = 22, isHeading = false) => {
+  // Write freeform dictated text onto left column when user dictates notes directly
+  const writeNoteTextToBoard = useCallback(
+    (text: string) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
+      const textColor =
+        boardTheme === 'whiteboard' ? '#0f172a' : '#f8fafc';
       ctx.save();
-      ctx.fillStyle = color;
-      ctx.font = `${isHeading ? 'bold ' : ''}${fontSize}px "Plus Jakarta Sans", sans-serif`;
-      if (neonGlow) {
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 8;
-      }
-
-      const maxWidth = 680;
+      ctx.fillStyle = textColor;
+      ctx.font = 'bold 20px "Plus Jakarta Sans", sans-serif';
+      const maxWidth = 410;
       const words = text.split(/\s+/);
       let line = '';
-      let y = chalkCursorYRef.current;
+      let y = textCursorYRef.current;
 
       for (let i = 0; i < words.length; i++) {
-        const testLine = line ? `${line} ${words[i]}` : words[i];
-        if (ctx.measureText(testLine).width > maxWidth && line) {
-          ctx.fillText(line, 34, y);
+        const test = line ? `${line} ${words[i]}` : words[i];
+        if (ctx.measureText(test).width > maxWidth && line) {
+          ctx.fillText(line, 36, y);
           line = words[i];
-          y += fontSize + 10;
+          y += 28;
         } else {
-          line = testLine;
+          line = test;
         }
       }
       if (line) {
-        ctx.fillText(line, 34, y);
-        y += fontSize + 16;
+        ctx.fillText(line, 36, y);
+        y += 32;
       }
 
-      chalkCursorYRef.current = y > BOARD_HEIGHT - 60 ? 95 : y;
+      textCursorYRef.current = y > BOARD_HEIGHT - 60 ? 92 : y;
       ctx.restore();
       pushHistory();
     },
-    [neonGlow, pushHistory]
+    [boardTheme, pushHistory]
   );
 
-  // Coordinate mapping with fixed internal canvas resolution
+  // Pointer Freehand Drawing Handlers (touch-none safe)
   const getCanvasCoords = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
@@ -631,9 +441,28 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    cancelAnimRef.current?.();
+    if (autoInkTimerRef.current) {
+      clearTimeout(autoInkTimerRef.current);
+      autoInkTimerRef.current = null;
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext('2d');
+    if (ctx && freehandStrokesRef.current.length === 0 && !isEraser) {
+      preInkBoardSnapshotRef.current = ctx.getImageData(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+    }
+
     e.currentTarget.setPointerCapture(e.pointerId);
     isDrawingRef.current = true;
-    lastPtRef.current = getCanvasCoords(e);
+    const startPt = getCanvasCoords(e);
+    lastPtRef.current = startPt;
+    currentStrokeRef.current = {
+      points: [startPt],
+      color: inkColor,
+      size: brushSize,
+      isEraser,
+    };
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -644,20 +473,24 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     if (!ctx) return;
 
     const pt = getCanvasCoords(e);
+    if (currentStrokeRef.current) {
+      currentStrokeRef.current.points.push(pt);
+    }
+
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
     if (isEraser) {
-      ctx.strokeStyle = '#080e18';
+      ctx.strokeStyle = boardTheme === 'whiteboard' ? '#ffffff' : '#080e18';
       ctx.lineWidth = brushSize * 5;
       ctx.shadowBlur = 0;
     } else {
-      ctx.strokeStyle = chalkColor;
+      ctx.strokeStyle = inkColor;
       ctx.lineWidth = brushSize;
-      if (neonGlow) {
-        ctx.shadowColor = chalkColor;
-        ctx.shadowBlur = 10;
+      if (neonGlow || boardTheme === 'blackboard') {
+        ctx.shadowColor = inkColor;
+        ctx.shadowBlur = boardTheme === 'blackboard' ? 9 : 4;
       }
     }
 
@@ -677,25 +510,84 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     try {
       e.currentTarget.releasePointerCapture(e.pointerId);
     } catch {}
+
+    const finished = currentStrokeRef.current;
+    currentStrokeRef.current = null;
     pushHistory();
-    onBlackboardActivity('draw', `Annotated Smart Blackboard (${subject.name})`);
+
+    if (finished && !finished.isEraser && finished.points.length >= 2) {
+      freehandStrokesRef.current.push(finished);
+      setPendingStrokeCount(freehandStrokesRef.current.length);
+
+      if (smartInkEnabled) {
+        if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
+        autoInkTimerRef.current = setTimeout(() => {
+          void handleTranslateFreehandInk();
+        }, 1200);
+      }
+    }
+
+    onBlackboardActivity('draw', `Annotated Smart ${boardTheme === 'whiteboard' ? 'Whiteboard' : 'Blackboard'}`);
   };
 
   const handleClearBoard = useCallback(() => {
+    cancelAnimRef.current?.();
+    if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
+    freehandStrokesRef.current = [];
+    preInkBoardSnapshotRef.current = null;
+    setPendingStrokeCount(0);
+    setLastInkResult(null);
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    paintBackground(ctx, bgStyle);
-    chalkCursorYRef.current = 95;
+    paintBoardSurface(ctx, boardTheme, bgStyle, BOARD_WIDTH, BOARD_HEIGHT, subject.name);
+    textCursorYRef.current = 92;
+    setActiveScene(null);
+    setInteractiveControl(null);
     setChalkNotesLog([]);
     pushHistory();
-  }, [bgStyle, paintBackground, pushHistory]);
+  }, [boardTheme, bgStyle, subject.name, pushHistory]);
+
+  const handleToggleTheme = (newTheme: BoardTheme) => {
+    setBoardTheme(newTheme);
+    setInkColor(newTheme === 'whiteboard' ? '#2563eb' : '#22d3ee');
+    setIsEraser(false);
+    setNeonGlow(newTheme === 'blackboard');
+
+    if (activeScene) {
+      renderSceneToBoard(activeScene, { animate: false, overrideTheme: newTheme });
+    } else {
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) {
+        paintBoardSurface(ctx, newTheme, bgStyle, BOARD_WIDTH, BOARD_HEIGHT, subject.name);
+        pushHistory();
+      }
+    }
+  };
+
+  const handleChangeBgStyle = (newStyle: BoardBgStyle) => {
+    setBgStyle(newStyle);
+    if (activeScene) {
+      renderSceneToBoard(activeScene, { animate: false, overrideBg: newStyle });
+    } else {
+      const ctx = canvasRef.current?.getContext('2d');
+      if (ctx) {
+        paintBoardSurface(ctx, boardTheme, newStyle, BOARD_WIDTH, BOARD_HEIGHT, subject.name);
+        pushHistory();
+      }
+    }
+  };
 
   const handleUndo = () => {
+    if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
+    freehandStrokesRef.current = [];
+    preInkBoardSnapshotRef.current = null;
+    setPendingStrokeCount(0);
+
     if (historyIdxRef.current <= 0) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
+    const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
     historyIdxRef.current -= 1;
     ctx.putImageData(historyRef.current[historyIdxRef.current], 0, 0);
@@ -704,9 +596,13 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   };
 
   const handleRedo = () => {
+    if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
+    freehandStrokesRef.current = [];
+    preInkBoardSnapshotRef.current = null;
+    setPendingStrokeCount(0);
+
     if (historyIdxRef.current >= historyRef.current.length - 1) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
+    const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return;
     historyIdxRef.current += 1;
     ctx.putImageData(historyRef.current[historyIdxRef.current], 0, 0);
@@ -714,115 +610,112 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     setCanRedo(historyIdxRef.current < historyRef.current.length - 1);
   };
 
-  // Handle AI Chalk Solve (either via voice command or typed query)
-  const handleAiSolveOnBoard = useCallback(
+  // Visualize any topic (Geometry, Graphs, Slopes, Equations, or Advanced AI Scenes)
+  const handleVisualizeTopic = useCallback(
     async (queryText: string) => {
       const cleaned = queryText.trim();
       if (!cleaned) return;
-      setIsSolvingAi(true);
+      setIsRenderingVisual(true);
       try {
-        const solution = await solveVoiceQueryOnBlackboard(
+        const scene = await generateTopicVisualScene(
           subject,
           cleaned,
           chalkNotesLog.join('\n')
         );
-
-        // Stamp recommended diagram first so chalk steps sit cleanly beside it
-        if (solution.recommendedDiagram) {
-          drawDiagramStampOnCanvas(solution.recommendedDiagram);
-        }
-
-        writeChalkTextToCanvas(`⚡ ${solution.headline}`, '#22d3ee', 25, true);
-        for (const step of solution.chalkSteps) {
-          writeChalkTextToCanvas(step, '#f8fafc', 19, false);
-        }
-        writeChalkTextToCanvas(`★ ${solution.keyFormula}`, '#fbbf24', 21, true);
-
+        renderSceneToBoard(scene, { animate: true });
         setChalkNotesLog((prev) => [
           ...prev,
-          `Q: ${cleaned}`,
-          solution.headline,
-          ...solution.chalkSteps,
-          `Formula: ${solution.keyFormula}`,
-        ]);
-        onBlackboardActivity('ai_solve', `Solved "${solution.headline}" on Smart Blackboard`);
+          `Topic: ${cleaned}`,
+          scene.title,
+          ...scene.steps,
+          scene.formulaBox ? `Formula: ${scene.formulaBox}` : '',
+        ].filter(Boolean));
+        onBlackboardActivity('ai_solve', `Visualized "${scene.title}"`);
 
-        if (speakAiAnswer) {
-          speechEngine.speak(solution.spokenSummary);
+        if (speakAiAnswer && scene.spokenSummary) {
+          speechEngine.speak(scene.spokenSummary);
         }
       } finally {
-        setIsSolvingAi(false);
+        setIsRenderingVisual(false);
       }
     },
-    [subject, chalkNotesLog, drawDiagramStampOnCanvas, writeChalkTextToCanvas, onBlackboardActivity, speakAiAnswer]
+    [subject, chalkNotesLog, renderSceneToBoard, onBlackboardActivity, speakAiAnswer]
   );
 
-  // Process final spoken voice segment on the Smart Blackboard
-  const processFinalBlackboardSpeech = useCallback(
+  // Interactive Live Parameter Slider Updates (60fps synchronous canvas updates!)
+  const handleInteractiveUpdate = (nextCtrl: InteractiveControlConfig) => {
+    let nextScene: WhiteboardVisualScene;
+    if (nextCtrl.kind === 'circle') {
+      nextScene = buildCircleScene(nextCtrl.radius, nextCtrl.unit);
+    } else if (nextCtrl.kind === 'square') {
+      nextScene = buildSquareScene(nextCtrl.side, nextCtrl.unit);
+    } else if (nextCtrl.kind === 'rectangle') {
+      nextScene = buildRectangleScene(nextCtrl.length, nextCtrl.width, nextCtrl.unit);
+    } else if (nextCtrl.kind === 'triangle') {
+      nextScene = buildTriangleScene(
+        nextCtrl.base,
+        nextCtrl.height,
+        nextCtrl.triangleType,
+        nextCtrl.unit
+      );
+    } else if (nextCtrl.kind === 'linear_graph') {
+      nextScene = buildLinearSlopeGraphScene(nextCtrl.slope, nextCtrl.intercept);
+    } else {
+      nextScene = buildCurveGraphScene(nextCtrl.expression, nextCtrl.tangentX);
+    }
+    setInteractiveControl(nextCtrl);
+    renderSceneToBoard(nextScene, { animate: false });
+  };
+
+  // Process final spoken utterance on the Whiteboard
+  const processFinalSpeech = useCallback(
     (spokenText: string) => {
       const clean = spokenText.trim();
       if (!clean) return;
       const lower = clean.toLowerCase();
 
-      // Voice Command 1: Clear board
       if (lower.includes('clear board') || lower.includes('erase board') || lower.includes('அழி')) {
         handleClearBoard();
         setLiveTranscript('');
         return;
       }
 
-      // Voice Command 2: Instant Draw Diagram
-      const diagramMatch: Array<[string[], DiagramStampType]> = [
-        [['parabola', 'quadratic'], 'parabola'],
-        [['sine wave', 'wave'], 'sine_wave'],
-        [['lens', 'optics'], 'ray_optics'],
-        [['free body', 'incline', 'ramp'], 'free_body'],
-        [['bohr atom', 'atom'], 'bohr_atom'],
-        [['benzene', 'aromatic'], 'benzene_ring'],
-        [['plant cell'], 'plant_cell'],
-        [['photosynthesis'], 'photosynthesis'],
-        [['neuron', 'synapse'], 'neuron_synapse'],
-        [['heart'], 'heart_chambers'],
-        [['kural', 'திருக்குறள்'], 'thirukkural_frame'],
-        [['story arc', 'pyramid'], 'story_arc'],
-      ];
+      // Route visual/draw/generate/graph/shape/explain/solve commands to Topic Visual Renderer
+      const isVisualCommand =
+        lower.includes('draw') ||
+        lower.includes('generate') ||
+        lower.includes('plot') ||
+        lower.includes('graph') ||
+        lower.includes('circle') ||
+        lower.includes('triangle') ||
+        lower.includes('rectangle') ||
+        lower.includes('square') ||
+        lower.includes('slope') ||
+        lower.includes('solve') ||
+        lower.includes('explain') ||
+        lower.includes('show') ||
+        lower.includes('helix') ||
+        lower.includes('punnett') ||
+        lower.includes('circuit') ||
+        lower.includes('projectile') ||
+        lower.includes('வரை') ||
+        lower.includes('விளக்கு');
 
-      if (lower.includes('draw ') || lower.includes('show ') || lower.includes('வரை')) {
-        for (const [keywords, stamp] of diagramMatch) {
-          if (keywords.some((kw) => lower.includes(kw))) {
-            drawDiagramStampOnCanvas(stamp);
-            writeChalkTextToCanvas(`🎨 ${clean}`, '#34d399', 22, true);
-            setChalkNotesLog((prev) => [...prev, clean]);
-            setLiveTranscript('');
-            return;
-          }
-        }
-      }
-
-      // Voice Command 3: "Solve ..." or "Explain ..." -> full AI Chalk derivation!
-      if (
-        lower.startsWith('solve ') ||
-        lower.startsWith('explain ') ||
-        lower.startsWith('derive ') ||
-        lower.startsWith('what is ') ||
-        lower.startsWith('how does ') ||
-        lower.includes('விளக்கு')
-      ) {
-        setLiveTranscript('');
-        void handleAiSolveOnBoard(clean);
+      setLiveTranscript('');
+      if (isVisualCommand) {
+        void handleVisualizeTopic(clean);
         return;
       }
 
-      // Default: Dictate spoken speech directly onto blackboard in glowing chalk!
-      writeChalkTextToCanvas(`🎙️ ${clean}`, chalkColor, 22, false);
+      // Otherwise write note cleanly onto the board
+      writeNoteTextToBoard(`🎙️ ${clean}`);
       setChalkNotesLog((prev) => [...prev, clean]);
-      onBlackboardActivity('voice', `Dictated "${clean.slice(0, 32)}" via Voice Blackboard`);
-      setLiveTranscript('');
+      onBlackboardActivity('voice', `Dictated "${clean.slice(0, 32)}" onto Whiteboard`);
     },
-    [handleClearBoard, drawDiagramStampOnCanvas, writeChalkTextToCanvas, handleAiSolveOnBoard, chalkColor, onBlackboardActivity]
+    [handleClearBoard, handleVisualizeTopic, writeNoteTextToBoard, onBlackboardActivity]
   );
 
-  // Stop local Speech Recognition cleanly on unmount
+  // Stop local Speech Recognition cleanly
   const stopLocalVoiceRecognition = useCallback(() => {
     setIsListening(false);
     if (webRecognitionRef.current) {
@@ -844,7 +737,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     };
   }, [stopLocalVoiceRecognition]);
 
-  const toggleBlackboardVoice = async () => {
+  const toggleVoiceRecognition = async () => {
     if (isListening) {
       stopLocalVoiceRecognition();
       return;
@@ -855,7 +748,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
       try {
         const perm = await SpeechRecognition.requestPermissions();
         if (perm.speechRecognition !== 'granted') {
-          setMicNotice('Microphone permission needed for native speech recognition.');
+          setMicNotice('Microphone permission needed for speech recognition.');
           return;
         }
         nativeActiveRef.current = true;
@@ -863,9 +756,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
         await SpeechRecognition.removeAllListeners();
         await SpeechRecognition.addListener('partialResults', (data: { matches?: string[] }) => {
-          if (data.matches?.[0]) {
-            setLiveTranscript(data.matches[0]);
-          }
+          if (data.matches?.[0]) setLiveTranscript(data.matches[0]);
         });
         const res = await SpeechRecognition.start({
           language: speechLang,
@@ -876,9 +767,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         nativeActiveRef.current = false;
         setIsListening(false);
         const finalText = res?.matches?.[0] || liveTranscript;
-        if (finalText) {
-          processFinalBlackboardSpeech(finalText);
-        }
+        if (finalText) processFinalSpeech(finalText);
       } catch (err: any) {
         nativeActiveRef.current = false;
         setIsListening(false);
@@ -889,7 +778,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRec) {
-      setMicNotice('Speech Recognition not supported in this browser; type below for AI Chalk Solve.');
+      setMicNotice('Speech Recognition unavailable in this browser; type any topic below to visualize!');
       return;
     }
 
@@ -904,16 +793,11 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         let finalSeg = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const text = event.results[i][0]?.transcript || '';
-          if (event.results[i].isFinal) {
-            finalSeg += text + ' ';
-          } else {
-            interim += text;
-          }
+          if (event.results[i].isFinal) finalSeg += text + ' ';
+          else interim += text;
         }
         if (interim) setLiveTranscript(interim.trim());
-        if (finalSeg.trim()) {
-          processFinalBlackboardSpeech(finalSeg.trim());
-        }
+        if (finalSeg.trim()) processFinalSpeech(finalSeg.trim());
       };
 
       rec.onerror = (ev: any) => {
@@ -922,10 +806,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         }
         setIsListening(false);
       };
-
-      rec.onend = () => {
-        setIsListening(false);
-      };
+      rec.onend = () => setIsListening(false);
 
       rec.start();
       webRecognitionRef.current = rec;
@@ -941,7 +822,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     if (!canvas) return;
     onExportToGrader({
       dataUrl: canvas.toDataURL('image/png'),
-      transcriptNotes: chalkNotesLog.join('\n'),
+      transcriptNotes: chalkNotesLog.join('\n') || activeScene?.steps.join('\n') || '',
       subjectId: subject.id,
       createdAt: new Date().toISOString(),
     });
@@ -952,45 +833,82 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     if (!canvas) return;
     const a = document.createElement('a');
     a.href = canvas.toDataURL('image/png');
-    a.download = `aura-blackboard-${subject.id}-${Date.now()}.png`;
+    a.download = `aura-whiteboard-${subject.id}-${Date.now()}.png`;
     a.click();
   };
 
   const handleSaveToDrive = () => {
-    const content = `# Smart Blackboard Notes — ${subject.name}\nConcept: ${activeConcept.title}\n\n## Chalk Notes & Derivations\n${
-      chalkNotesLog.length > 0 ? chalkNotesLog.map((l) => `- ${l}`).join('\n') : '- Visual chalkboard sketches'
-    }`;
-    onSyncToDrive(`Blackboard - ${subject.name} - ${activeConcept.title}`, content);
+    const content = `# Smart Whiteboard Visual Scene — ${activeScene?.title || subject.name}\n\n${
+      activeScene?.steps.map((s) => `- ${s}`).join('\n') ||
+      chalkNotesLog.map((l) => `- ${l}`).join('\n')
+    }\n\n${activeScene?.formulaBox ? `**Key Formula:** \`${activeScene.formulaBox}\`` : ''}`;
+    onSyncToDrive(`Whiteboard - ${activeScene?.title || subject.name}`, content);
   };
+
+  const paletteSwatches = boardTheme === 'whiteboard' ? WHITEBOARD_INKS : BLACKBOARD_CHALKS;
+  const subjectChips = SUBJECT_ADVANCED_CHIPS[subject.id] || [];
 
   return (
     <div className="space-y-3">
-      {/* Top Toolbar: Colors, Eraser, Surface, Diagram Stamps, Actions */}
+      {/* =====================================================================
+          TOP STUDIO BAR: THEME SWITCHER + INK PALETTE + ACTIONS
+          ===================================================================== */}
       <div className="rounded-3xl bg-slate-900/90 border border-slate-800 p-3 shadow-xl space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Chalk Color Palette */}
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {CHALK_COLORS.map((c) => (
+          {/* Theme Switcher + Marker Palette */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Whiteboard / Blackboard Toggle */}
+            <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-[11px] font-bold">
               <button
-                key={c.hex}
                 type="button"
-                aria-label={`Select ${c.name}`}
-                onClick={() => {
-                  setChalkColor(c.hex);
-                  setIsEraser(false);
-                }}
-                className={`w-6 h-6 rounded-full transition-transform cursor-pointer border-2 ${
-                  !isEraser && chalkColor === c.hex ? 'scale-125 border-white shadow-lg' : 'border-slate-700'
+                onClick={() => handleToggleTheme('whiteboard')}
+                className={`px-2 py-1 rounded-lg flex items-center gap-1 cursor-pointer transition-all ${
+                  boardTheme === 'whiteboard'
+                    ? 'bg-white text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
                 }`}
-                style={{ backgroundColor: c.hex, boxShadow: !isEraser && chalkColor === c.hex ? `0 0 10px ${c.hex}` : undefined }}
-                title={c.name}
-              />
-            ))}
+              >
+                <Sun className="w-3 h-3 text-amber-500" />
+                <span>Whiteboard</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleTheme('blackboard')}
+                className={`px-2 py-1 rounded-lg flex items-center gap-1 cursor-pointer transition-all ${
+                  boardTheme === 'blackboard'
+                    ? 'bg-cyan-500 text-slate-950 shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Moon className="w-3 h-3" />
+                <span>Blackboard</span>
+              </button>
+            </div>
+
+            {/* Swatches */}
+            <div className="flex items-center gap-1.5">
+              {paletteSwatches.map((c) => (
+                <button
+                  key={c.hex}
+                  type="button"
+                  aria-label={`Select ${c.name}`}
+                  onClick={() => {
+                    setInkColor(c.hex);
+                    setIsEraser(false);
+                  }}
+                  className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full transition-transform cursor-pointer border-2 ${
+                    !isEraser && inkColor === c.hex ? 'scale-125 border-cyan-400 shadow-lg' : 'border-slate-600'
+                  }`}
+                  style={{ backgroundColor: c.hex }}
+                  title={c.name}
+                />
+              ))}
+            </div>
 
             <button
               type="button"
               onClick={() => setIsEraser(!isEraser)}
-              className={`px-2 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 border cursor-pointer transition-all ${
+              className={`px-2 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 border cursor-pointer ${
                 isEraser
                   ? 'bg-rose-500/25 text-rose-200 border-rose-400'
                   : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800'
@@ -1001,7 +919,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               <span>Eraser</span>
             </button>
 
-            <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 px-1.5">
+            <label className="flex items-center gap-1 text-[10px] font-mono text-slate-400">
               <span>Size</span>
               <input
                 type="range"
@@ -1009,25 +927,40 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                 max={12}
                 value={brushSize}
                 onChange={(e) => setBrushSize(Number(e.target.value))}
-                className="w-16 accent-cyan-400"
+                className="w-14 accent-cyan-400"
                 aria-label="Brush Size"
               />
             </label>
 
             <button
               type="button"
-              onClick={() => setNeonGlow(!neonGlow)}
-              className={`px-2 py-1 rounded-xl text-[10px] font-mono font-bold border cursor-pointer ${
-                neonGlow
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
-                  : 'bg-slate-950 text-slate-400 border-slate-800'
+              onClick={() => setSmartInkEnabled(!smartInkEnabled)}
+              className={`px-2 py-1 rounded-xl text-[11px] font-bold flex items-center gap-1 border cursor-pointer transition-all ${
+                smartInkEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 shadow-sm'
+                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
               }`}
+              title="Automatically translate handwritten characters, numbers, equations, and sketches"
             >
-              ✨ Neon {neonGlow ? 'ON' : 'OFF'}
+              <Sparkles className="w-3 h-3" />
+              <span>Smart Ink: {smartInkEnabled ? 'ON' : 'OFF'}</span>
             </button>
+
+            {pendingStrokeCount > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleTranslateFreehandInk()}
+                disabled={isRecognizingInk}
+                className="px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-bold flex items-center gap-1 shadow-md cursor-pointer animate-pulse"
+                title="Convert pending freehand ink right now"
+              >
+                <Wand2 className="w-3 h-3" />
+                <span>Convert Ink ({pendingStrokeCount})</span>
+              </button>
+            )}
           </div>
 
-          {/* Undo / Redo / Clear / Export */}
+          {/* Undo / Redo / Clear / Export / Grade */}
           <div className="flex items-center gap-1.5 flex-wrap">
             <button
               type="button"
@@ -1053,8 +986,8 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               type="button"
               onClick={handleClearBoard}
               className="p-1.5 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 cursor-pointer"
-              title="Clear Blackboard"
-              aria-label="Clear Blackboard"
+              title="Clear Board"
+              aria-label="Clear Board"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -1071,7 +1004,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               type="button"
               onClick={handleSaveToDrive}
               className="px-2 py-1 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-              title="Save Blackboard Notes to Google Drive"
+              title="Save Visual Notes to Google Drive"
             >
               <CloudUpload className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Drive</span>
@@ -1087,40 +1020,41 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
           </div>
         </div>
 
-        {/* Diagram Auto-Stamps + Surface Selector */}
+        {/* Universal Geometry, Coordinate Graphs & Subject Advanced Visual Chips */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[10px] font-mono uppercase text-slate-400 flex items-center gap-1">
               <Wand2 className="w-3 h-3 text-purple-400" />
-              Auto-Draw:
+              Instant Visuals:
             </span>
-            {subject.defaultDiagrams.map((d) => (
+            {[
+              { emoji: '⭕', label: 'Circle r=7', query: 'generate circle with radius 7 cm' },
+              { emoji: '📐', label: 'Triangle', query: 'draw right triangle base 8 height 6' },
+              { emoji: '⬜', label: 'Rectangle', query: 'draw rectangle 10 by 6 cm' },
+              { emoji: '⬛', label: 'Square', query: 'draw square side 6 cm' },
+              { emoji: '📈', label: 'Graph + Slope', query: 'generate graph and draw a slope' },
+              { emoji: '〰️', label: 'Curve + Tangent', query: 'graph y = x^2 - 3 tangent at 1.5' },
+              ...subjectChips,
+            ].map((chip, idx) => (
               <button
-                key={d.type}
+                key={`${chip.label}-${idx}`}
                 type="button"
-                onClick={() => drawDiagramStampOnCanvas(d.type)}
-                className="px-2 py-1 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 flex items-center gap-1 transition-all cursor-pointer"
+                onClick={() => void handleVisualizeTopic(chip.query)}
+                className="px-2 py-1 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 flex items-center gap-1 transition-all cursor-pointer active:scale-95"
               >
-                <span>{d.emoji}</span>
-                <span className="text-[11px] font-semibold">{d.label}</span>
+                <span>{chip.emoji}</span>
+                <span className="text-[11px] font-semibold">{chip.label}</span>
               </button>
             ))}
           </div>
 
           <div className="flex items-center gap-1 text-[10px] font-mono">
             <Grid className="w-3 h-3 text-slate-400 mr-0.5" />
-            {(['grid', 'slate', 'lined', 'dots'] as BoardBgStyle[]).map((style) => (
+            {(['grid', 'plain', 'lined', 'dots'] as BoardBgStyle[]).map((style) => (
               <button
                 key={style}
                 type="button"
-                onClick={() => {
-                  setBgStyle(style);
-                  const ctx = canvasRef.current?.getContext('2d');
-                  if (ctx) {
-                    paintBackground(ctx, style);
-                    pushHistory();
-                  }
-                }}
+                onClick={() => handleChangeBgStyle(style)}
                 className={`px-2 py-0.5 rounded-lg capitalize border cursor-pointer ${
                   bgStyle === style
                     ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-bold'
@@ -1135,9 +1069,15 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
       </div>
 
       {/* =====================================================================
-          INTERACTIVE NEON CHALKBOARD CANVAS
+          INTERACTIVE WHITEBOARD / BLACKBOARD CANVAS
           ===================================================================== */}
-      <div className="relative rounded-3xl overflow-hidden border-2 border-slate-800 shadow-2xl chalk-board-surface">
+      <div
+        className={`relative rounded-3xl overflow-hidden border-2 shadow-2xl ${
+          boardTheme === 'whiteboard'
+            ? 'border-slate-300 bg-white'
+            : 'border-slate-800 chalk-board-surface'
+        }`}
+      >
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
@@ -1147,11 +1087,21 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
           className="w-full aspect-[16/10] sm:aspect-[16/9] touch-none cursor-crosshair block"
         />
 
-        {/* Floating Live Speech Caption Chalk Strip */}
+        {(isRenderingVisual || isRecognizingInk) && (
+          <div className="absolute top-3 right-3 px-3 py-1.5 rounded-full bg-slate-950/90 border border-cyan-400/60 text-cyan-300 text-xs font-mono font-bold flex items-center gap-1.5 shadow-xl">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span>
+              {isRecognizingInk
+                ? '🧠 Understanding ink & context...'
+                : 'Rendering Visual Scene...'}
+            </span>
+          </div>
+        )}
+
+        {/* Live Speech Caption Overlay */}
         {(isListening || liveTranscript) && (
           <div className="absolute bottom-3 left-3 right-3 px-3.5 py-2 rounded-2xl bg-slate-950/90 border border-cyan-500/50 backdrop-blur-md flex items-center justify-between gap-3 shadow-2xl">
             <div className="flex items-center gap-2 min-w-0">
-              {/* Live Waveform Visualizer */}
               <div className="flex items-end gap-0.5 h-4 shrink-0">
                 {[10, 16, 12, 18, 9].map((h, idx) => (
                   <span
@@ -1162,7 +1112,8 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                 ))}
               </div>
               <span className="text-xs sm:text-sm text-cyan-100 font-medium truncate">
-                {liveTranscript || `Listening in ${speechLang === 'ta-IN' ? 'தமிழ்' : 'English'}… Say "Solve …", "Draw …", or dictate notes`}
+                {liveTranscript ||
+                  `Listening (${speechLang === 'ta-IN' ? 'தமிழ்' : 'English'})… Try "Generate circle radius 8" or "Draw graph with slope 2"`}
               </span>
             </div>
             <span className="text-[10px] font-mono text-cyan-400 shrink-0 uppercase font-bold">
@@ -1173,7 +1124,302 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
       </div>
 
       {/* =====================================================================
-          VOICE-TO-CHALK & AI CHALK SOLVER CONTROL STRIP
+          SMART INK CONTEXT RECOGNITION SUMMARY CARD
+          ===================================================================== */}
+      {lastInkResult && (
+        <div className="rounded-3xl bg-slate-900/95 border border-emerald-500/40 p-3 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-mono font-bold uppercase flex items-center gap-1">
+                <Brain className="w-3 h-3" />
+                {lastInkResult.detectedCategory.replace('_', ' ')}
+              </span>
+              <span className="text-[10px] font-mono text-slate-400">
+                via {lastInkResult.modelUsed}
+              </span>
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+              <span>{lastInkResult.recognizedText}</span>
+              {lastInkResult.solvedAnswer && (
+                <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-300 font-mono">
+                  ⇒ {lastInkResult.solvedAnswer}
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-300">
+              Intent: {lastInkResult.detectedPurpose}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+            {!lastInkResult.scene && (lastInkResult.visualQuery || lastInkResult.recognizedText) && (
+              <button
+                type="button"
+                onClick={() =>
+                  void handleVisualizeTopic(
+                    lastInkResult.visualQuery || lastInkResult.recognizedText
+                  )
+                }
+                className="px-2.5 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Visualize Topic</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                handleUndo();
+                setLastInkResult(null);
+              }}
+              className="px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+              title="Revert back to your raw hand-drawn sketch"
+            >
+              <Undo2 className="w-3 h-3" />
+              <span>Keep Raw Sketch</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setLastInkResult(null)}
+              className="p-1.5 rounded-xl bg-slate-950 text-slate-400 hover:text-white cursor-pointer"
+              aria-label="Dismiss Smart Ink Card"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          LIVE INTERACTIVE PARAMETER TUNING BAR (SHAPES, SLOPES & CURVES)
+          ===================================================================== */}
+      {interactiveControl && (
+        <div className="rounded-3xl bg-slate-900/95 border border-cyan-500/40 p-3 shadow-xl flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-cyan-300 shrink-0">
+            <Sliders className="w-4 h-4" />
+            <span>Interactive Tuning:</span>
+          </div>
+
+          {interactiveControl.kind === 'circle' && (
+            <label className="flex-1 min-w-[200px] flex items-center gap-3 text-xs text-white font-mono">
+              <span>Radius r = {interactiveControl.radius} {interactiveControl.unit}</span>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                step={0.5}
+                value={interactiveControl.radius}
+                onChange={(e) =>
+                  handleInteractiveUpdate({
+                    ...interactiveControl,
+                    radius: Number(e.target.value),
+                  })
+                }
+                className="flex-1 accent-cyan-400"
+              />
+            </label>
+          )}
+
+          {interactiveControl.kind === 'square' && (
+            <label className="flex-1 min-w-[200px] flex items-center gap-3 text-xs text-white font-mono">
+              <span>Side a = {interactiveControl.side} {interactiveControl.unit}</span>
+              <input
+                type="range"
+                min={1}
+                max={30}
+                step={0.5}
+                value={interactiveControl.side}
+                onChange={(e) =>
+                  handleInteractiveUpdate({
+                    ...interactiveControl,
+                    side: Number(e.target.value),
+                  })
+                }
+                className="flex-1 accent-violet-400"
+              />
+            </label>
+          )}
+
+          {interactiveControl.kind === 'rectangle' && (
+            <div className="flex-1 flex flex-wrap items-center gap-4 text-xs text-white font-mono">
+              <label className="flex items-center gap-2 flex-1 min-w-[150px]">
+                <span>L={interactiveControl.length}</span>
+                <input
+                  type="range"
+                  min={2}
+                  max={30}
+                  step={0.5}
+                  value={interactiveControl.length}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      length: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-emerald-400"
+                />
+              </label>
+              <label className="flex items-center gap-2 flex-1 min-w-[150px]">
+                <span>W={interactiveControl.width}</span>
+                <input
+                  type="range"
+                  min={2}
+                  max={30}
+                  step={0.5}
+                  value={interactiveControl.width}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      width: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-emerald-400"
+                />
+              </label>
+            </div>
+          )}
+
+          {interactiveControl.kind === 'triangle' && (
+            <div className="flex-1 flex flex-wrap items-center gap-3 text-xs text-white font-mono">
+              <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-[10px]">
+                {(['right', 'equilateral', 'isosceles'] as const).map((tp) => (
+                  <button
+                    key={tp}
+                    type="button"
+                    onClick={() =>
+                      handleInteractiveUpdate({
+                        ...interactiveControl,
+                        triangleType: tp,
+                      })
+                    }
+                    className={`px-2 py-0.5 rounded-lg capitalize cursor-pointer ${
+                      interactiveControl.triangleType === tp
+                        ? 'bg-rose-500 text-white font-bold'
+                        : 'text-slate-400'
+                    }`}
+                  >
+                    {tp}
+                  </button>
+                ))}
+              </div>
+              <label className="flex items-center gap-1.5 flex-1 min-w-[120px]">
+                <span>b={interactiveControl.base}</span>
+                <input
+                  type="range"
+                  min={2}
+                  max={24}
+                  step={0.5}
+                  value={interactiveControl.base}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      base: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-rose-400"
+                />
+              </label>
+              {interactiveControl.triangleType !== 'equilateral' && (
+                <label className="flex items-center gap-1.5 flex-1 min-w-[120px]">
+                  <span>h={interactiveControl.height}</span>
+                  <input
+                    type="range"
+                    min={2}
+                    max={24}
+                    step={0.5}
+                    value={interactiveControl.height}
+                    onChange={(e) =>
+                      handleInteractiveUpdate({
+                        ...interactiveControl,
+                        height: Number(e.target.value),
+                      })
+                    }
+                    className="flex-1 accent-rose-400"
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          {interactiveControl.kind === 'linear_graph' && (
+            <div className="flex-1 flex flex-wrap items-center gap-4 text-xs text-white font-mono">
+              <label className="flex items-center gap-2 flex-1 min-w-[160px]">
+                <span className="text-emerald-300 font-bold">Slope m = {interactiveControl.slope}</span>
+                <input
+                  type="range"
+                  min={-5}
+                  max={5}
+                  step={0.5}
+                  value={interactiveControl.slope}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      slope: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-emerald-400"
+                />
+              </label>
+              <label className="flex items-center gap-2 flex-1 min-w-[160px]">
+                <span className="text-amber-300 font-bold">Intercept c = {interactiveControl.intercept}</span>
+                <input
+                  type="range"
+                  min={-6}
+                  max={6}
+                  step={0.5}
+                  value={interactiveControl.intercept}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      intercept: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-amber-400"
+                />
+              </label>
+            </div>
+          )}
+
+          {interactiveControl.kind === 'curve_graph' && (
+            <div className="flex-1 flex flex-wrap items-center gap-3 text-xs text-white font-mono">
+              <div className="flex items-center gap-1.5">
+                <span className="text-purple-300 font-bold">y =</span>
+                <input
+                  type="text"
+                  value={interactiveControl.expression}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      expression: e.target.value,
+                    })
+                  }
+                  className="w-32 px-2 py-1 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-purple-400"
+                />
+              </div>
+              <label className="flex items-center gap-2 flex-1 min-w-[170px]">
+                <span className="text-amber-300 font-bold">Tangent x₀ = {interactiveControl.tangentX}</span>
+                <input
+                  type="range"
+                  min={-4.5}
+                  max={4.5}
+                  step={0.25}
+                  value={interactiveControl.tangentX}
+                  onChange={(e) =>
+                    handleInteractiveUpdate({
+                      ...interactiveControl,
+                      tangentX: Number(e.target.value),
+                    })
+                  }
+                  className="flex-1 accent-amber-400"
+                />
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* =====================================================================
+          VOICE-TO-WHITEBOARD & AI TOPIC VISUAL GENERATOR PROMPT BAR
           ===================================================================== */}
       <div className="rounded-3xl bg-slate-900/90 border border-slate-800 p-3 shadow-xl space-y-2">
         {micNotice && (
@@ -1183,11 +1429,10 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         )}
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          {/* Mic Trigger + Language Pill */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={toggleBlackboardVoice}
+              onClick={toggleVoiceRecognition}
               className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shadow-lg ${
                 isListening
                   ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse'
@@ -1195,16 +1440,14 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               }`}
             >
               {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              <span>{isListening ? 'Stop Chalk Mic' : 'Voice to Chalk'}</span>
+              <span>{isListening ? 'Stop Mic' : 'Speak Visual'}</span>
             </button>
 
             <button
               type="button"
-              onClick={() =>
-                setSpeechLang((prev) => (prev === 'ta-IN' ? 'en-IN' : 'ta-IN'))
-              }
+              onClick={() => setSpeechLang((prev) => (prev === 'ta-IN' ? 'en-IN' : 'ta-IN'))}
               className="px-2.5 py-2.5 rounded-2xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 hover:bg-slate-800 cursor-pointer"
-              title="Toggle Speech Recognition Language (English / Tamil)"
+              title="Toggle Speech Language (English / Tamil)"
             >
               {speechLang === 'ta-IN' ? '🇮🇳 தமிழ்' : '🇬🇧 ENG'}
             </button>
@@ -1217,58 +1460,63 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                   ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
                   : 'bg-slate-950 border-slate-800 text-slate-400'
               }`}
-              title="Toggle Voice Readout of AI Chalk Solutions"
-              aria-label="Toggle Voice Readout"
+              title="Toggle Spoken Narration of Rendered Visuals"
+              aria-label="Toggle Spoken Narration"
             >
               <Volume2 className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Direct Type-or-Voice AI Solve Input */}
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const q = spokenInputQuery;
-              setSpokenInputQuery('');
-              void handleAiSolveOnBoard(q);
+              const q = topicQuery;
+              setTopicQuery('');
+              void handleVisualizeTopic(q);
             }}
             className="flex-1 flex items-center gap-2"
           >
             <input
               type="text"
-              value={spokenInputQuery}
-              onChange={(e) => setSpokenInputQuery(e.target.value)}
-              placeholder={`Ask AI to chalk-solve in ${subject.name} (e.g. "Solve quadratic x²-5x+6=0" or "Explain photosynthesis")`}
+              value={topicQuery}
+              onChange={(e) => setTopicQuery(e.target.value)}
+              placeholder='Try: "circle radius 8 cm", "triangle 3 4 5", "graph and draw a slope", "y = x^2 - 3", or any topic!'
               className="flex-1 px-3 py-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs sm:text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
             />
             <button
               type="submit"
-              disabled={isSolvingAi || !spokenInputQuery.trim()}
+              disabled={isRenderingVisual || !topicQuery.trim()}
               className="px-3.5 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 disabled:opacity-45 text-slate-950 text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer shadow-lg"
             >
-              {isSolvingAi ? (
+              {isRenderingVisual ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
                 <Zap className="w-4 h-4" />
               )}
-              <span>AI Solve</span>
+              <span>Visualize</span>
               <Send className="w-3 h-3 hidden sm:inline" />
             </button>
           </form>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400 pt-0.5">
+        <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-slate-400 pt-0.5">
           <Sparkles className="w-3 h-3 text-cyan-400" />
-          <span>Voice Tips:</span>
-          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
-            "Solve …"
-          </span>
-          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
-            "Draw parabola / atom / neuron"
-          </span>
-          <span className="px-1.5 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-300">
-            "Clear board"
-          </span>
+          <span>Try asking:</span>
+          {[
+            'Circle radius 9',
+            'Rectangle 14 by 8',
+            'Graph straight line y=2x-1',
+            'Draw DNA helix',
+          ].map((ex) => (
+            <button
+              key={ex}
+              type="button"
+              onClick={() => void handleVisualizeTopic(ex)}
+              className="px-1.5 py-0.5 rounded bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 cursor-pointer"
+            >
+              "{ex}"
+            </button>
+          ))}
         </div>
       </div>
     </div>

@@ -574,8 +574,8 @@ export const AdaptiveLearningTab: React.FC = () => {
             },
             {
               id: 'blackboard',
-              label: 'Smart Blackboard',
-              sub: 'Chalk + Voice Solve',
+              label: 'Smart Whiteboard',
+              sub: 'Graph, Shapes & Voice',
               icon: PenTool,
               color: 'text-amber-400',
             },

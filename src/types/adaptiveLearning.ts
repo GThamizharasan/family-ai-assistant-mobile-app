@@ -158,3 +158,183 @@ export interface BlackboardSnapshot {
   createdAt: string;
 }
 
+export type BoardTheme = 'whiteboard' | 'blackboard';
+
+export type WhiteboardPrimitive =
+  | {
+      type: 'coordinate_graph';
+      title?: string;
+      xMin: number;
+      xMax: number;
+      yMin: number;
+      yMax: number;
+      xLabel?: string;
+      yLabel?: string;
+      curves?: Array<{ expression: string; label?: string; color?: string; dashed?: boolean }>;
+      slopeSegment?: {
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+        label?: string;
+        showTriangle?: boolean;
+      };
+      tangentAtX?: { expression: string; x0: number; label?: string };
+      points?: Array<{ x: number; y: number; label?: string; color?: string }>;
+      vectors?: Array<{ x1: number; y1: number; x2: number; y2: number; label?: string; color?: string }>;
+    }
+  | {
+      type: 'circle';
+      cx: number;
+      cy: number;
+      r: number;
+      label?: string;
+      radiusLabel?: string;
+      showCenter?: boolean;
+      showDiameter?: boolean;
+      fill?: string;
+      stroke?: string;
+      dashed?: boolean;
+    }
+  | {
+      type: 'ellipse';
+      cx: number;
+      cy: number;
+      rx: number;
+      ry: number;
+      rotationDeg?: number;
+      label?: string;
+      fill?: string;
+      stroke?: string;
+      dashed?: boolean;
+    }
+  | {
+      type: 'rect';
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      label?: string;
+      widthLabel?: string;
+      heightLabel?: string;
+      showDiagonal?: boolean;
+      fill?: string;
+      stroke?: string;
+      rounded?: number;
+    }
+  | {
+      type: 'polygon';
+      points: Array<{ x: number; y: number; vertexLabel?: string }>;
+      edgeLabels?: string[];
+      rightAngleAtVertex?: number;
+      angleLabels?: Array<{ vertexIndex: number; text: string }>;
+      label?: string;
+      fill?: string;
+      stroke?: string;
+    }
+  | {
+      type: 'line';
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      label?: string;
+      stroke?: string;
+      dashed?: boolean;
+      arrowEnd?: boolean;
+      arrowStart?: boolean;
+      lineWidth?: number;
+    }
+  | {
+      type: 'curve_path';
+      points: Array<{ x: number; y: number }>;
+      closed?: boolean;
+      smooth?: boolean;
+      stroke?: string;
+      fill?: string;
+      dashed?: boolean;
+      lineWidth?: number;
+      label?: string;
+    }
+  | {
+      type: 'bar_chart';
+      title?: string;
+      bars: Array<{ label: string; value: number; color?: string }>;
+      yLabel?: string;
+    }
+  | {
+      type: 'text';
+      x: number;
+      y: number;
+      text: string;
+      fontSize?: number;
+      bold?: boolean;
+      color?: string;
+      align?: 'left' | 'center' | 'right';
+      boxed?: boolean;
+    };
+
+export type InteractiveControlConfig =
+  | { kind: 'circle'; radius: number; unit: string }
+  | { kind: 'rectangle'; length: number; width: number; unit: string }
+  | { kind: 'square'; side: number; unit: string }
+  | {
+      kind: 'triangle';
+      base: number;
+      height: number;
+      triangleType: 'right' | 'equilateral' | 'isosceles';
+      unit: string;
+    }
+  | { kind: 'linear_graph'; slope: number; intercept: number }
+  | { kind: 'curve_graph'; expression: string; tangentX: number };
+
+export interface WhiteboardVisualScene {
+  title: string;
+  subtitle?: string;
+  formulaBox?: string;
+  steps: string[];
+  primitives: WhiteboardPrimitive[];
+  spokenSummary: string;
+  interactiveControl?: InteractiveControlConfig;
+  modelUsed?: string;
+}
+
+export interface InkStroke {
+  points: Array<{ x: number; y: number }>;
+  color: string;
+  size: number;
+  isEraser: boolean;
+}
+
+export interface InkBoundingBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  width: number;
+  height: number;
+}
+
+export type InkDetectedCategory =
+  | 'equation_solve'
+  | 'text_characters'
+  | 'geometry_diagram'
+  | 'graph_plot'
+  | 'science_diagram'
+  | 'straight_line'
+  | 'mixed_scene';
+
+export interface InkRecognitionResult {
+  detectedCategory: InkDetectedCategory;
+  recognizedText: string;
+  detectedPurpose: string;
+  solvedAnswer?: string;
+  boundingBox: InkBoundingBox;
+  visualQuery?: string;
+  inlineLine?: { x1: number; y1: number; x2: number; y2: number; angleDeg: number };
+  scene?: WhiteboardVisualScene;
+  confidence: number;
+  spokenFeedback: string;
+  modelUsed: string;
+}
+

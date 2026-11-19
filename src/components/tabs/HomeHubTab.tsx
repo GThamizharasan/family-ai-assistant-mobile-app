@@ -1743,7 +1743,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
             { id: 'chemistry', label: '🧪 Chemistry', pillar: 'adaptive' },
             { id: 'botany', label: '🌿 Botany', pillar: 'adaptive' },
             { id: 'zoology', label: '🧬 Zoology', pillar: 'adaptive' },
-            { id: 'physics', label: '🖍️ Smart Blackboard', pillar: 'blackboard' },
+            { id: 'physics', label: '🖍️ Smart Whiteboard', pillar: 'blackboard' },
           ].map((chip, idx) => (
             <button
               key={`${chip.id}-${idx}`}

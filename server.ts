@@ -1097,6 +1097,156 @@ app.delete('/api/adaptive-learning/records/:id', (req, res) => {
   }
 });
 
+// Multimodal Freehand Ink Recognition (Characters, Numbers, Equations, Shapes & Diagrams)
+app.post('/api/adaptive-learning/recognize-ink', async (req, res) => {
+  try {
+    const {
+      imageBase64,
+      subjectId = 'maths',
+      subjectName = 'Mathematics',
+      conceptTitle = 'General Concept',
+      language = 'en-IN',
+      localGeometryHint = null,
+      geminiApiKey,
+      modelOverride,
+    } = req.body;
+
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return res.status(400).json({ error: 'imageBase64 is required' });
+    }
+
+    const cleanBase64 = imageBase64.replace(/^data:image\/[a-zA-Z0-9.+]+;base64,/, '').trim();
+    if (!cleanBase64) {
+      return res.status(400).json({ error: 'Invalid empty imageBase64 payload' });
+    }
+
+    let client: GoogleGenAI | null = null;
+    try {
+      client = getAiClient(geminiApiKey);
+    } catch {
+      return res.json({
+        success: false,
+        fallback: true,
+        reason: 'No Gemini API key configured — using local offline recognizer',
+      });
+    }
+
+    const isTamil =
+      subjectId === 'tamil' || String(language).toLowerCase().startsWith('ta');
+
+    const systemInstruction = `You are Aura Smart Whiteboard's real-time Handwriting, Math & Sketch Intelligence Engine.
+You are analyzing a high-contrast snapshot of ONLY the user's freehand pen strokes drawn inside a ${subjectName} ("${conceptTitle}") classroom session.
+
+YOUR JOB:
+1. Accurately read handwritten **numbers, English characters, Tamil Unicode letters/words (தமிழ்), arithmetic/algebraic equations, formulas**, OR rough **geometric/graph/science sketches** (including dimension labels scribbled inside or next to shapes like "r = 7 cm", "3, 4, 5", "10 x 5", "y = 2x + 1").
+2. Understand the learner's **exact purpose and context** within ${subjectName} (${conceptTitle}).
+3. Categorize cleanly into ONE of:
+   - "equation_solve": Handwritten math calculation or equation (e.g., "24 + 38 =", "2x + 4 = 10", "5^2 + 3", "sin(30)") -> compute exact "solvedAnswer"!
+   - "text_characters": Handwritten English or Tamil words/phrases/symbols/notes -> return clean verbatim "recognizedText".
+   - "geometry_diagram": Rough circle, triangle, rectangle, or square sketch (with any written radius/side/base/height dimensions) -> set "visualQuery" cleanly so our parametric engine renders exact scaled geometry + sliders! Example visualQuery: "circle radius 7 cm", "right triangle 3 4 5", "rectangle 12 by 6 cm", "square side 5 cm".
+   - "graph_plot": Hand-drawn axes with straight line, slope triangle, parabola, sine wave, titration pH curve, action potential, etc. -> set "visualQuery" cleanly (e.g., "graph straight line y = 2x + 1", "graph y = x^2 - 4", "plot sin(x)", "titration ph curve", "action potential").
+   - "science_diagram": Rough biology/chemistry/physics/literature sketch matching a rich science schematic (set "visualQuery" to e.g., "dna double helix", "electric circuit", "projectile motion", "convex lens optics", "free body incline", "bohr atom", "benzene ring", "punnett square", "plant cell", "photosynthesis", "neuron synapse", "heart chambers", "thirukkural frame", "story arc") OR provide "customScene" with normalized 0..1000 primitives if it is a unique novel diagram!
+   - "mixed_scene": Complex annotated diagram or word problem benefiting from custom multi-primitive vector visualization via "customScene".
+
+Normalized 0..1000 primitive format (only needed when providing customScene):
+coordinate_graph, circle, ellipse, rect, polygon, line, curve_path, bar_chart, text.
+
+${isTamil ? 'Recognize Tamil script accurately when Tamil letters/words appear.' : ''}
+
+Return STRICT JSON matching:
+{
+  "detectedCategory": "equation_solve" | "text_characters" | "geometry_diagram" | "graph_plot" | "science_diagram" | "mixed_scene",
+  "recognizedText": "Clean recognized characters, number, equation, or short diagram description",
+  "detectedPurpose": "Concise 4-10 word summary of intent and classroom context",
+  "solvedAnswer": "Exact numerical/algebraic answer string if equation_solve, otherwise null",
+  "visualQuery": "Clean parametric command string if geometry/graph/science_diagram matches a known visual, otherwise null",
+  "customScene": null,
+  "confidence": 0.92,
+  "spokenFeedback": "Friendly 1-sentence confirmation"
+}`;
+
+    const candidateModels = Array.from(
+      new Set(
+        [
+          modelOverride,
+          'gemini-3.8-flash',
+          'gemini-3.5-flash',
+          'gemini-3.1-flash-lite',
+          'gemini-2.5-flash',
+        ].filter((m): m is string => Boolean(m && typeof m === 'string'))
+      )
+    );
+
+    const hintNote = localGeometryHint
+      ? `Local geometric pre-analysis hint: ${localGeometryHint}. Trust what you actually see in the strokes!`
+      : 'Analyze all strokes carefully and infer intent.';
+
+    let parsedResult: any = null;
+    let modelUsed = candidateModels[0] || 'gemini-3.8-flash';
+
+    for (const model of candidateModels) {
+      try {
+        const response = await client.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  mimeType: 'image/png',
+                  data: cleanBase64,
+                },
+              },
+              {
+                text: `Identify and translate this freeform ink inside ${subjectName} (${conceptTitle}). ${hintNote}`,
+              },
+            ],
+          },
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+          },
+        });
+
+        const rawText = (response.text || '{}')
+          .trim()
+          .replace(/^```(?:json)?\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim();
+        const candidateJson = JSON.parse(rawText);
+        if (candidateJson && (candidateJson.recognizedText || candidateJson.visualQuery || candidateJson.customScene)) {
+          parsedResult = candidateJson;
+          modelUsed = model;
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[InkRecognize] Model ${model} attempt failed:`, err?.message);
+      }
+    }
+
+    if (!parsedResult) {
+      return res.json({
+        success: false,
+        fallback: true,
+        reason: 'Multimodal ink recognition unavailable — falling back to local recognizer',
+      });
+    }
+
+    res.json({
+      success: true,
+      result: parsedResult,
+      modelUsed,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error('Error in /api/adaptive-learning/recognize-ink:', error);
+    res.status(200).json({
+      success: false,
+      fallback: true,
+      reason: error?.message || 'Ink recognition error',
+    });
+  }
+});
+
 // Test NVIDIA API Key & Model
 app.post('/api/ai/test-nvidia', async (req, res) => {
   try {
