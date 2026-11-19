@@ -37,6 +37,9 @@ import {
   getAdaptiveLearningRecordsFromSqlite,
   saveAdaptiveLearningRecordToSqlite,
   deleteAdaptiveLearningRecordFromSqlite,
+  getLanguageTutorRecordsFromSqlite,
+  saveLanguageTutorRecordToSqlite,
+  deleteLanguageTutorRecordFromSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -1475,6 +1478,551 @@ Return STRICT JSON (no markdown fences):
       success: false,
       fallback: true,
       reason: error?.message || 'Topic visual synthesis error',
+    });
+  }
+});
+
+// -------------------------------------------------------------
+// Professional Live Language Tutor (English & Tamil) Routes
+// -------------------------------------------------------------
+function extractLanguageTutorJson(rawText: string): any | null {
+  if (!rawText || typeof rawText !== 'string') return null;
+  let cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+async function dispatchLanguageTutorAiJson(params: {
+  systemPrompt: string;
+  userMessage?: string;
+  history?: Array<{ role: string; content: string }>;
+  provider?: string;
+  model?: string;
+  customConfig?: any;
+  apiKey?: string;
+  geminiApiKey?: string;
+  nvidiaApiKey?: string;
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  temperature?: number;
+  maxTokens?: number;
+}): Promise<{ json: any; modelUsed: string; providerUsed: string } | { fallbackReason: string }> {
+  const {
+    systemPrompt,
+    userMessage,
+    history,
+    provider = 'gemini',
+    model,
+    customConfig,
+    apiKey,
+    geminiApiKey,
+    nvidiaApiKey,
+    openaiApiKey,
+    anthropicApiKey,
+    temperature = 0.45,
+    maxTokens,
+  } = params;
+
+  let lastReason = '';
+
+  // 1. Primary requested provider
+  try {
+    const attempt = await callUniversalChatCompletion({
+      provider,
+      model,
+      systemPrompt,
+      userMessage,
+      history,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature,
+      maxTokens,
+      enableThinking: false,
+      jsonMode: true,
+    });
+    const parsed = extractLanguageTutorJson(attempt.text);
+    if (parsed && typeof parsed === 'object') {
+      return { json: parsed, modelUsed: attempt.modelUsed, providerUsed: attempt.providerUsed };
+    }
+  } catch (err: any) {
+    lastReason = err?.message || 'Primary AI attempt failed';
+  }
+
+  // 2. Fallback to Gemini if a non-Gemini provider failed
+  if (String(provider).toLowerCase() !== 'gemini') {
+    try {
+      const geminiAttempt = await callUniversalChatCompletion({
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+        systemPrompt,
+        userMessage,
+        history,
+        geminiApiKey,
+        apiKey,
+        temperature,
+        maxTokens,
+        enableThinking: false,
+        jsonMode: true,
+      });
+      const parsed = extractLanguageTutorJson(geminiAttempt.text);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          json: parsed,
+          modelUsed: geminiAttempt.modelUsed,
+          providerUsed: geminiAttempt.providerUsed,
+        };
+      }
+    } catch (err: any) {
+      lastReason = err?.message || lastReason;
+    }
+  }
+
+  // 3. Fallback to NVIDIA NIM if available
+  const effectiveNvidiaKey = getEffectiveNvidiaApiKey(nvidiaApiKey || apiKey);
+  if (effectiveNvidiaKey && String(provider).toLowerCase() !== 'nvidia') {
+    try {
+      const nvidiaAttempt = await callUniversalChatCompletion({
+        provider: 'nvidia',
+        model: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+        systemPrompt,
+        userMessage,
+        history,
+        nvidiaApiKey: effectiveNvidiaKey,
+        temperature,
+        maxTokens,
+        enableThinking: false,
+        jsonMode: true,
+      });
+      const parsed = extractLanguageTutorJson(nvidiaAttempt.text);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          json: parsed,
+          modelUsed: nvidiaAttempt.modelUsed,
+          providerUsed: nvidiaAttempt.providerUsed,
+        };
+      }
+    } catch (err: any) {
+      lastReason = err?.message || lastReason;
+    }
+  }
+
+  return { fallbackReason: lastReason || 'No active AI key or invalid JSON response' };
+}
+
+app.get('/api/language-tutor/records', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    const language = typeof req.query.language === 'string' ? req.query.language : undefined;
+    const recordType = typeof req.query.recordType === 'string' ? req.query.recordType : undefined;
+    const records = getLanguageTutorRecordsFromSqlite(userEmail, language, recordType);
+    res.json({ success: true, records, count: records.length });
+  } catch (err: any) {
+    console.error('Error fetching language tutor records:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch language tutor records' });
+  }
+});
+
+app.post('/api/language-tutor/records', (req, res) => {
+  try {
+    const {
+      id,
+      userEmail,
+      language,
+      level,
+      recordType,
+      moduleId,
+      title,
+      payload,
+      masteryPercent,
+      driveFileId,
+      driveWebViewLink,
+    } = req.body || {};
+
+    if (!language || !recordType || !title) {
+      return res.status(400).json({ error: 'language, recordType, and title are required.' });
+    }
+
+    const saved = saveLanguageTutorRecordToSqlite({
+      id,
+      userEmail,
+      language,
+      level,
+      recordType,
+      moduleId,
+      title,
+      payload: payload ?? {},
+      masteryPercent: typeof masteryPercent === 'number' ? masteryPercent : undefined,
+      driveFileId,
+      driveWebViewLink,
+    });
+    res.json({ success: true, record: saved });
+  } catch (err: any) {
+    console.error('Error saving language tutor record:', err);
+    res.status(500).json({ error: err.message || 'Failed to save language tutor record' });
+  }
+});
+
+app.delete('/api/language-tutor/records/:id', (req, res) => {
+  try {
+    const ok = deleteLanguageTutorRecordFromSqlite(req.params.id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    console.error('Error deleting language tutor record:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete language tutor record' });
+  }
+});
+
+// Construct an end-to-end interactive human-taught course module (English or Tamil)
+app.post('/api/language-tutor/construct-lesson', async (req, res) => {
+  try {
+    const {
+      language = 'english',
+      level = 'beginner',
+      stageNumber = 1,
+      moduleTitle = '',
+      moduleSubtitle = '',
+      customGoal = '',
+      keyTopics = [],
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+    } = req.body || {};
+
+    const cleanLanguage = language === 'tamil' ? 'tamil' : 'english';
+    const topicName = (customGoal || moduleTitle || (cleanLanguage === 'tamil' ? 'தமிழ் அடிப்படை & உரையாடல்' : 'Fluent English Foundations')).trim();
+
+    const personaInstruction =
+      cleanLanguage === 'tamil'
+        ? `You are ஆசிரியர் கலைவாணி (Prof. Kalaivani), a beloved, warm, deeply knowledgeable human Tamil language mentor. You teach BOTH natural spoken Tamil (பேச்சுத் தமிழ்) AND refined Senthamizh (செந்தமிழ் / இலக்கணம்), bridging from beginner foundations cleanly up to Tirukkural, Sangam literature, and stage oratory. ALWAYS include authentic Tamil script (தமிழ்), accurate Romanized Tanglish transliteration, and crystal-clear English meanings so learners of every level thrive.`
+        : `You are Prof. Clara Vance, a charismatic, encouraging human English fluency & rhetoric coach. You teach with warmth, precision, mouth/cadence coaching, memorable collocations, diplomatic workplace phrasing, and expressive storytelling from A1 foundations to C2 executive oratory.`;
+
+    const systemPrompt = `${personaInstruction}
+
+TASK: Construct a COMPLETE, interactive, human-taught lesson module for Stage ${stageNumber} (${level}): "${topicName}".
+Context: ${moduleSubtitle || ''}
+Topics to weave in deeply: ${Array.isArray(keyTopics) && keyTopics.length > 0 ? keyTopics.join(', ') : topicName}
+
+Return STRICT JSON (no markdown fences, no commentary outside JSON) following this exact schema:
+{
+  "title": "Lesson Title",
+  "nativeTitle": "${cleanLanguage === 'tamil' ? 'Tamil or Bilingual Subtitle' : 'Subtitle'}",
+  "teacherOpeningScript": "Warm, encouraging 3-4 sentence live human greeting speaking directly to the student in character.",
+  "teacherOpeningTransliteration": ${cleanLanguage === 'tamil' ? '"Romanized Tanglish transliteration of opening script"' : 'null'},
+  "teacherOpeningMeaning": "Warm English translation/overview of teacher opening",
+  "learningObjectives": ["Objective 1", "Objective 2", "Objective 3"],
+  "conceptPillars": [
+    {
+      "id": "p1",
+      "title": "Pillar 1 Title",
+      "nativeTitle": "Optional Tamil/subtitle",
+      "explanation": "Clear human explanation using intuition and practical examples",
+      "nativeExplanation": ${cleanLanguage === 'tamil' ? '"இலக்கண விளக்கம் தமிழில்"' : 'null'},
+      "ruleFormula": "Memorable pattern or formula",
+      "examples": [
+        { "phrase": "...", "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'}, "meaning": "...", "usageNote": "..." },
+        { "phrase": "...", "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'}, "meaning": "...", "usageNote": "..." },
+        { "phrase": "...", "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'}, "meaning": "...", "usageNote": "..." }
+      ],
+      "commonMistake": { "wrong": "...", "right": "...", "why": "..." }
+    }
+  ],
+  "vocabularyDeck": [
+    {
+      "id": "v1",
+      "term": "Word or expression in target language",
+      "phonetic": "/IPA or clear sound guide/",
+      "transliteration": ${cleanLanguage === 'tamil' ? '"Tanglish transliteration"' : 'null'},
+      "meaning": "English meaning",
+      "partOfSpeech": "Noun / Verb / Idiom / etc.",
+      "register": "casual | formal | literary",
+      "exampleSentence": "Natural example sentence",
+      "exampleMeaning": "English meaning of sentence",
+      "memoryHook": "Clever memory trick"
+    }
+  ],
+  "liveDialogueScript": [
+    { "speaker": "tutor", "speakerName": "${cleanLanguage === 'tamil' ? 'ஆசிரியர் கலைவாணி' : 'Prof. Clara Vance'}", "line": "...", "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'}, "meaning": "...", "coachingTip": "..." },
+    { "speaker": "learner", "speakerName": "Learner", "line": "...", "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'}, "meaning": "..." }
+  ],
+  "pronunciationDrills": [
+    {
+      "id": "d1",
+      "focusSound": "Specific sound or cadence focus",
+      "targetPhrase": "Phrase to speak aloud",
+      "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'},
+      "meaning": "Meaning",
+      "mouthTip": "Concrete tongue/lip/breath placement instruction",
+      "difficulty": "easy | medium | hard"
+    }
+  ],
+  "interactiveExercises": [
+    {
+      "id": "e1",
+      "type": "mcq",
+      "prompt": "Question stem in English",
+      "nativePrompt": ${cleanLanguage === 'tamil' ? '"தமிழ் கேள்வி"' : 'null'},
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctAnswer": "Exact matching string from options",
+      "explanation": "Warm teacher explanation",
+      "xp": 35
+    }
+  ],
+  "culturalSpotlight": {
+    "title": "Cultural / Proverb / Literary Gem",
+    "quote": "Memorable proverb, Kural, or quote",
+    "transliteration": ${cleanLanguage === 'tamil' ? '"..."' : 'null'},
+    "meaning": "Meaning",
+    "insight": "How great speakers weave this into real life"
+  },
+  "capstoneChallenge": {
+    "title": "Capstone Challenge Title",
+    "prompt": "Practical speaking or writing task applying everything learned",
+    "targetSkills": ["Skill 1", "Skill 2", "Skill 3"],
+    "sampleMasteryResponse": "Model high-fluency response in target language"
+  }
+}
+
+Include 3 detailed conceptPillars, 6 rich vocabularyDeck items, 5-6 liveDialogueScript turns, 3 pronunciationDrills, and 4 interactiveExercises (mix of "mcq", "fill_blank", and one "speaking").`;
+
+    const aiRes = await dispatchLanguageTutorAiJson({
+      systemPrompt,
+      userMessage: `Build a richly interactive, colorful, human-taught course module for "${topicName}" at stage ${stageNumber} (${level}).`,
+      provider,
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.45,
+      maxTokens: 4096,
+    });
+
+    if ('fallbackReason' in aiRes) {
+      return res.status(200).json({
+        success: false,
+        fallback: true,
+        reason: aiRes.fallbackReason,
+      });
+    }
+
+    return res.json({
+      success: true,
+      lesson: aiRes.json,
+      modelUsed: aiRes.modelUsed,
+      providerUsed: aiRes.providerUsed,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/language-tutor/construct-lesson:', err);
+    return res.status(200).json({
+      success: false,
+      fallback: true,
+      reason: err?.message || 'Construct lesson error',
+    });
+  }
+});
+
+// Live Interactive 1-on-1 Human Tutor Conversation Turn
+app.post('/api/language-tutor/live-turn', async (req, res) => {
+  try {
+    const {
+      language = 'english',
+      level = 'beginner',
+      scenarioTitle = 'Live Conversation Coaching',
+      learnerGoal = '',
+      activeModuleTitle = '',
+      userMessage = '',
+      history = [],
+      includeTransliteration = true,
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+    } = req.body || {};
+
+    const cleanUserMsg = typeof userMessage === 'string' ? userMessage.trim() : '';
+    if (!cleanUserMsg) {
+      return res.status(400).json({ error: 'userMessage is required.' });
+    }
+
+    const cleanLanguage = language === 'tamil' ? 'tamil' : 'english';
+
+    const tutorPersona =
+      cleanLanguage === 'tamil'
+        ? `You are ஆசிரியர் கலைவாணி (Prof. Kalaivani), a real, warm, attentive human Tamil tutor having a live voice-and-text conversation with your student. Teach naturally — celebrate effort, answer their actual message emotionally and thoughtfully, introduce 1 helpful Tamil expression matching their level (${level}), gently coach any grammar/respect mismatch (நீ vs நீங்கள், ழ/ள/ல, சந்தி) without ever making them feel judged, and ask an engaging follow-up question in Tamil!`
+        : `You are Prof. Clara Vance, a real, warm, perceptive human English tutor having a live 1-on-1 voice coaching conversation. Respond authentically to what your student actually said (never robotic!), celebrate strengths, offer one specific phrasing upgrade ("Natural Upgrade") or pronunciation tip when useful, and close with a compelling conversational question matching their level (${level}).`;
+
+    const systemPrompt = `${tutorPersona}
+
+Active Scenario: ${scenarioTitle}
+Active Module Context: ${activeModuleTitle || 'Open Fluency Coaching'}
+Learner Goal: ${learnerGoal || 'Speak naturally, clearly, and confidently'}
+Transliteration requested: ${includeTransliteration ? 'yes' : 'no'}
+
+Respond as STRICT JSON only (no markdown fences):
+{
+  "reply": "${cleanLanguage === 'tamil' ? 'Natural spoken Tamil reply (2-4 warm conversational sentences, naturally advancing the dialogue and ending with a question)' : 'Warm, authentic conversational reply (2-4 natural spoken sentences ending with a thoughtful question)'}",
+  "transliteration": ${cleanLanguage === 'tamil' ? '"Clear Tanglish Romanization of your Tamil reply"' : 'null'},
+  "englishMeaning": ${cleanLanguage === 'tamil' ? '"Clear natural English translation of your Tamil reply"' : 'null'},
+  "emotion": "welcoming | explaining | encouraging | celebrating | coaching",
+  "praiseNote": "Short genuine praise about something the student did well (1 sentence)",
+  "grammarFeedback": "Gentle, kind explanation of any grammar/tense/respect tweak — or null if their sentence was already solid",
+  "betterPhrasing": "How a fluent speaker might phrase their sentence effortlessly (or null)",
+  "pronunciationTip": "Actionable tongue/cadence/stress tip for one phrase in their turn or yours (or null)",
+  "fluencyScore": 84,
+  "xpEarned": 20,
+  "followUpSuggestions": ["Short sample reply 1 student could say next", "Short sample reply 2"]
+}`;
+
+    const sanitizedHistory = Array.isArray(history)
+      ? history.slice(-10).map((m: any) => ({
+          role: m.role === 'user' || m.role === 'learner' ? 'user' : 'assistant',
+          content: String(m.content || m.text || ''),
+        }))
+      : [];
+
+    const aiRes = await dispatchLanguageTutorAiJson({
+      systemPrompt,
+      userMessage: cleanUserMsg,
+      history: sanitizedHistory,
+      provider,
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.65,
+      maxTokens: 1400,
+    });
+
+    if ('fallbackReason' in aiRes) {
+      return res.status(200).json({
+        success: false,
+        fallback: true,
+        reason: aiRes.fallbackReason,
+      });
+    }
+
+    return res.json({
+      success: true,
+      turn: aiRes.json,
+      modelUsed: aiRes.modelUsed,
+      providerUsed: aiRes.providerUsed,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/language-tutor/live-turn:', err);
+    return res.status(200).json({
+      success: false,
+      fallback: true,
+      reason: err?.message || 'Live tutor turn failed',
+    });
+  }
+});
+
+// Live Speaking & Pronunciation Drill Evaluator
+app.post('/api/language-tutor/evaluate-speaking', async (req, res) => {
+  try {
+    const {
+      language = 'english',
+      level = 'beginner',
+      targetPhrase = '',
+      learnerResponse = '',
+      taskType = 'pronunciation_drill',
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+    } = req.body || {};
+
+    const cleanResponse = typeof learnerResponse === 'string' ? learnerResponse.trim() : '';
+    if (!cleanResponse) {
+      return res.status(400).json({ error: 'learnerResponse is required.' });
+    }
+
+    const cleanLanguage = language === 'tamil' ? 'tamil' : 'english';
+    const systemPrompt = `You are ${cleanLanguage === 'tamil' ? 'ஆசிரியர் கலைவாணி (Prof. Kalaivani)' : 'Prof. Clara Vance'}, evaluating a learner's ${taskType} at level ${level}.
+Target prompt/phrase: "${targetPhrase}"
+Learner said/wrote: "${cleanResponse}"
+
+Return STRICT JSON only:
+{
+  "overallScore": 86,
+  "pronunciationScore": 85,
+  "grammarScore": 88,
+  "naturalnessScore": 84,
+  "emotion": "encouraging | celebrating | coaching",
+  "coachFeedback": "Warm 2-sentence human feedback celebrating strengths and giving 1 crystal-clear improvement step.",
+  "correctedVersion": "Clean model version preserving their intent",
+  "phoneticTip": "Specific mouth/tongue/syllable stress coaching tip",
+  "xpEarned": 35
+}`;
+
+    const aiRes = await dispatchLanguageTutorAiJson({
+      systemPrompt,
+      userMessage: `Evaluate: "${cleanResponse}" against target "${targetPhrase}"`,
+      provider,
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.35,
+      maxTokens: 900,
+    });
+
+    if ('fallbackReason' in aiRes) {
+      return res.status(200).json({
+        success: false,
+        fallback: true,
+        reason: aiRes.fallbackReason,
+      });
+    }
+
+    return res.json({
+      success: true,
+      evaluation: aiRes.json,
+      modelUsed: aiRes.modelUsed,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/language-tutor/evaluate-speaking:', err);
+    return res.status(200).json({
+      success: false,
+      fallback: true,
+      reason: err?.message || 'Speaking evaluation failed',
     });
   }
 });

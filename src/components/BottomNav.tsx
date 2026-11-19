@@ -44,6 +44,7 @@ import { useApp } from '../context/AppContext';
 export type TabKey =
   | 'home'
   | 'adaptive-learning'
+  | 'language-tutor'
   | 'weather'
   | 'navigation'
   | 'ibooks'
@@ -109,6 +110,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
+    { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },
     { key: 'navigation', label: 'Navigation', category: 'Core', icon: Navigation, offlineReady: true },
     { key: 'scanner', label: 'Adobe Scanner', category: 'Intelligence', icon: ScanLine, offlineReady: true },
@@ -139,6 +141,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // Left wing scrollable features (between fixed Home Hub on left and center Mic)
   const leftTabs: TabItem[] = [
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
+    { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },
     { key: 'navigation', label: 'Navigation', category: 'Core', icon: Navigation, offlineReady: true },
     { key: 'scanner', label: 'Adobe Scanner', category: 'Intelligence', icon: ScanLine, offlineReady: true },

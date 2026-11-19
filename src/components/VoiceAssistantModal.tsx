@@ -2000,6 +2000,50 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       }
     }
 
+    // 25a. Professional Human-Like Live Language Tutor (English & Tamil)
+    if (
+      lower.includes('language tutor') ||
+      lower.includes('english tutor') ||
+      lower.includes('tamil tutor') ||
+      lower.includes('live tutor') ||
+      lower.includes('learn tamil') ||
+      lower.includes('learn english') ||
+      lower.includes('teach me tamil') ||
+      lower.includes('teach me english') ||
+      lower.includes('தமிழ் ஆசிரியர்') ||
+      lower.includes('ஆங்கில ஆசிரியர்') ||
+      lower.includes('மொழி ஆசிரியர்')
+    ) {
+      const detectedLang =
+        lower.includes('tamil') || lower.includes('தமிழ்') ? 'tamil' : 'english';
+      const detectedView =
+        lower.includes('course') || lower.includes('roadmap') || lower.includes('பாடம்')
+          ? 'roadmap'
+          : lower.includes('vault') || lower.includes('saved')
+          ? 'vault'
+          : 'live';
+
+      try {
+        sessionStorage.setItem(
+          'aura_language_tutor_launch',
+          JSON.stringify({ language: detectedLang, view: detectedView })
+        );
+        window.dispatchEvent(
+          new CustomEvent('aura_language_tutor_launch', {
+            detail: { language: detectedLang, view: detectedView },
+          })
+        );
+      } catch {}
+
+      executeVoiceNavigation(
+        'language-tutor',
+        undefined,
+        `Opening your Live Human ${detectedLang === 'tamil' ? 'Tamil' : 'English'} Tutor Studio right now!`,
+        `உங்கள் நேரலை ${detectedLang === 'tamil' ? 'தமிழ்' : 'ஆங்கில'} மொழி ஆசிரியர் வகுப்பறையை இப்போது திறக்கிறேன்!`
+      );
+      return;
+    }
+
     // 25b. AI Adaptive Learning Engine & Smart Blackboard (All 7 Subjects)
     if (
       lower.includes('adaptive learning') ||

@@ -1775,6 +1775,70 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
         </div>
       </div>
 
+      {/* Featured: Live Human Language Tutor Studio (English & Tamil) */}
+      <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-amber-950/75 via-rose-950/70 to-indigo-950/80 border border-amber-400/35 shadow-xl relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-200 border border-amber-400/40 flex items-center gap-1">
+                <Languages className="w-3 h-3 text-amber-300" />
+                Live Human Mentor · English & தமிழ்
+              </span>
+              <span className="text-[10px] text-emerald-300 font-semibold">
+                AI Course Builder • Live Voice Coaching • SQLite + Drive
+              </span>
+            </div>
+            <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+              Professional Live Language Tutor (English & தமிழ்)
+            </h3>
+            <p className="text-xs text-slate-300 max-w-xl">
+              Expressive animated human mentors (Prof. Clara Vance & ஆசிரியர் கலைவாணி) teaching from Stage 1 Foundations to C2 Mastery with AI-constructed courses saved to SQLite & Google Drive.
+            </p>
+          </div>
+
+          <button
+            onClick={() => onNavigate('language-tutor')}
+            className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-600 hover:brightness-110 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all shrink-0 active:scale-95 cursor-pointer"
+          >
+            <Mic className="w-4 h-4" />
+            <span>Launch Live Tutor</span>
+            <ArrowUpRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Direct Deep-Link Chips */}
+        <div className="mt-3 pt-3 border-t border-amber-400/20 flex flex-wrap gap-1.5 text-[11px]">
+          {[
+            { label: '🇬🇧 Prof. Clara — English Live', language: 'english', view: 'live' },
+            { label: '🪔 ஆசிரியர் கலைவாணி — தமிழ் Live', language: 'tamil', view: 'live' },
+            { label: '✨ AI Course Constructor', language: 'tamil', view: 'roadmap' },
+            { label: '🔤 உயிர்மெய் & 12-Tense Lab', language: 'tamil', view: 'lesson' },
+            { label: '☁️ SQLite + Drive Vault', language: 'english', view: 'vault' },
+          ].map((chip) => (
+            <button
+              key={chip.label}
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(
+                    'aura_language_tutor_launch',
+                    JSON.stringify({ language: chip.language, view: chip.view })
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent('aura_language_tutor_launch', {
+                      detail: { language: chip.language, view: chip.view },
+                    })
+                  );
+                } catch {}
+                onNavigate('language-tutor');
+              }}
+              className="px-2.5 py-1 rounded-xl bg-slate-950/75 hover:bg-slate-900 text-amber-200 border border-amber-400/25 transition-colors flex items-center gap-1 cursor-pointer font-semibold"
+            >
+              <span>{chip.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Featured: Gemini Multi-Modal AI Studio */}
       <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-indigo-950/80 via-purple-950/70 to-slate-900 border border-indigo-500/30 shadow-xl relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -2404,6 +2468,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               icon: Languages,
               accent: 'border-cyan-500/30 hover:border-cyan-400',
               iconBg: 'bg-cyan-500/20 text-cyan-400',
+            },
+            {
+              key: 'language-tutor' as TabKey,
+              title: 'Live Language Tutor (EN & தமிழ்)',
+              category: 'Intelligence',
+              desc: 'Human-like live voice coaching, AI course architect, உயிர்மெய்/12-tense labs & SQLite/Drive vault.',
+              badge: 'A1 -> C2 LIVE',
+              icon: GraduationCap,
+              accent: 'border-amber-500/35 hover:border-amber-400',
+              iconBg: 'bg-amber-500/20 text-amber-300',
             },
             {
               key: 'whatsapp' as TabKey,

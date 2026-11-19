@@ -39,6 +39,7 @@ import { ClockTab } from './components/tabs/ClockTab';
 import { NavigationTab } from './components/tabs/NavigationTab';
 import { WeatherForecastTab } from './components/tabs/WeatherForecastTab';
 import { AdaptiveLearningTab } from './components/tabs/AdaptiveLearningTab';
+import { LanguageTutorTab } from './components/tabs/LanguageTutorTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
@@ -240,6 +241,8 @@ const AppContent: React.FC = () => {
         );
       case 'adaptive-learning':
         return <AdaptiveLearningTab />;
+      case 'language-tutor':
+        return <LanguageTutorTab />;
       case 'weather':
         return (
           <WeatherForecastTab

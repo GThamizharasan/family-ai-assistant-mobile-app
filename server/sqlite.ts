@@ -453,6 +453,24 @@ export async function initSqliteDb(): Promise<Database> {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS language_tutor_records (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      language TEXT NOT NULL,
+      level TEXT NOT NULL,
+      record_type TEXT NOT NULL,
+      module_id TEXT,
+      title TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      mastery_percent REAL,
+      drive_file_id TEXT,
+      drive_web_view_link TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_language_tutor_user_lang
+      ON language_tutor_records(user_email, language, updated_at);
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2413,6 +2431,164 @@ export function saveAdaptiveLearningRecordToSqlite(
 export function deleteAdaptiveLearningRecordFromSqlite(id: string): boolean {
   if (!db) return false;
   db.run('DELETE FROM adaptive_learning_records WHERE id = ?', [id]);
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// Professional Live Language Tutor (English & Tamil) Persistence
+// -------------------------------------------------------------
+export interface LanguageTutorRecordRow {
+  id: string;
+  userEmail: string;
+  language: string;
+  level: string;
+  recordType: string;
+  moduleId?: string;
+  title: string;
+  payload: any;
+  masteryPercent?: number;
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getLanguageTutorRecordsFromSqlite(
+  userEmail?: string,
+  language?: string,
+  recordType?: string
+): LanguageTutorRecordRow[] {
+  if (!db) return [];
+  try {
+    let query = `
+      SELECT id, user_email, language, level, record_type, module_id, title, payload_json, mastery_percent, drive_file_id, drive_web_view_link, created_at, updated_at
+      FROM language_tutor_records
+    `;
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (userEmail) {
+      conditions.push('user_email = ?');
+      params.push(userEmail.toLowerCase().trim());
+    }
+    if (language) {
+      conditions.push('language = ?');
+      params.push(language);
+    }
+    if (recordType) {
+      conditions.push('record_type = ?');
+      params.push(recordType);
+    }
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    query += ' ORDER BY updated_at DESC LIMIT 200';
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+    const rows: LanguageTutorRecordRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.get();
+      let payload: any = {};
+      try {
+        payload = JSON.parse((row[7] as string) || '{}');
+      } catch {}
+      rows.push({
+        id: row[0] as string,
+        userEmail: row[1] as string,
+        language: row[2] as string,
+        level: row[3] as string,
+        recordType: row[4] as string,
+        moduleId: (row[5] as string) || undefined,
+        title: row[6] as string,
+        payload,
+        masteryPercent: typeof row[8] === 'number' ? row[8] : undefined,
+        driveFileId: (row[9] as string) || undefined,
+        driveWebViewLink: (row[10] as string) || undefined,
+        createdAt: row[11] as string,
+        updatedAt: row[12] as string,
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch (err) {
+    console.warn('[SQLite] getLanguageTutorRecordsFromSqlite error:', err);
+    return [];
+  }
+}
+
+export function saveLanguageTutorRecordToSqlite(
+  record: Partial<LanguageTutorRecordRow> & {
+    language: string;
+    recordType: string;
+    title: string;
+    payload: any;
+  }
+): LanguageTutorRecordRow {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const userEmail = (record.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const level = record.level || 'beginner';
+  const id =
+    record.id ||
+    `lt-${record.language}-${record.recordType}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const payloadJson = typeof record.payload === 'string' ? record.payload : JSON.stringify(record.payload ?? {});
+
+  db.run(
+    `INSERT INTO language_tutor_records
+      (id, user_email, language, level, record_type, module_id, title, payload_json, mastery_percent, drive_file_id, drive_web_view_link, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       language = excluded.language,
+       level = excluded.level,
+       record_type = excluded.record_type,
+       module_id = COALESCE(excluded.module_id, language_tutor_records.module_id),
+       title = excluded.title,
+       payload_json = excluded.payload_json,
+       mastery_percent = COALESCE(excluded.mastery_percent, language_tutor_records.mastery_percent),
+       drive_file_id = COALESCE(excluded.drive_file_id, language_tutor_records.drive_file_id),
+       drive_web_view_link = COALESCE(excluded.drive_web_view_link, language_tutor_records.drive_web_view_link),
+       updated_at = excluded.updated_at`,
+    [
+      id,
+      userEmail,
+      record.language,
+      level,
+      record.recordType,
+      record.moduleId || null,
+      record.title,
+      payloadJson,
+      typeof record.masteryPercent === 'number' ? record.masteryPercent : null,
+      record.driveFileId || null,
+      record.driveWebViewLink || null,
+      record.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    language: record.language,
+    level,
+    recordType: record.recordType,
+    moduleId: record.moduleId,
+    title: record.title,
+    payload: record.payload,
+    masteryPercent: record.masteryPercent,
+    driveFileId: record.driveFileId,
+    driveWebViewLink: record.driveWebViewLink,
+    createdAt: record.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function deleteLanguageTutorRecordFromSqlite(id: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM language_tutor_records WHERE id = ?', [id]);
   scheduleSave();
   return true;
 }
@@ -4832,6 +5008,7 @@ export function getSqliteDbStats() {
     'hub_api_keys',
     'dynamic_ai_models',
     'adaptive_learning_records',
+    'language_tutor_records',
     'assistant_memory_store',
     'voice_assistant_conversations',
     'google_keep_notes',
