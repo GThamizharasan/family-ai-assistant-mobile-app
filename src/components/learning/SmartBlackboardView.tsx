@@ -151,6 +151,15 @@ const SUBJECT_ADVANCED_CHIPS: Record<
     { label: 'Story Arc', emoji: '📈', query: 'story arc pyramid' },
     { label: 'Triangle Logic', emoji: '🔺', query: 'equilateral triangle' },
   ],
+  python: [
+    { label: 'Flowchart', emoji: '🐍', query: 'python control flow flowchart' },
+    { label: 'Recursion Stack', emoji: '🔄', query: 'python recursion call stack' },
+    { label: 'Big-O Curve', emoji: '📈', query: 'graph y = x^2' },
+  ],
+  custom: [
+    { label: 'Concept Map', emoji: '✨', query: 'concept breakdown map' },
+    { label: 'Bar Chart', emoji: '📊', query: 'bar chart comparison' },
+  ],
 };
 
 export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
@@ -1588,7 +1597,17 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   };
 
   const paletteSwatches = boardTheme === 'whiteboard' ? WHITEBOARD_INKS : BLACKBOARD_CHALKS;
-  const subjectChips = SUBJECT_ADVANCED_CHIPS[subject.id] || [];
+  const subjectChips =
+    subject.id === 'custom'
+      ? [
+          ...(SUBJECT_ADVANCED_CHIPS.custom || []),
+          ...subject.concepts.slice(0, 2).map((c) => ({
+            emoji: '✨',
+            label: c.title.slice(0, 16),
+            query: `${c.title} in ${subject.name}`,
+          })),
+        ]
+      : SUBJECT_ADVANCED_CHIPS[subject.id] || [];
   const solvedCount = worksheet.filter((q) => q.status === 'correct').length;
   const totalAttempts = worksheet.reduce((sum, q) => sum + q.attempts, 0);
 

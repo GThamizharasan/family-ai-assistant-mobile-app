@@ -1218,7 +1218,69 @@ export function buildSceneForDiagramStamp(
         ],
         spokenSummary: 'Drawn Freytag’s Story Arc pyramid illustrating exposition, rising action, climax turning point, and resolution.',
       };
+    case 'python_flowchart':
+      return buildPythonFlowchartScene(conceptTitle);
+    case 'custom_mindmap':
+      return buildDynamicConceptMapScene(concept?.title || subject.name, subject);
   }
+}
+
+function buildPythonFlowchartScene(topicTitle?: string): WhiteboardVisualScene {
+  const clean = topicTitle && topicTitle.length <= 42 ? topicTitle : 'Python Control Flow & Call Stack';
+  return {
+    title: clean,
+    subtitle: 'Execution Path: Condition Check, Loop / Recursion & Return Value',
+    formulaBox: 'def solve(n): return 1 if n <= 1 else n * solve(n - 1)',
+    steps: [
+      '1. Start & Bind Inputs: Python pushes variables onto the local Stack Frame.',
+      '2. Branch Decision (`if / while`): Evaluate boolean condition at Diamond.',
+      '3. Recursive / Loop Step: Transform state cleanly until Base Case matches.',
+      '4. Return & Pop Stack: Unwind results upward back to the caller.',
+    ],
+    primitives: [
+      // Start / Input Box
+      { type: 'rect', x: 320, y: 85, width: 360, height: 90, label: 'Start / def solve(n)', stroke: '#2563eb', fill: 'rgba(37, 99, 235, 0.16)', rounded: 16 },
+      { type: 'line', x1: 500, y1: 175, x2: 500, y2: 240, arrowEnd: true, stroke: '#2563eb', lineWidth: 3.5 },
+      // Condition Diamond
+      {
+        type: 'polygon',
+        points: [
+          { x: 500, y: 245 },
+          { x: 705, y: 365 },
+          { x: 500, y: 485 },
+          { x: 295, y: 365 },
+        ],
+        stroke: '#d97706',
+        fill: 'rgba(217, 119, 6, 0.16)',
+        label: 'n <= 1 ?',
+      },
+      // True -> Base Case Box (Left)
+      { type: 'line', x1: 295, y1: 365, x2: 190, y2: 365, label: 'True', arrowEnd: true, stroke: '#059669', lineWidth: 3 },
+      { type: 'line', x1: 190, y1: 365, x2: 190, y2: 530, arrowEnd: true, stroke: '#059669', lineWidth: 3 },
+      { type: 'rect', x: 70, y: 535, width: 255, height: 110, label: 'Base Case: return 1', stroke: '#059669', fill: 'rgba(5, 150, 105, 0.16)', rounded: 14 },
+      // False -> Recursive Frame (Right)
+      { type: 'line', x1: 705, y1: 365, x2: 800, y2: 365, label: 'False', arrowEnd: true, stroke: '#7c3aed', lineWidth: 3 },
+      { type: 'line', x1: 800, y1: 365, x2: 800, y2: 530, arrowEnd: true, stroke: '#7c3aed', lineWidth: 3 },
+      { type: 'rect', x: 645, y: 535, width: 295, height: 110, label: 'Push: n * solve(n - 1)', stroke: '#7c3aed', fill: 'rgba(124, 58, 237, 0.16)', rounded: 14 },
+      // Loopback dashed arrow
+      {
+        type: 'curve_path',
+        points: [
+          { x: 890, y: 535 },
+          { x: 930, y: 310 },
+          { x: 685, y: 140 },
+        ],
+        dashed: true,
+        stroke: '#dc2626',
+        label: 'Next Frame',
+      },
+      // Converge to Output Banner
+      { type: 'line', x1: 195, y1: 645, x2: 430, y2: 755, arrowEnd: true, stroke: '#059669', lineWidth: 3 },
+      { type: 'line', x1: 790, y1: 645, x2: 570, y2: 755, arrowEnd: true, stroke: '#7c3aed', lineWidth: 3 },
+      { type: 'rect', x: 280, y: 760, width: 440, height: 95, label: 'Return Final Output to Caller', stroke: '#2563eb', fill: 'rgba(37, 99, 235, 0.2)', rounded: 16 },
+    ],
+    spokenSummary: 'Drawn a Python flowchart showing stack frame binding, condition branching, recursive decomposition, and return output.',
+  };
 }
 
 // Rich Procedural Scene Builders for Common School Topics & Everyday Visuals
@@ -2219,6 +2281,16 @@ export function buildParametricVisualScene(
   }
   if (lower.includes('sound wave') || lower.includes('wavelength') || lower.includes('amplitude') || lower.includes('frequency') || lower.includes('transverse wave')) {
     return { scene: buildSoundWaveScene(), isExactMatch: true };
+  }
+  if (
+    lower.includes('python') ||
+    lower.includes('flowchart') ||
+    lower.includes('recurs') ||
+    lower.includes('call stack') ||
+    lower.includes('algorithm') ||
+    lower.includes('data structure')
+  ) {
+    return { scene: buildPythonFlowchartScene(q), isExactMatch: true };
   }
 
   // Fallback topic-specific mind map (NEVER repeats old/default diagram!)

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   BookOpen,
   Languages,
@@ -15,12 +15,18 @@ import {
   CheckCircle2,
   Zap,
   Database,
+  Terminal,
+  Settings2,
+  X,
+  Wand2,
+  Loader2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useApp } from '../../context/AppContext';
 import {
   BlackboardSnapshot,
   ConceptNode,
+  CustomSubjectConfig,
   DifficultyLevel,
   EngagementWavePoint,
   GradingResult,
@@ -32,13 +38,18 @@ import {
   SynapticAlert,
 } from '../../types/adaptiveLearning';
 import {
+  buildCustomSubjectDefinition,
+  CUSTOM_SUBJECT_THEME_PRESETS,
   DEFAULT_CLASSROOM_ROSTER,
   SUBJECT_CATALOG,
 } from '../../data/adaptiveCurriculumData';
 import {
   exportAdaptiveArtifactToDrive,
+  generateCustomSubjectTopicsWithAi,
+  loadCustomSubjectConfig,
   loadGradingHistory,
   loadSubjectMasteryMap,
+  saveCustomSubjectConfig,
   saveGradingResult,
   saveSubjectMasteryMap,
   syncAdaptiveLearningFromSqlite,
@@ -57,7 +68,103 @@ const ICON_MAP: Record<SubjectDefinition['iconName'], React.FC<{ className?: str
   FlaskConical,
   Leaf,
   Dna,
+  Terminal,
+  Sparkles,
 };
+
+const QUICK_CUSTOM_TEMPLATES: Array<{
+  label: string;
+  emoji: string;
+  name: string;
+  shortTag: string;
+  tagline: string;
+  topics: string[];
+}> = [
+  {
+    label: 'Robotics',
+    emoji: '🤖',
+    name: 'Robotics & Automation',
+    shortTag: 'ROBO',
+    tagline: 'Sensors, actuators, PID control loops, kinematics & embedded AI autonomy',
+    topics: [
+      'Sensors, Motors & Microcontrollers',
+      'Actuators, Gears & Mechanical Linkages',
+      'Feedback Control & PID Stabilization',
+      'Forward & Inverse Kinematics',
+      'Autonomous Navigation & Computer Vision',
+    ],
+  },
+  {
+    label: 'World History',
+    emoji: '🌍',
+    name: 'World History',
+    shortTag: 'HIST',
+    tagline: 'Ancient civilizations, trade routes, scientific revolutions & modern geopolitics',
+    topics: [
+      'River Valley & Classical Civilizations',
+      'Silk Road Trade & Cultural Exchanges',
+      'Renaissance & Scientific Revolution',
+      'Industrialization & Nation-States',
+      '20th Century Global Transformations',
+    ],
+  },
+  {
+    label: 'Economics',
+    emoji: '💹',
+    name: 'Economics & Finance',
+    shortTag: 'ECON',
+    tagline: 'Supply & demand, market equilibrium, monetary policy, compounding & global trade',
+    topics: [
+      'Scarcity, Opportunity Cost & Incentives',
+      'Supply, Demand & Market Equilibrium',
+      'Elasticity & Market Structures',
+      'Inflation, GDP & Central Bank Policy',
+      'Compounding, Portfolios & Trade Balance',
+    ],
+  },
+  {
+    label: 'Cybersecurity',
+    emoji: '🛡️',
+    name: 'Cybersecurity',
+    shortTag: 'SEC',
+    tagline: 'CIA triad, TLS cryptography, authentication hardening & ethical threat defense',
+    topics: [
+      'CIA Triad & Security Threat Models',
+      'Symmetric, Asymmetric & TLS Encryption',
+      'AuthN/AuthZ, MFA & Zero-Trust Identity',
+      'OWASP Web & API Defense Patterns',
+      'Incident Response & Network Forensics',
+    ],
+  },
+  {
+    label: 'Music Theory',
+    emoji: '🎵',
+    name: 'Music Theory & Rhythm',
+    shortTag: 'MUS',
+    tagline: 'Scales, intervals, chord progressions, time signatures & melodic composition',
+    topics: [
+      'Notes, Pitch Staff & Rhythm Subdivision',
+      'Major/Minor Scales & Key Signatures',
+      'Intervals & Triad/Seventh Chord Harmony',
+      'Cadences, Voice Leading & Progressions',
+      'Form, Ear Training & Song Arrangement',
+    ],
+  },
+  {
+    label: 'Civics & Law',
+    emoji: '⚖️',
+    name: 'Civics & Constitutional Law',
+    shortTag: 'LAW',
+    tagline: 'Constitutional rights, separation of powers, jurisprudence & civic governance',
+    topics: [
+      'Foundations of Constitutional Governance',
+      'Separation of Powers & Checks',
+      'Fundamental Rights & Civil Liberties',
+      'Statutory Interpretation & Precedent',
+      'Public Policy Analysis & Global Law',
+    ],
+  },
+];
 
 function buildInitialWave(): EngagementWavePoint[] {
   return [
@@ -94,8 +201,26 @@ export const AdaptiveLearningTab: React.FC = () => {
     initialLaunch.pillar || 'adaptive'
   );
 
+  // Configurable On-Demand Custom Subject State (LocalStorage + SQLite + Drive Synced)
+  const [customSubjectConfig, setCustomSubjectConfig] = useState<CustomSubjectConfig>(() =>
+    loadCustomSubjectConfig()
+  );
+  const [showCustomModal, setShowCustomModal] = useState(false);
+  const [draftCustomConfig, setDraftCustomConfig] = useState<CustomSubjectConfig>(() =>
+    loadCustomSubjectConfig()
+  );
+  const [isGeneratingCustomTopics, setIsGeneratingCustomTopics] = useState(false);
+
+  const allSubjects = useMemo(
+    () =>
+      SUBJECT_CATALOG.map((s) =>
+        s.id === 'custom' ? buildCustomSubjectDefinition(customSubjectConfig) : s
+      ),
+    [customSubjectConfig]
+  );
+
   const activeSubject =
-    SUBJECT_CATALOG.find((s) => s.id === activeSubjectId) || SUBJECT_CATALOG[3];
+    allSubjects.find((s) => s.id === activeSubjectId) || allSubjects[3] || allSubjects[0];
 
   const [selectedConceptId, setSelectedConceptId] = useState<string>(
     activeSubject.concepts[0].id
@@ -172,19 +297,22 @@ export const AdaptiveLearningTab: React.FC = () => {
 
   // Hydrate from SQLite on mount
   useEffect(() => {
-    syncAdaptiveLearningFromSqlite(user?.email).then(({ masteryMap: m, grades }) => {
-      setMasteryMap(m);
-      setGradingHistory(grades);
-    });
+    syncAdaptiveLearningFromSqlite(user?.email).then(
+      ({ masteryMap: m, grades, customSubjectConfig: syncedCustom }) => {
+        setMasteryMap(m);
+        setGradingHistory(grades);
+        setCustomSubjectConfig(syncedCustom);
+      }
+    );
   }, [user?.email]);
 
   // Listen to live launch events if tab is already mounted
   useEffect(() => {
     const handleLaunchEvent = (e: any) => {
       const detail = e?.detail || {};
-      if (detail.subject && SUBJECT_CATALOG.some((s) => s.id === detail.subject)) {
+      if (detail.subject && allSubjects.some((s) => s.id === detail.subject)) {
         setActiveSubjectId(detail.subject);
-        const subj = SUBJECT_CATALOG.find((s) => s.id === detail.subject);
+        const subj = allSubjects.find((s) => s.id === detail.subject);
         if (subj) setSelectedConceptId(subj.concepts[0].id);
       }
       if (
@@ -197,15 +325,53 @@ export const AdaptiveLearningTab: React.FC = () => {
     window.addEventListener('aura_adaptive_learning_launch', handleLaunchEvent);
     return () =>
       window.removeEventListener('aura_adaptive_learning_launch', handleLaunchEvent);
-  }, []);
+  }, [allSubjects]);
 
   // Keep selected concept aligned when switching subject
   const handleSelectSubject = (subjId: SubjectId) => {
     setActiveSubjectId(subjId);
-    const found = SUBJECT_CATALOG.find((s) => s.id === subjId);
+    const found = allSubjects.find((s) => s.id === subjId);
     if (found && found.concepts[0]) {
       setSelectedConceptId(found.concepts[0].id);
     }
+  };
+
+  const openCustomSubjectModal = () => {
+    setDraftCustomConfig({
+      ...customSubjectConfig,
+      topics: [...customSubjectConfig.topics],
+    });
+    setShowCustomModal(true);
+  };
+
+  const handleGenerateCustomTopics = async () => {
+    if (!draftCustomConfig.name.trim()) return;
+    setIsGeneratingCustomTopics(true);
+    try {
+      const generated = await generateCustomSubjectTopicsWithAi(
+        draftCustomConfig.name,
+        draftCustomConfig.tagline
+      );
+      setDraftCustomConfig((prev) => ({
+        ...prev,
+        tagline: generated.tagline,
+        shortTag: generated.shortTag,
+        topics: generated.topics,
+      }));
+      showToast(`✨ Generated 5 AI adaptive topics for "${draftCustomConfig.name}"!`);
+    } finally {
+      setIsGeneratingCustomTopics(false);
+    }
+  };
+
+  const handleSaveCustomSubject = (e: React.FormEvent) => {
+    e.preventDefault();
+    const saved = saveCustomSubjectConfig(draftCustomConfig, user?.email, googleAccessToken);
+    setCustomSubjectConfig(saved);
+    setActiveSubjectId('custom');
+    setSelectedConceptId('custom-c1');
+    setShowCustomModal(false);
+    showToast(`✅ Configured "${saved.name}" & synced to SQLite / Drive!`);
   };
 
   // Realtime telemetry heartbeat (every 2.5s when live)
@@ -470,7 +636,7 @@ export const AdaptiveLearningTab: React.FC = () => {
               AI Adaptive Learning Engine
             </h2>
             <p className="text-xs sm:text-sm text-slate-200/90 max-w-2xl">
-              Rewiring the classroom’s nervous system across all 7 subjects — uniting adaptive mastery paths, speech-powered neon blackboards, automated grading, and live focus telemetry.
+              Rewiring the classroom’s nervous system across {allSubjects.length} subjects (including Python & your on-demand Custom Subject) — uniting adaptive mastery paths, speech-powered neon blackboards, automated grading, and live focus telemetry.
             </p>
           </div>
 
@@ -488,6 +654,17 @@ export const AdaptiveLearningTab: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2 flex-wrap justify-end">
+              {activeSubjectId === 'custom' && (
+                <button
+                  type="button"
+                  onClick={openCustomSubjectModal}
+                  className="px-3 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer transition-all active:scale-95"
+                >
+                  <Settings2 className="w-3.5 h-3.5" />
+                  <span>Configure Custom Subject</span>
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => {
@@ -516,7 +693,7 @@ export const AdaptiveLearningTab: React.FC = () => {
       </motion.div>
 
       {/* =====================================================================
-          7-SUBJECT INTERACTIVE SPECTRUM DOCK
+          INTERACTIVE SUBJECT SPECTRUM DOCK (8 CORE + PYTHON + CUSTOM ON-DEMAND)
           ===================================================================== */}
       <div
         className="relative z-10 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-0.5 scroll-smooth"
@@ -524,7 +701,7 @@ export const AdaptiveLearningTab: React.FC = () => {
         role="tablist"
         aria-label="Subjects"
       >
-        {SUBJECT_CATALOG.map((subj) => {
+        {allSubjects.map((subj) => {
           const Icon = ICON_MAP[subj.iconName];
           const isSelected = subj.id === activeSubjectId;
           const avg = Math.round(
@@ -560,10 +737,33 @@ export const AdaptiveLearningTab: React.FC = () => {
                 <Icon className="w-4 h-4" />
               </div>
               <div className="text-left">
-                <div className="text-xs font-bold leading-tight flex items-center gap-1">
+                <div className="text-xs font-bold leading-tight flex items-center gap-1.5">
                   <span>{subj.name}</span>
                   {subj.id === 'tamil' && (
                     <span className="text-[10px] text-amber-300">தமிழ்</span>
+                  )}
+                  {subj.id === 'custom' && (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSelectSubject('custom');
+                        openCustomSubjectModal();
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleSelectSubject('custom');
+                          openCustomSubjectModal();
+                        }
+                      }}
+                      title="Configure Custom Subject Name, Topics & Theme"
+                      className="p-0.5 rounded-md bg-slate-800 hover:bg-teal-500 hover:text-slate-950 text-teal-300 transition-colors"
+                    >
+                      <Settings2 className="w-3 h-3" />
+                    </span>
                   )}
                 </div>
                 <div className="text-[10px] font-mono text-slate-400">
@@ -707,7 +907,7 @@ export const AdaptiveLearningTab: React.FC = () => {
         {activePillar === 'engagement' && (
           <ClassroomEngagementView
             subject={activeSubject}
-            allSubjects={SUBJECT_CATALOG}
+            allSubjects={allSubjects}
             masteryMap={masteryMap}
             gradingHistory={gradingHistory}
             engagementWave={engagementWave}
@@ -726,9 +926,243 @@ export const AdaptiveLearningTab: React.FC = () => {
       <div className="relative z-10 flex items-center justify-center gap-2 text-[10px] font-mono text-slate-500 pt-2">
         <Sparkles className="w-3 h-3 text-cyan-400" />
         <span>
-          Aura Adaptive Nervous System • 7 Subjects • Neon Chalk Speech Engine • SQLite & Drive Sync
+          Aura Adaptive Nervous System • {allSubjects.length} Subjects (incl. Python & Custom) • Neon Chalk Speech Engine • SQLite & Drive Sync
         </span>
       </div>
+
+      {/* =====================================================================
+          ON-DEMAND CUSTOM SUBJECT CONFIGURATOR MODAL
+          ===================================================================== */}
+      {showCustomModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="w-full max-w-xl rounded-3xl bg-slate-900 border border-teal-500/40 shadow-2xl overflow-hidden my-auto">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/60">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-teal-500/20 border border-teal-500/40 flex items-center justify-center text-teal-300">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm sm:text-base font-extrabold text-white">
+                    Configure Custom Subject On Demand
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Customize name, 5 adaptive topics & theme — saved to SQLite & Google Drive
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCustomModal(false)}
+                className="p-2 rounded-xl bg-slate-800/80 text-slate-400 hover:text-white cursor-pointer"
+                aria-label="Close Custom Subject Configurator"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCustomSubject} className="p-4 sm:p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              {/* 1-Click Starter Templates */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-mono uppercase text-slate-400 font-bold block">
+                  Quick Starter Presets
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_CUSTOM_TEMPLATES.map((tpl) => (
+                    <button
+                      key={tpl.label}
+                      type="button"
+                      onClick={() =>
+                        setDraftCustomConfig((prev) => ({
+                          ...prev,
+                          name: tpl.name,
+                          nativeName: `${tpl.name} Studio`,
+                          shortTag: tpl.shortTag,
+                          tagline: tpl.tagline,
+                          topics: [...tpl.topics],
+                        }))
+                      }
+                      className="px-2.5 py-1 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs text-slate-200 flex items-center gap-1 cursor-pointer transition-all"
+                    >
+                      <span>{tpl.emoji}</span>
+                      <span className="font-semibold">{tpl.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Subject Name + AI Auto-Generate Syllabus Button */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-200 block">
+                  Subject Name
+                </label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={draftCustomConfig.name}
+                    onChange={(e) =>
+                      setDraftCustomConfig((prev) => ({
+                        ...prev,
+                        name: e.target.value,
+                        nativeName: `${e.target.value} Track`,
+                      }))
+                    }
+                    placeholder="e.g., Robotics, World History, Economics, Sanskrit..."
+                    className="flex-1 px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white focus:outline-none focus:border-teal-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateCustomTopics()}
+                    disabled={isGeneratingCustomTopics || !draftCustomConfig.name.trim()}
+                    className="px-3 py-2 rounded-xl bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 disabled:opacity-50 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow cursor-pointer shrink-0"
+                  >
+                    {isGeneratingCustomTopics ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Wand2 className="w-3.5 h-3.5" />
+                    )}
+                    <span>Auto-Generate 5 Topics with AI</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Focus Tagline + Short Tag + Language */}
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5">
+                <div className="sm:col-span-6 space-y-1">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    Subtitle / Learning Goal
+                  </label>
+                  <input
+                    type="text"
+                    value={draftCustomConfig.tagline}
+                    onChange={(e) =>
+                      setDraftCustomConfig((prev) => ({ ...prev, tagline: e.target.value }))
+                    }
+                    placeholder="Core concepts, projects & exam mastery"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-teal-400"
+                  />
+                </div>
+                <div className="sm:col-span-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    Short Tag
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={5}
+                    value={draftCustomConfig.shortTag}
+                    onChange={(e) =>
+                      setDraftCustomConfig((prev) => ({
+                        ...prev,
+                        shortTag: e.target.value.toUpperCase(),
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-teal-400"
+                  />
+                </div>
+                <div className="sm:col-span-3 space-y-1">
+                  <label className="text-xs font-bold text-slate-300 block">
+                    Language
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDraftCustomConfig((prev) => ({
+                        ...prev,
+                        defaultLanguage: prev.defaultLanguage === 'ta-IN' ? 'en-US' : 'ta-IN',
+                      }))
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-amber-300 hover:bg-slate-800 cursor-pointer"
+                  >
+                    {draftCustomConfig.defaultLanguage === 'ta-IN' ? '🇮🇳 தமிழ்' : '🇺🇸 ENG'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Color Theme Swatches */}
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-slate-300 block">
+                  Theme Color Accent
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {CUSTOM_SUBJECT_THEME_PRESETS.map((preset) => {
+                    const isPicked = draftCustomConfig.accentHex === preset.accentHex;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() =>
+                          setDraftCustomConfig((prev) => ({
+                            ...prev,
+                            accentHex: preset.accentHex,
+                            secondaryHex: preset.secondaryHex,
+                          }))
+                        }
+                        className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold flex items-center gap-1.5 cursor-pointer ${
+                          isPicked
+                            ? 'bg-slate-800 border-white text-white shadow'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <span
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: preset.accentHex }}
+                        />
+                        <span>{preset.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 5 Editable Syllabus Topics */}
+              <div className="space-y-2">
+                <span className="text-xs font-bold text-slate-200 block">
+                  5 Concept Mastery Units (Foundation → Olympiad)
+                </span>
+                {[0, 1, 2, 3, 4].map((idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="w-16 text-[10px] font-mono text-slate-400 shrink-0">
+                      Unit {idx + 1}
+                    </span>
+                    <input
+                      type="text"
+                      required={idx < 3}
+                      value={draftCustomConfig.topics[idx] || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setDraftCustomConfig((prev) => {
+                          const next = [...prev.topics];
+                          next[idx] = val;
+                          return { ...prev, topics: next };
+                        });
+                      }}
+                      placeholder={`Concept Unit ${idx + 1}`}
+                      className="flex-1 px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-teal-400"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-700 text-xs font-bold text-slate-300 hover:text-white cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-400 to-cyan-400 hover:from-teal-300 hover:to-cyan-300 text-slate-950 text-xs font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Save & Sync (SQLite + Drive)</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

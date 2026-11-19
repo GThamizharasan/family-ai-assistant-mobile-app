@@ -7,6 +7,7 @@
 import {
   AdaptiveQuestion,
   ConceptNode,
+  CustomSubjectConfig,
   DiagramStampType,
   DifficultyLevel,
   GradingResult,
@@ -16,7 +17,10 @@ import {
   WhiteboardPrimitive,
   WhiteboardVisualScene,
 } from '../types/adaptiveLearning';
-import { SUBJECT_CATALOG } from '../data/adaptiveCurriculumData';
+import {
+  DEFAULT_CUSTOM_SUBJECT_CONFIG,
+  SUBJECT_CATALOG,
+} from '../data/adaptiveCurriculumData';
 import { sendMultiTurnChat } from './aiSuite';
 import { getApiUrl } from './api';
 import { syncAnyAiOutputToDrive } from './guidedLearningService';
@@ -30,6 +34,7 @@ import {
 
 const MASTERY_STORAGE_KEY = 'aura_adaptive_mastery_v1';
 const GRADING_STORAGE_KEY = 'aura_adaptive_grades_v1';
+const CUSTOM_SUBJECT_STORAGE_KEY = 'aura_adaptive_custom_subject_v1';
 
 // Safely strip markdown fences and parse JSON emitted by LLMs
 function safeParseJson<T>(rawText: string): T | null {
@@ -147,11 +152,166 @@ export function saveGradingResult(
   return updated;
 }
 
+export function loadCustomSubjectConfig(): CustomSubjectConfig {
+  if (typeof window === 'undefined') return DEFAULT_CUSTOM_SUBJECT_CONFIG;
+  try {
+    const raw = localStorage.getItem(CUSTOM_SUBJECT_STORAGE_KEY);
+    if (!raw) return DEFAULT_CUSTOM_SUBJECT_CONFIG;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.name !== 'string') return DEFAULT_CUSTOM_SUBJECT_CONFIG;
+    const topics = Array.isArray(parsed.topics)
+      ? parsed.topics.map((t: any) => String(t || '').trim()).filter(Boolean)
+      : [];
+    return {
+      ...DEFAULT_CUSTOM_SUBJECT_CONFIG,
+      ...parsed,
+      topics: topics.length >= 3 ? topics.slice(0, 5) : DEFAULT_CUSTOM_SUBJECT_CONFIG.topics,
+    };
+  } catch {
+    return DEFAULT_CUSTOM_SUBJECT_CONFIG;
+  }
+}
+
+export function saveCustomSubjectConfig(
+  config: CustomSubjectConfig,
+  userEmail?: string,
+  googleAccessToken?: string | null
+): CustomSubjectConfig {
+  const cleanName = (config.name || DEFAULT_CUSTOM_SUBJECT_CONFIG.name).trim() || 'Custom Subject';
+  const rawTopics = Array.isArray(config.topics)
+    ? config.topics.map((t) => t.trim()).filter(Boolean)
+    : [];
+  const normalizedTopics =
+    rawTopics.length >= 3
+      ? rawTopics.slice(0, 5)
+      : [
+          ...rawTopics,
+          ...DEFAULT_CUSTOM_SUBJECT_CONFIG.topics.slice(rawTopics.length, 5),
+        ];
+
+  const normalizedConfig: CustomSubjectConfig = {
+    name: cleanName,
+    nativeName: (config.nativeName || `${cleanName} Mastery Track`).trim(),
+    shortTag:
+      (config.shortTag || cleanName.slice(0, 4).toUpperCase()).trim().slice(0, 5) || 'CSTM',
+    tagline:
+      (config.tagline || '').trim() ||
+      `Personalized AI tutoring, Smart Whiteboard visuals & grading for ${cleanName}`,
+    accentHex: config.accentHex || DEFAULT_CUSTOM_SUBJECT_CONFIG.accentHex,
+    secondaryHex: config.secondaryHex || DEFAULT_CUSTOM_SUBJECT_CONFIG.secondaryHex,
+    defaultLanguage: config.defaultLanguage === 'ta-IN' ? 'ta-IN' : 'en-US',
+    topics: normalizedTopics,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(CUSTOM_SUBJECT_STORAGE_KEY, JSON.stringify(normalizedConfig));
+    } catch {}
+  }
+
+  const effectiveEmail =
+    userEmail ||
+    (typeof window !== 'undefined' ? localStorage.getItem('userEmail') : null) ||
+    'chinna.tamil2000@gmail.com';
+
+  fetch(getApiUrl('/api/adaptive-learning/records'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: 'custom-subject-config',
+      userEmail: effectiveEmail,
+      subjectId: 'custom',
+      recordType: 'custom_subject_config',
+      title: normalizedConfig.name,
+      payload: normalizedConfig,
+    }),
+  }).catch(() => {});
+
+  if (googleAccessToken || (typeof window !== 'undefined' && (localStorage.getItem('aura_google_access_token') || localStorage.getItem('google_access_token')))) {
+    const md = `# Custom Subject Syllabus — ${normalizedConfig.name}\n\n- **Tag:** ${normalizedConfig.shortTag}\n- **Focus:** ${normalizedConfig.tagline}\n- **Language:** ${normalizedConfig.defaultLanguage}\n\n## Core Mastery Topics\n${normalizedConfig.topics.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
+    void exportAdaptiveArtifactToDrive(
+      `Custom Subject - ${normalizedConfig.name}`,
+      md,
+      normalizedConfig.name,
+      googleAccessToken,
+      effectiveEmail
+    ).catch(() => {});
+  }
+
+  return normalizedConfig;
+}
+
+export async function generateCustomSubjectTopicsWithAi(
+  subjectName: string,
+  focusGoal?: string
+): Promise<{ tagline: string; shortTag: string; topics: string[] }> {
+  const cleanName = subjectName.trim() || 'Custom Subject';
+  const prompt = `Design a structured 5-unit adaptive learning progression for the subject: "${cleanName}"${
+    focusGoal ? ` (Learner focus: "${focusGoal.trim()}")` : ''
+  }.
+Order the 5 topics progressively from Foundation -> Core -> Core -> Honors -> Olympiad/Capstone.
+Return STRICT JSON:
+{
+  "tagline": "Concise 8-14 word inspiring course subtitle",
+  "shortTag": "3-4 uppercase letters (e.g., ROBO, ECON, HIST)",
+  "topics": ["1st topic title (max 45 chars)", "2nd topic title", "3rd topic title", "4th topic title", "5th topic title"]
+}`;
+
+  try {
+    const res = await sendMultiTurnChat([{ role: 'user', text: prompt }], {
+      role: 'adaptive_learning_tutor',
+      taskComplexity: 'fast',
+      jsonMode: true,
+    });
+    const parsed = safeParseJson<{ tagline?: string; shortTag?: string; topics?: string[] }>(res.reply);
+    if (parsed && Array.isArray(parsed.topics) && parsed.topics.length >= 3) {
+      const cleanTopics = parsed.topics.map((t) => String(t).trim()).filter(Boolean);
+      while (cleanTopics.length < 5) {
+        cleanTopics.push(`${cleanName} Advanced Module ${cleanTopics.length + 1}`);
+      }
+      return {
+        tagline:
+          (parsed.tagline || '').trim() ||
+          `Adaptive syllabus, visual whiteboard labs & rubric grading for ${cleanName}`,
+        shortTag:
+          (parsed.shortTag || cleanName.slice(0, 4)).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 4) ||
+          'CSTM',
+        topics: cleanTopics.slice(0, 5),
+      };
+    }
+  } catch (err) {
+    console.warn('[CustomSubject] AI syllabus generation fallback:', err);
+  }
+
+  const short =
+    cleanName
+      .replace(/[^A-Za-z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 4) || 'CSTM';
+  return {
+    tagline: `Interactive mastery path, visual labs & rubric coaching for ${cleanName}`,
+    shortTag: short,
+    topics: [
+      `${cleanName}: Core Vocabulary & Basics`,
+      `${cleanName}: Fundamental Principles`,
+      `${cleanName}: Applied Workflows & Examples`,
+      `${cleanName}: Systems & Problem Solving`,
+      `${cleanName}: Capstone Mastery & Design`,
+    ],
+  };
+}
+
 export async function syncAdaptiveLearningFromSqlite(
   userEmail?: string
-): Promise<{ masteryMap: Record<string, number>; grades: GradingResult[] }> {
+): Promise<{
+  masteryMap: Record<string, number>;
+  grades: GradingResult[];
+  customSubjectConfig: CustomSubjectConfig;
+}> {
   const localMastery = loadSubjectMasteryMap();
   const localGrades = loadGradingHistory();
+  let customSubjectConfig = loadCustomSubjectConfig();
 
   try {
     const effectiveEmail =
@@ -161,11 +321,11 @@ export async function syncAdaptiveLearningFromSqlite(
     const qs = effectiveEmail ? `?userEmail=${encodeURIComponent(effectiveEmail)}` : '';
     const res = await fetch(getApiUrl(`/api/adaptive-learning/records${qs}`));
     if (!res.ok) {
-      return { masteryMap: localMastery, grades: localGrades };
+      return { masteryMap: localMastery, grades: localGrades, customSubjectConfig };
     }
     const data = await res.json();
     if (!data.success || !Array.isArray(data.records)) {
-      return { masteryMap: localMastery, grades: localGrades };
+      return { masteryMap: localMastery, grades: localGrades, customSubjectConfig };
     }
 
     const mergedMastery = { ...localMastery };
@@ -183,6 +343,18 @@ export async function syncAdaptiveLearningFromSqlite(
         if (!gradeMap.has(row.payload.id)) {
           gradeMap.set(row.payload.id, row.payload as GradingResult);
         }
+      } else if (row.recordType === 'custom_subject_config' && row.payload?.name) {
+        const incomingTime = Date.parse(row.payload.updatedAt || row.updatedAt || '') || 0;
+        const localTime = Date.parse(customSubjectConfig.updatedAt || '') || 0;
+        if (incomingTime >= localTime) {
+          customSubjectConfig = {
+            ...DEFAULT_CUSTOM_SUBJECT_CONFIG,
+            ...row.payload,
+          };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(CUSTOM_SUBJECT_STORAGE_KEY, JSON.stringify(customSubjectConfig));
+          }
+        }
       }
     }
 
@@ -195,9 +367,9 @@ export async function syncAdaptiveLearningFromSqlite(
       localStorage.setItem(GRADING_STORAGE_KEY, JSON.stringify(mergedGrades));
     }
 
-    return { masteryMap: mergedMastery, grades: mergedGrades };
+    return { masteryMap: mergedMastery, grades: mergedGrades, customSubjectConfig };
   } catch {
-    return { masteryMap: localMastery, grades: localGrades };
+    return { masteryMap: localMastery, grades: localGrades, customSubjectConfig };
   }
 }
 
@@ -486,6 +658,8 @@ export async function solveVoiceQueryOnBlackboard(
     'heart_chambers',
     'thirukkural_frame',
     'story_arc',
+    'python_flowchart',
+    'custom_mindmap',
   ];
 
   const prompt = `You are teaching live on a Smart Blackboard for ${subject.name} (${subject.nativeName}).
@@ -559,6 +733,10 @@ Respond with STRICT JSON (no markdown fences) containing concise chalk-friendly 
     ? 'heart_chambers'
     : lower.includes('kural') || lower.includes('குறள்') || subject.id === 'tamil'
     ? 'thirukkural_frame'
+    : lower.includes('python') || lower.includes('flowchart') || lower.includes('recurs') || subject.id === 'python'
+    ? 'python_flowchart'
+    : subject.id === 'custom'
+    ? 'custom_mindmap'
     : matchedConcept.diagramStamp;
 
   return {

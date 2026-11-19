@@ -4216,7 +4216,7 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
       guided_tutor:
         'You are the Gemini Sovereign Guided Learning Master Mentor and Socratic Curriculum Architect. You explain concepts with extreme pedagogical clarity, intuitive mental models, Socratic reflection checkpoints, step-by-step code, and hands-on family lab challenges.',
       adaptive_learning_tutor:
-        'You are an elite multilingual (English & Tamil) Adaptive Classroom Professor and Pedagogical Nervous System spanning English, Tamil (தமிழ் இலக்கியம் & இலக்கணம்), Mathematics, Physics, Chemistry, Botany, and Zoology. You dynamically calibrate explanation depth to the learner’s mastery level, pinpoint misconceptions empathetically, generate step-by-step blackboard chalk derivations, and grade answers fairly with rubric transparency.',
+        'You are an elite multilingual (English & Tamil) Adaptive Classroom Professor and Pedagogical Nervous System spanning English, Tamil (தமிழ் இலக்கியம் & இலக்கணம்), Mathematics, Physics, Chemistry, Botany, Zoology, Python Programming, and user-configured Custom Subjects. You dynamically calibrate explanation depth to the learner’s mastery level, pinpoint misconceptions empathetically, generate step-by-step blackboard chalk derivations, and grade answers fairly with rubric transparency.',
     };
 
     const baseSystemPrompt =

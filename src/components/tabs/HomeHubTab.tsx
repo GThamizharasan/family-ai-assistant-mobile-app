@@ -449,7 +449,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center gap-1">
                       <span className="text-xs font-bold text-white truncate">AI Adaptive Learning</span>
-                      <span className="text-[9px] font-mono px-1 rounded bg-cyan-500/25 text-cyan-200 font-bold">7 SUBJ</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-cyan-500/25 text-cyan-200 font-bold">9 SUBJ</span>
                     </div>
                     <p className="text-[10px] text-cyan-200/80 truncate">Smart Blackboard & Telemetry</p>
                   </div>
@@ -1716,7 +1716,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               </span>
             </div>
             <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
-              AI Adaptive Learning Engine (All 7 Subjects)
+              AI Adaptive Learning Engine (8 Subjects + Custom)
             </h3>
             <p className="text-xs text-slate-300 max-w-xl">
               Synaptic concept graphs, neon chalk blackboard with English & Tamil speech recognition, automated 4-axis grading, and real-time focus heatmaps.
@@ -1733,7 +1733,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
           </button>
         </div>
 
-        {/* 7-Subject + Blackboard Direct Deep-Link Chips */}
+        {/* Subject + Blackboard Direct Deep-Link Chips */}
         <div className="mt-3 pt-3 border-t border-cyan-500/20 flex flex-wrap gap-1.5 text-[11px]">
           {[
             { id: 'english', label: '📖 English', pillar: 'adaptive' },
@@ -1743,6 +1743,8 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
             { id: 'chemistry', label: '🧪 Chemistry', pillar: 'adaptive' },
             { id: 'botany', label: '🌿 Botany', pillar: 'adaptive' },
             { id: 'zoology', label: '🧬 Zoology', pillar: 'adaptive' },
+            { id: 'python', label: '🐍 Python', pillar: 'adaptive' },
+            { id: 'custom', label: '✨ Custom Subject', pillar: 'adaptive' },
             { id: 'physics', label: '🖍️ Smart Whiteboard', pillar: 'blackboard' },
           ].map((chip, idx) => (
             <button

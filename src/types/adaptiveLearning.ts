@@ -7,7 +7,9 @@ export type SubjectId =
   | 'physics'
   | 'chemistry'
   | 'botany'
-  | 'zoology';
+  | 'zoology'
+  | 'python'
+  | 'custom';
 
 export type PillarTab = 'adaptive' | 'blackboard' | 'grader' | 'engagement';
 
@@ -27,7 +29,9 @@ export type DiagramStampType =
   | 'neuron_synapse'
   | 'heart_chambers'
   | 'thirukkural_frame'
-  | 'story_arc';
+  | 'story_arc'
+  | 'python_flowchart'
+  | 'custom_mindmap';
 
 export interface ConceptNode {
   id: string;
@@ -84,7 +88,9 @@ export interface SubjectDefinition {
     | 'Atom'
     | 'FlaskConical'
     | 'Leaf'
-    | 'Dna';
+    | 'Dna'
+    | 'Terminal'
+    | 'Sparkles';
   defaultLanguage: 'en-US' | 'ta-IN';
   concepts: ConceptNode[];
   questions: AdaptiveQuestion[];
@@ -382,6 +388,18 @@ export interface SavedVisualTopicRecord {
   driveFileId?: string;
   driveWebViewLink?: string;
   savedAt: string;
+  updatedAt: string;
+}
+
+export interface CustomSubjectConfig {
+  name: string;
+  nativeName: string;
+  shortTag: string;
+  tagline: string;
+  accentHex: string;
+  secondaryHex: string;
+  defaultLanguage: 'en-US' | 'ta-IN';
+  topics: string[];
   updatedAt: string;
 }
 

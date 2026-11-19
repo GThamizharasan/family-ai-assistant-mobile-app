@@ -2017,6 +2017,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.includes('study botany') ||
       lower.includes('study zoology') ||
       lower.includes('study english') ||
+      lower.includes('study python') ||
+      lower.includes('learn python') ||
+      lower.includes('python programming') ||
+      lower.includes('custom subject') ||
       lower.includes('கற்றல்') ||
       lower.includes('கரும்பலகை') ||
       lower.includes('வகுப்பறை')
@@ -2032,6 +2036,10 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
           ? 'botany'
           : lower.includes('zoology') || lower.includes('விலங்கியல்')
           ? 'zoology'
+          : lower.includes('python') || lower.includes('பைத்தான்')
+          ? 'python'
+          : lower.includes('custom subject')
+          ? 'custom'
           : lower.includes('english') || lower.includes('ஆங்கிலம்')
           ? 'english'
           : 'physics';

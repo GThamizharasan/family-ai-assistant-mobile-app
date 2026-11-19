@@ -367,10 +367,10 @@ export const ClassroomEngagementView: React.FC<ClassroomEngagementViewProps> = (
           </div>
         </div>
 
-        {/* 7-Subject Mastery Matrix */}
+        {/* Subject Mastery Matrix */}
         <div className="rounded-3xl bg-slate-900/90 border border-slate-800 p-4 space-y-2.5 shadow-xl">
           <div className="text-xs sm:text-sm font-bold text-white">
-            All 7 Subjects Mastery Matrix (Tap to Switch)
+            All {allSubjects.length} Subjects Mastery Matrix (Tap to Switch)
           </div>
           <div className="space-y-2">
             {allSubjects.map((s) => {
