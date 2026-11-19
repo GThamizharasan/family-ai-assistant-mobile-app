@@ -31,6 +31,8 @@ import {
   Star,
   Flame,
   Trophy,
+  Database,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ArithmeticFilter,
@@ -44,12 +46,17 @@ import {
   InkStroke,
   InteractiveControlConfig,
   MathAnswerCheckResult,
+  SavedVisualTopicRecord,
   SubjectDefinition,
   SubjectId,
   WhiteboardVisualScene,
 } from '../../types/adaptiveLearning';
 import { generateTopicVisualScene } from '../../services/adaptiveLearningService';
 import { recognizeAndTranslateFreehandInk } from '../../services/inkRecognitionEngine';
+import {
+  loadSavedVisualTopicsFromSqliteAndDrive,
+  saveVisualTopicToSqliteAndDrive,
+} from '../../services/visualTopicStorageService';
 import {
   buildTableRecitationText,
   checkHandwrittenMathAnswer,
@@ -81,6 +88,8 @@ interface SmartBlackboardViewProps {
   onSyncToDrive: (title: string, content: string) => void;
   initialMode?: 'free' | 'math_practice';
   modeNonce?: number;
+  userEmail?: string;
+  googleAccessToken?: string | null;
 }
 
 type BoardBgStyle = 'grid' | 'plain' | 'lined' | 'dots';
@@ -152,11 +161,29 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   onSyncToDrive,
   initialMode,
   modeNonce,
+  userEmail,
+  googleAccessToken,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDrawingRef = useRef(false);
   const lastPtRef = useRef<{ x: number; y: number } | null>(null);
   const cancelAnimRef = useRef<(() => void) | null>(null);
+  const visualReqIdRef = useRef<number>(0);
+  const lastConceptKeyRef = useRef<string>('');
+  const skipNextFreeInitRef = useRef<boolean>(false);
+  const lastVisualQueryRef = useRef<string>('');
+
+  const [savedVisualTopics, setSavedVisualTopics] = useState<SavedVisualTopicRecord[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    loadSavedVisualTopicsFromSqliteAndDrive({ userEmail, googleAccessToken }).then((items) => {
+      if (active) setSavedVisualTopics(items);
+    });
+    return () => {
+      active = false;
+    };
+  }, [userEmail, googleAccessToken]);
 
   // Whiteboard vs Blackboard Theme + Drawing State
   const [boardMode, setBoardMode] = useState<'free' | 'math_practice'>(
@@ -452,12 +479,25 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     if (!canvas) return;
     canvas.width = BOARD_WIDTH;
     canvas.height = BOARD_HEIGHT;
-    const initialScene = buildSceneForDiagramStamp(
-      activeConcept.diagramStamp,
-      subject,
-      activeConcept
-    );
-    renderSceneToBoard(initialScene, { animate: true });
+
+    const conceptKey = `${subject.id}:${activeConcept.id}`;
+    if (skipNextFreeInitRef.current) {
+      skipNextFreeInitRef.current = false;
+      lastConceptKeyRef.current = conceptKey;
+      return;
+    }
+
+    if (lastConceptKeyRef.current === conceptKey && activeScene) {
+      renderSceneToBoard(activeScene, { animate: false });
+    } else {
+      lastConceptKeyRef.current = conceptKey;
+      const initialScene = buildSceneForDiagramStamp(
+        activeConcept.diagramStamp,
+        subject,
+        activeConcept
+      );
+      renderSceneToBoard(initialScene, { animate: true });
+    }
     return () => {
       cancelAnimRef.current?.();
       if (autoInkTimerRef.current) clearTimeout(autoInkTimerRef.current);
@@ -1196,36 +1236,74 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     setCanRedo(historyIdxRef.current < historyRef.current.length - 1);
   };
 
-  // Visualize any topic (Geometry, Graphs, Slopes, Equations, or Advanced AI Scenes)
+  // Visualize any topic (SQLite + Google Drive first, then Parametric / AI Model + Auto-Save)
   const handleVisualizeTopic = useCallback(
-    async (queryText: string) => {
+    async (queryText: string, opts?: { forceAiFresh?: boolean }) => {
       const cleaned = queryText.trim();
       if (!cleaned) return;
+
+      lastVisualQueryRef.current = cleaned;
+      const reqId = ++visualReqIdRef.current;
+      if (autoInkTimerRef.current) {
+        clearTimeout(autoInkTimerRef.current);
+        autoInkTimerRef.current = null;
+      }
+      freehandStrokesRef.current = [];
+      preInkBoardSnapshotRef.current = null;
+      setPendingStrokeCount(0);
+      setLastInkResult(null);
+
+      if (boardMode !== 'free') {
+        skipNextFreeInitRef.current = true;
+        lastConceptKeyRef.current = `${subject.id}:${activeConcept.id}`;
+        setBoardMode('free');
+      }
+
       setIsRenderingVisual(true);
       try {
-        const scene = await generateTopicVisualScene(
-          subject,
-          cleaned,
-          chalkNotesLog.join('\n')
-        );
+        const scene = await generateTopicVisualScene(subject, cleaned, '', {
+          userEmail,
+          googleAccessToken,
+          checkSavedVault: !opts?.forceAiFresh,
+          forceAiFresh: opts?.forceAiFresh,
+          autoSaveVault: true,
+        });
+        if (reqId !== visualReqIdRef.current) return;
+
         renderSceneToBoard(scene, { animate: true });
-        setChalkNotesLog((prev) => [
-          ...prev,
-          `Topic: ${cleaned}`,
-          scene.title,
-          ...scene.steps,
-          scene.formulaBox ? `Formula: ${scene.formulaBox}` : '',
-        ].filter(Boolean));
+        setChalkNotesLog(
+          [
+            `Topic: ${cleaned}`,
+            scene.title,
+            ...scene.steps,
+            scene.formulaBox ? `Formula: ${scene.formulaBox}` : '',
+          ].filter(Boolean)
+        );
         onBlackboardActivity('ai_solve', `Visualized "${scene.title}"`);
+
+        loadSavedVisualTopicsFromSqliteAndDrive({ userEmail, googleAccessToken }).then((items) => {
+          setSavedVisualTopics(items);
+        });
 
         if (speakAiAnswer && scene.spokenSummary) {
           speechEngine.speak(scene.spokenSummary);
         }
       } finally {
-        setIsRenderingVisual(false);
+        if (reqId === visualReqIdRef.current) {
+          setIsRenderingVisual(false);
+        }
       }
     },
-    [subject, chalkNotesLog, renderSceneToBoard, onBlackboardActivity, speakAiAnswer]
+    [
+      subject,
+      activeConcept.id,
+      boardMode,
+      userEmail,
+      googleAccessToken,
+      renderSceneToBoard,
+      onBlackboardActivity,
+      speakAiAnswer,
+    ]
   );
 
   // Interactive Live Parameter Slider Updates (60fps synchronous canvas updates!)
@@ -1327,37 +1405,26 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         }
       }
 
-      // Route visual/draw/generate/graph/shape/explain/solve commands to Topic Visual Renderer
-      const isVisualCommand =
-        lower.includes('draw') ||
-        lower.includes('generate') ||
-        lower.includes('plot') ||
-        lower.includes('graph') ||
-        lower.includes('circle') ||
-        lower.includes('triangle') ||
-        lower.includes('rectangle') ||
-        lower.includes('square') ||
-        lower.includes('slope') ||
-        lower.includes('solve') ||
-        lower.includes('explain') ||
-        lower.includes('show') ||
-        lower.includes('helix') ||
-        lower.includes('punnett') ||
-        lower.includes('circuit') ||
-        lower.includes('projectile') ||
-        lower.includes('வரை') ||
-        lower.includes('விளக்கு');
+      // Explicit plain-note dictation goes directly onto the board as text
+      const isNoteDictation =
+        lower.startsWith('write note') ||
+        lower.startsWith('add note') ||
+        lower.startsWith('dictate') ||
+        lower.startsWith('take note') ||
+        lower.includes('write note:') ||
+        lower.includes('add note:');
 
       setLiveTranscript('');
-      if (isVisualCommand) {
-        void handleVisualizeTopic(clean);
+      if (isNoteDictation) {
+        const cleanedNote = clean.replace(/^(?:write note|add note|dictate|take note)[:\s]*/i, '').trim() || clean;
+        writeNoteTextToBoard(`🎙️ ${cleanedNote}`);
+        setChalkNotesLog((prev) => [...prev, cleanedNote]);
+        onBlackboardActivity('voice', `Dictated "${cleanedNote.slice(0, 32)}" onto Whiteboard`);
         return;
       }
 
-      // Otherwise write note cleanly onto the board
-      writeNoteTextToBoard(`🎙️ ${clean}`);
-      setChalkNotesLog((prev) => [...prev, clean]);
-      onBlackboardActivity('voice', `Dictated "${clean.slice(0, 32)}" onto Whiteboard`);
+      // Route ALL spoken topic requests through Speak Visual: SQLite & Google Drive first, then AI Model!
+      void handleVisualizeTopic(clean);
     },
     [
       boardMode,
@@ -1497,11 +1564,27 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   };
 
   const handleSaveToDrive = () => {
+    const embeddedScene = activeScene
+      ? `\n\n<!-- AURA_VISUAL_SCENE_JSON:${JSON.stringify(activeScene)} -->`
+      : '';
     const content = `# Smart Whiteboard Visual Scene — ${activeScene?.title || subject.name}\n\n${
       activeScene?.steps.map((s) => `- ${s}`).join('\n') ||
       chalkNotesLog.map((l) => `- ${l}`).join('\n')
-    }\n\n${activeScene?.formulaBox ? `**Key Formula:** \`${activeScene.formulaBox}\`` : ''}`;
+    }\n\n${activeScene?.formulaBox ? `**Key Formula:** \`${activeScene.formulaBox}\`` : ''}${embeddedScene}`;
     onSyncToDrive(`Whiteboard - ${activeScene?.title || subject.name}`, content);
+
+    if (activeScene) {
+      void saveVisualTopicToSqliteAndDrive(
+        lastVisualQueryRef.current || activeScene.title,
+        subject,
+        activeScene,
+        { userEmail, googleAccessToken, syncDrive: true }
+      ).then(() => {
+        loadSavedVisualTopicsFromSqliteAndDrive({ userEmail, googleAccessToken }).then(
+          setSavedVisualTopics
+        );
+      });
+    }
   };
 
   const paletteSwatches = boardTheme === 'whiteboard' ? WHITEBOARD_INKS : BLACKBOARD_CHALKS;
@@ -1735,32 +1818,69 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
         {/* Universal Geometry, Coordinate Graphs & Subject Advanced Visual Chips (Free Whiteboard Only) */}
         {boardMode === 'free' && (
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/80">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] font-mono uppercase text-slate-400 flex items-center gap-1">
-                <Wand2 className="w-3 h-3 text-purple-400" />
-                Instant Visuals:
-              </span>
-              {[
-                { emoji: '⭕', label: 'Circle r=7', query: 'generate circle with radius 7 cm' },
-                { emoji: '📐', label: 'Triangle', query: 'draw right triangle base 8 height 6' },
-                { emoji: '⬜', label: 'Rectangle', query: 'draw rectangle 10 by 6 cm' },
-                { emoji: '⬛', label: 'Square', query: 'draw square side 6 cm' },
-                { emoji: '📈', label: 'Graph + Slope', query: 'generate graph and draw a slope' },
-                { emoji: '〰️', label: 'Curve + Tangent', query: 'graph y = x^2 - 3 tangent at 1.5' },
-                ...subjectChips,
-              ].map((chip, idx) => (
-                <button
-                  key={`${chip.label}-${idx}`}
-                  type="button"
-                  onClick={() => void handleVisualizeTopic(chip.query)}
-                  className="px-2 py-1 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 flex items-center gap-1 transition-all cursor-pointer active:scale-95"
-                >
-                  <span>{chip.emoji}</span>
-                  <span className="text-[11px] font-semibold">{chip.label}</span>
-                </button>
-              ))}
+          <div className="space-y-2 pt-2 border-t border-slate-800/80">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-mono uppercase text-slate-400 flex items-center gap-1">
+                  <Wand2 className="w-3 h-3 text-purple-400" />
+                  Instant Visuals:
+                </span>
+                {[
+                  { emoji: '⭕', label: 'Circle r=7', query: 'generate circle with radius 7 cm' },
+                  { emoji: '📐', label: 'Triangle', query: 'draw right triangle base 8 height 6' },
+                  { emoji: '⬜', label: 'Rectangle', query: 'draw rectangle 10 by 6 cm' },
+                  { emoji: '⬛', label: 'Square', query: 'draw square side 6 cm' },
+                  { emoji: '📈', label: 'Graph + Slope', query: 'generate graph and draw a slope' },
+                  { emoji: '〰️', label: 'Curve + Tangent', query: 'graph y = x^2 - 3 tangent at 1.5' },
+                  ...subjectChips,
+                ].map((chip, idx) => (
+                  <button
+                    key={`${chip.label}-${idx}`}
+                    type="button"
+                    onClick={() => void handleVisualizeTopic(chip.query)}
+                    className="px-2 py-1 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-xs text-slate-200 flex items-center gap-1 transition-all cursor-pointer active:scale-95"
+                  >
+                    <span>{chip.emoji}</span>
+                    <span className="text-[11px] font-semibold">{chip.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {savedVisualTopics.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-slate-800/60">
+                <span className="text-[10px] font-mono uppercase text-emerald-300 flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  Saved (SQLite + Drive):
+                </span>
+                {savedVisualTopics.slice(0, 8).map((rec) => (
+                  <button
+                    key={rec.id}
+                    type="button"
+                    onClick={() => {
+                      lastVisualQueryRef.current = rec.query || rec.title;
+                      const loadedScene: WhiteboardVisualScene = {
+                        ...rec.scene,
+                        visualSource: rec.source === 'google_drive' ? 'google_drive' : 'sqlite',
+                        modelUsed:
+                          rec.source === 'google_drive'
+                            ? 'Google Drive Saved Visual'
+                            : 'SQLite Saved Visual Vault',
+                      };
+                      renderSceneToBoard(loadedScene, { animate: true });
+                      if (speakAiAnswer && loadedScene.spokenSummary) {
+                        speechEngine.speak(loadedScene.spokenSummary);
+                      }
+                    }}
+                    className="px-2 py-0.5 rounded-xl bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-200 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-all"
+                    title={`Load saved visual "${rec.title}" (${rec.source})`}
+                  >
+                    <span>{rec.source === 'google_drive' ? '☁️' : '💾'}</span>
+                    <span className="truncate max-w-[140px]">{rec.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2307,6 +2427,56 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* =====================================================================
+          ACTIVE VISUAL TOPIC STATUS STRIP (Free Whiteboard Only)
+          ===================================================================== */}
+      {boardMode === 'free' && activeScene && (
+        <div className="rounded-2xl bg-slate-900/90 border border-cyan-500/35 px-3.5 py-2 shadow-lg flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-bold text-white truncate">
+              Visualized: {activeScene.title}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+            <span
+              className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-lg border ${
+                activeScene.visualSource === 'google_drive'
+                  ? 'bg-indigo-500/20 text-indigo-200 border-indigo-500/40'
+                  : activeScene.visualSource === 'sqlite'
+                  ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
+                  : 'bg-slate-950 text-cyan-300 border-slate-800'
+              }`}
+            >
+              {activeScene.visualSource === 'google_drive'
+                ? '☁️ Google Drive'
+                : activeScene.visualSource === 'sqlite'
+                ? '💾 SQLite Vault'
+                : activeScene.visualSource === 'parametric'
+                ? '⚡ Precision Engine'
+                : activeScene.visualSource === 'offline_map'
+                ? '🧭 Offline Concept Map'
+                : '🤖 AI Model'}
+              {activeScene.modelUsed ? ` • ${activeScene.modelUsed}` : ''}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                void handleVisualizeTopic(lastVisualQueryRef.current || activeScene.title, {
+                  forceAiFresh: true,
+                })
+              }
+              disabled={isRenderingVisual}
+              className="px-2 py-0.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-700 text-amber-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+              title="Skip saved cache and generate a fresh diagram using AI Model"
+            >
+              <RefreshCw className={`w-3 h-3 ${isRenderingVisual ? 'animate-spin' : ''}`} />
+              <span>Fresh AI</span>
+            </button>
+          </div>
         </div>
       )}
 

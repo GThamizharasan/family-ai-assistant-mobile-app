@@ -722,13 +722,18 @@ async function callUniversalChatCompletion(options: {
     throw new Error('Gemini API key is not configured. Please configure GEMINI_API_KEY.');
   }
 
-  const candidateModels = [
-    options.model,
-    'gemini-3.5-flash',
-    'gemini-3.1-flash-lite',
-    process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
-    'gemini-4-argon',
-  ].filter(Boolean) as string[];
+  const candidateModels = Array.from(
+    new Set(
+      [
+        options.model,
+        process.env.DEFAULT_GEMINI_MODEL || 'gemini-3.8-flash',
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+      ].filter(Boolean) as string[]
+    )
+  );
 
   const contents: any[] = [];
   if (options.messages && Array.isArray(options.messages) && options.messages.length > 0) {
@@ -1271,6 +1276,205 @@ Return STRICT JSON matching:
       success: false,
       fallback: true,
       reason: error?.message || 'Ink recognition error',
+    });
+  }
+});
+
+// Strict-JSON Topic Visual Illustrator for Smart Whiteboard / Blackboard
+app.post('/api/adaptive-learning/visualize-topic', async (req, res) => {
+  try {
+    const {
+      query,
+      subjectName = 'Science & Maths',
+      subjectNativeName = '',
+      language = 'en-IN',
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      savedContext,
+    } = req.body || {};
+
+    const cleanQuery = typeof query === 'string' ? query.trim() : '';
+    if (!cleanQuery) {
+      return res.status(400).json({ error: 'query is required' });
+    }
+
+    const extractSceneJson = (rawText: string): any | null => {
+      if (!rawText || typeof rawText !== 'string') return null;
+      let cleaned = rawText
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+      }
+      try {
+        const parsed = JSON.parse(cleaned);
+        if (parsed && Array.isArray(parsed.primitives) && parsed.primitives.length > 0) {
+          return parsed;
+        }
+      } catch {}
+      return null;
+    };
+
+    const isTamil =
+      String(subjectName).toLowerCase().includes('tamil') ||
+      String(language).toLowerCase().startsWith('ta');
+
+    const systemPrompt = `You are Aura Smart Whiteboard's Precision Visual Vector Illustrator for ${subjectName}${
+      subjectNativeName ? ` (${subjectNativeName})` : ''
+    }.
+TASK: Illustrate EXCLUSIVELY the user's requested topic: "${cleanQuery}".
+NEVER output a generic or unrelated diagram — every primitive, label, arrow, and step MUST directly depict "${cleanQuery}".
+
+Visual Stage uses normalized coordinates 0..1000 (x: 0 left -> 1000 right, y: 0 top -> 1000 bottom). Keep artwork cleanly inside x:[80..920], y:[80..920].
+Compose 4 to 12 declarative vector primitives from these exact schemas:
+1. coordinate_graph: { "type": "coordinate_graph", "title": "...", "xMin": -5, "xMax": 5, "yMin": -5, "yMax": 10, "xLabel": "x", "yLabel": "y", "curves": [{"expression": "x^2", "label": "y=x^2", "color": "#2563eb"}], "slopeSegment": {"x1": 0, "y1": 0, "x2": 2, "y2": 4, "showTriangle": true}, "points": [{"x": 2, "y": 4, "label": "(2,4)"}] }
+2. circle: { "type": "circle", "cx": 500, "cy": 500, "r": 160, "label": "...", "radiusLabel": "...", "stroke": "#2563eb", "fill": "rgba(37,99,235,0.12)" }
+3. ellipse: { "type": "ellipse", "cx": 500, "cy": 500, "rx": 180, "ry": 110, "label": "...", "stroke": "#059669", "fill": "rgba(5,150,105,0.12)" }
+4. rect: { "type": "rect", "x": 220, "y": 240, "width": 520, "height": 280, "label": "...", "widthLabel": "...", "heightLabel": "...", "stroke": "#7c3aed", "fill": "rgba(124,58,237,0.12)", "rounded": 12 }
+5. polygon: { "type": "polygon", "points": [{"x": 200, "y": 760, "vertexLabel": "A"}, {"x": 800, "y": 760, "vertexLabel": "B"}, {"x": 500, "y": 220, "vertexLabel": "C"}], "edgeLabels": ["...","...","..."], "stroke": "#dc2626", "fill": "rgba(220,38,38,0.12)" }
+6. line: { "type": "line", "x1": 200, "y1": 500, "x2": 800, "y2": 500, "label": "...", "arrowEnd": true, "dashed": false, "stroke": "#d97706" }
+7. curve_path: { "type": "curve_path", "points": [{"x": 150, "y": 600}, {"x": 500, "y": 240}, {"x": 850, "y": 600}], "closed": false, "smooth": true, "stroke": "#2563eb", "label": "..." }
+8. bar_chart: { "type": "bar_chart", "title": "...", "bars": [{"label": "A", "value": 40, "color": "#2563eb"}] }
+9. text: { "type": "text", "x": 500, "y": 130, "text": "...", "fontSize": 22, "bold": true, "align": "center", "boxed": true, "color": "#0f172a" }
+
+${isTamil ? 'Use clear bilingual English/Tamil terms where helpful.' : ''}
+Return STRICT JSON (no markdown fences):
+{
+  "title": "Exact concise title matching requested topic",
+  "subtitle": "1-line visual overview of what the diagram demonstrates",
+  "formulaBox": "Core formula, law, or key rule (optional string or null)",
+  "steps": ["1. Step one...", "2. Step two...", "3. Step three...", "4. Key takeaway"],
+  "primitives": [ ...4 to 12 primitives... ],
+  "spokenSummary": "1-2 friendly sentences summarizing the visual"
+}`;
+
+    const savedSnippet =
+      typeof savedContext === 'string' && savedContext.trim()
+        ? `\n\nThe user already saved notes/content for this topic in SQLite / Google Drive. Incorporate the key facts, steps, labels, and formulas from this saved content into the vector diagram and steps:\n"""\n${savedContext.trim().slice(0, 1800)}\n"""`
+        : '';
+
+    const userMessage = `Draw a clear, labeled educational whiteboard diagram specifically for: "${cleanQuery}"${savedSnippet}`;
+
+    let resultObj: { text: string; modelUsed: string; providerUsed: string } | null = null;
+    let sceneJson: any = null;
+    let lastReason = '';
+
+    // 1. Try requested provider first
+    try {
+      const attempt = await callUniversalChatCompletion({
+        provider,
+        model,
+        systemPrompt,
+        userMessage,
+        customConfig,
+        apiKey,
+        geminiApiKey,
+        nvidiaApiKey,
+        openaiApiKey,
+        anthropicApiKey,
+        temperature: 0.35,
+        enableThinking: false,
+        jsonMode: true,
+      });
+      const parsed = extractSceneJson(attempt.text);
+      if (parsed) {
+        resultObj = attempt;
+        sceneJson = parsed;
+      }
+    } catch (err: any) {
+      lastReason = err?.message || 'Primary provider attempt failed';
+      console.warn('[visualize-topic] Primary provider attempt failed:', lastReason);
+    }
+
+    // 2. Fallback to Gemini if a non-Gemini provider failed
+    if (!sceneJson && String(provider).toLowerCase() !== 'gemini') {
+      try {
+        const geminiAttempt = await callUniversalChatCompletion({
+          provider: 'gemini',
+          model: 'gemini-2.5-flash',
+          systemPrompt,
+          userMessage,
+          geminiApiKey,
+          apiKey,
+          temperature: 0.35,
+          enableThinking: false,
+          jsonMode: true,
+        });
+        const parsed = extractSceneJson(geminiAttempt.text);
+        if (parsed) {
+          resultObj = geminiAttempt;
+          sceneJson = parsed;
+        }
+      } catch (err: any) {
+        lastReason = err?.message || lastReason;
+      }
+    }
+
+    // 3. Fallback to NVIDIA NIM if available
+    const effectiveNvidiaKey = getEffectiveNvidiaApiKey(nvidiaApiKey || apiKey);
+    if (!sceneJson && effectiveNvidiaKey && String(provider).toLowerCase() !== 'nvidia') {
+      try {
+        const nvidiaAttempt = await callUniversalChatCompletion({
+          provider: 'nvidia',
+          model: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+          systemPrompt,
+          userMessage,
+          nvidiaApiKey: effectiveNvidiaKey,
+          temperature: 0.35,
+          enableThinking: false,
+          jsonMode: true,
+        });
+        const parsed = extractSceneJson(nvidiaAttempt.text);
+        if (parsed) {
+          resultObj = nvidiaAttempt;
+          sceneJson = parsed;
+        }
+      } catch (err: any) {
+        lastReason = err?.message || lastReason;
+      }
+    }
+
+    if (!sceneJson || !resultObj) {
+      return res.status(200).json({
+        success: false,
+        fallback: true,
+        reason: lastReason || 'No AI key configured or invalid visual JSON',
+      });
+    }
+
+    res.json({
+      success: true,
+      scene: {
+        title: sceneJson.title || cleanQuery,
+        subtitle: sceneJson.subtitle || subjectName,
+        formulaBox:
+          sceneJson.formulaBox && sceneJson.formulaBox !== 'null'
+            ? String(sceneJson.formulaBox)
+            : undefined,
+        steps: Array.isArray(sceneJson.steps) ? sceneJson.steps.slice(0, 5) : [],
+        primitives: sceneJson.primitives,
+        spokenSummary: sceneJson.spokenSummary || sceneJson.title || cleanQuery,
+      },
+      modelUsed: resultObj.modelUsed,
+      providerUsed: resultObj.providerUsed,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    console.error('Error in /api/adaptive-learning/visualize-topic:', error);
+    res.status(200).json({
+      success: false,
+      fallback: true,
+      reason: error?.message || 'Topic visual synthesis error',
     });
   }
 });
@@ -3990,6 +4194,7 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
       taskComplexity = 'general',
       modelOverride,
       customSystemInstruction,
+      jsonMode = false,
     } = req.body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -4025,24 +4230,37 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
     // General tasks -> gemini-3.8-flash, failing over to 3.1-flash-lite
     let candidateModels: string[] = [];
     if (modelOverride) {
-      candidateModels = [modelOverride, 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+      candidateModels = [
+        modelOverride,
+        'gemini-3.8-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
+      ];
     } else if (taskComplexity === 'complex') {
       candidateModels = [
         'gemini-4-argon',
         'gemini-3.8-flash',
         'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
       ];
     } else if (taskComplexity === 'fast') {
       candidateModels = [
         'gemini-3.1-flash-lite',
         'gemini-3.8-flash',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
       ];
     } else {
       candidateModels = [
         'gemini-3.8-flash',
         'gemini-3.1-flash-lite',
+        'gemini-2.5-flash',
+        'gemini-2.0-flash',
       ];
     }
+    candidateModels = Array.from(new Set(candidateModels.filter(Boolean)));
 
     const reqProvider = req.body.provider;
     const isNvidia =
@@ -4068,6 +4286,7 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
           openaiApiKey: req.body.openaiApiKey,
           anthropicApiKey: req.body.anthropicApiKey,
           enableThinking: taskComplexity === 'complex',
+          jsonMode: Boolean(jsonMode),
         });
         return res.json({
           reply: resObj.text,
@@ -4099,12 +4318,16 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
     if (client) {
       for (const candidate of candidateModels) {
         try {
+          const geminiConfig: any = {
+            systemInstruction: baseSystemPrompt,
+          };
+          if (jsonMode) {
+            geminiConfig.responseMimeType = 'application/json';
+          }
           const response = await client.models.generateContent({
             model: candidate,
             contents,
-            config: {
-              systemInstruction: baseSystemPrompt,
-            },
+            config: geminiConfig,
           });
           reply = response.text || '';
           selectedModel = candidate;
@@ -4138,6 +4361,7 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
           messages: formatted,
           apiKey: fallbackNvidiaKey,
           enableThinking: taskComplexity === 'complex',
+          jsonMode: Boolean(jsonMode),
         });
         reply = nvidiaRes.text;
         selectedModel = nvidiaRes.modelUsed;

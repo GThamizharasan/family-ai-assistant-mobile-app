@@ -680,6 +680,8 @@ export const AdaptiveLearningTab: React.FC = () => {
             activeConcept={activeConceptObj}
             initialMode={blackboardModeRequest.mode}
             modeNonce={blackboardModeRequest.nonce}
+            userEmail={user?.email}
+            googleAccessToken={googleAccessToken}
             onBlackboardActivity={handleBlackboardActivity}
             onExportToGrader={(snapshot) => {
               setPendingBoardSnapshot(snapshot);

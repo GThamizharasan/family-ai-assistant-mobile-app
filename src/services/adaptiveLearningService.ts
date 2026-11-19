@@ -22,6 +22,11 @@ import { getApiUrl } from './api';
 import { syncAnyAiOutputToDrive } from './guidedLearningService';
 import { getActiveAiModel, getActiveAiProvider } from './aiConfig';
 import { buildParametricVisualScene } from './whiteboardVisualEngine';
+import {
+  buildSavedNoteVisualScene,
+  findSavedVisualTopicInSqliteAndDrive,
+  saveVisualTopicToSqliteAndDrive,
+} from './visualTopicStorageService';
 
 const MASTERY_STORAGE_KEY = 'aura_adaptive_mastery_v1';
 const GRADING_STORAGE_KEY = 'aura_adaptive_grades_v1';
@@ -801,8 +806,8 @@ export function sanitizeWhiteboardPrimitives(rawList: any[]): WhiteboardPrimitiv
           clean.push({
             ...item,
             points: item.points.map((p: any) => ({
-              x: clampNum(p?.x, 30, 970, 500),
-              y: clampNum(p?.y, 30, 970, 500),
+              x: clampNum(Array.isArray(p) ? p[0] : p?.x, 30, 970, 500),
+              y: clampNum(Array.isArray(p) ? p[1] : p?.y, 30, 970, 500),
               vertexLabel: typeof p?.vertexLabel === 'string' ? p.vertexLabel : undefined,
             })),
           });
@@ -822,21 +827,26 @@ export function sanitizeWhiteboardPrimitives(rawList: any[]): WhiteboardPrimitiv
           clean.push({
             ...item,
             points: item.points.map((p: any) => ({
-              x: clampNum(p?.x, 20, 980, 500),
-              y: clampNum(p?.y, 20, 980, 500),
+              x: clampNum(Array.isArray(p) ? p[0] : p?.x, 20, 980, 500),
+              y: clampNum(Array.isArray(p) ? p[1] : p?.y, 20, 980, 500),
             })),
           });
         }
         break;
-      case 'coordinate_graph':
+      case 'coordinate_graph': {
+        const xMin = clampNum(item.xMin, -100, 99, -6);
+        const rawXMax = clampNum(item.xMax, -99, 100, 6);
+        const yMin = clampNum(item.yMin, -100, 99, -6);
+        const rawYMax = clampNum(item.yMax, -99, 100, 6);
         clean.push({
           ...item,
-          xMin: clampNum(item.xMin, -100, 100, -6),
-          xMax: clampNum(item.xMax, -100, 100, 6),
-          yMin: clampNum(item.yMin, -100, 100, -6),
-          yMax: clampNum(item.yMax, -100, 100, 6),
+          xMin,
+          xMax: rawXMax > xMin ? rawXMax : xMin + 4,
+          yMin,
+          yMax: rawYMax > yMin ? rawYMax : yMin + 4,
         });
         break;
+      }
       case 'bar_chart':
         if (Array.isArray(item.bars) && item.bars.length > 0) {
           clean.push(item);
@@ -860,33 +870,178 @@ export function sanitizeWhiteboardPrimitives(rawList: any[]): WhiteboardPrimitiv
 export async function generateTopicVisualScene(
   subject: SubjectDefinition,
   query: string,
-  existingBoardText = ''
-): Promise<WhiteboardVisualScene> {
-  // 1. Check exact local parametric math/geometry/concept engine first (instant & exact!)
-  const { scene: localScene, isExactMatch } = buildParametricVisualScene(query, subject);
-  if (isExactMatch) {
-    return {
-      ...localScene,
-      modelUsed: 'Parametric Precision Visual Engine',
-    };
+  _existingBoardText = '',
+  options?: {
+    userEmail?: string;
+    googleAccessToken?: string | null;
+    checkSavedVault?: boolean;
+    forceAiFresh?: boolean;
+    autoSaveVault?: boolean;
   }
-
-  // 2. Ask Active AI Model to compose a declarative vector scene on the 0..1000 stage
+): Promise<WhiteboardVisualScene> {
   const provider = getActiveAiProvider();
   const model = getActiveAiModel(provider);
 
-  const prompt = `You are a Visual Whiteboard Illustrator for ${subject.name} (${subject.nativeName}).
-Generate a clear, educational vector scene as STRICT JSON (no markdown fences) for: "${query}"
-Existing board notes context: "${existingBoardText.slice(0, 200)}"
+  const customGeminiKey =
+    typeof window !== 'undefined' ? localStorage.getItem('aura_custom_gemini_api_key') : null;
+  const nvidiaApiKey =
+    typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') : null;
+  const openaiApiKey =
+    typeof window !== 'undefined' ? localStorage.getItem('aura_openai_api_key') : null;
+  const anthropicApiKey =
+    typeof window !== 'undefined' ? localStorage.getItem('aura_anthropic_api_key') : null;
 
-Visual Stage uses normalized coordinates 0..1000 (x: 0 left -> 1000 right, y: 0 top -> 1000 bottom). Keep shapes cleanly inside x:[120..880], y:[120..880].
+  let customConfig: any = undefined;
+  if (provider === 'custom' && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('aura_custom_ai_config');
+      if (raw) customConfig = JSON.parse(raw);
+    } catch {}
+  }
+
+  const callVisualEndpoint = async (savedContext?: string): Promise<WhiteboardVisualScene | null> => {
+    try {
+      const res = await fetch(getApiUrl('/api/adaptive-learning/visualize-topic'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query,
+          subjectName: subject.name,
+          subjectNativeName: subject.nativeName,
+          language: subject.defaultLanguage,
+          provider,
+          model,
+          customConfig,
+          savedContext,
+          geminiApiKey: customGeminiKey || undefined,
+          nvidiaApiKey: nvidiaApiKey || undefined,
+          openaiApiKey: openaiApiKey || undefined,
+          anthropicApiKey: anthropicApiKey || undefined,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.scene && Array.isArray(data.scene.primitives)) {
+          const sanitized = sanitizeWhiteboardPrimitives(data.scene.primitives);
+          if (sanitized.length > 0) {
+            return {
+              title: data.scene.title || query,
+              subtitle: data.scene.subtitle || subject.name,
+              formulaBox: data.scene.formulaBox,
+              steps: Array.isArray(data.scene.steps) ? data.scene.steps.slice(0, 5) : [],
+              primitives: sanitized,
+              spokenSummary: data.scene.spokenSummary || data.scene.title || query,
+              modelUsed: data.modelUsed || model,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[WhiteboardVisual] /visualize-topic endpoint error:', err);
+    }
+    return null;
+  };
+
+  // 1. Check Saved SQLite & Google Drive Content FIRST (unless user clicked Fresh AI)
+  if (!options?.forceAiFresh && options?.checkSavedVault !== false) {
+    try {
+      const savedMatch = await findSavedVisualTopicInSqliteAndDrive(query, subject, {
+        userEmail: options?.userEmail,
+        googleAccessToken: options?.googleAccessToken,
+      });
+
+      if (savedMatch?.scene) {
+        const sanitized = sanitizeWhiteboardPrimitives(savedMatch.scene.primitives);
+        if (sanitized.length > 0) {
+          return {
+            ...savedMatch.scene,
+            primitives: sanitized,
+            visualSource: savedMatch.source,
+            modelUsed:
+              savedMatch.source === 'google_drive'
+                ? 'Google Drive Saved Visual'
+                : 'SQLite Saved Visual Vault',
+          };
+        }
+      }
+
+      if (savedMatch?.savedNoteContent) {
+        const aiFromSaved = await callVisualEndpoint(savedMatch.savedNoteContent);
+        if (aiFromSaved) {
+          const rendered: WhiteboardVisualScene = {
+            ...aiFromSaved,
+            visualSource: savedMatch.source,
+            modelUsed: `${aiFromSaved.modelUsed || model} + ${
+              savedMatch.source === 'google_drive' ? 'Google Drive' : 'SQLite'
+            }`,
+          };
+          void saveVisualTopicToSqliteAndDrive(query, subject, rendered, {
+            userEmail: options?.userEmail,
+            googleAccessToken: options?.googleAccessToken,
+            syncDrive: false,
+          });
+          return rendered;
+        }
+        return buildSavedNoteVisualScene(
+          savedMatch.matchedTitle,
+          savedMatch.savedNoteContent,
+          savedMatch.source,
+          subject
+        );
+      }
+    } catch (err) {
+      console.warn('[WhiteboardVisual] Saved vault lookup skipped:', err);
+    }
+  }
+
+  // 2. Check exact local parametric math/geometry/concept engine
+  const { scene: localScene, isExactMatch } = buildParametricVisualScene(query, subject);
+  if (isExactMatch) {
+    const exactScene: WhiteboardVisualScene = {
+      ...localScene,
+      visualSource: 'parametric',
+      modelUsed: 'Parametric Precision Visual Engine',
+    };
+    if (options?.autoSaveVault !== false) {
+      void saveVisualTopicToSqliteAndDrive(query, subject, exactScene, {
+        userEmail: options?.userEmail,
+        googleAccessToken: options?.googleAccessToken,
+        syncDrive: false,
+      });
+    }
+    return exactScene;
+  }
+
+  // 3. Primary Strict-JSON Visual Illustrator endpoint (AI Model)
+  const aiScene = await callVisualEndpoint();
+  if (aiScene) {
+    const finalAiScene: WhiteboardVisualScene = {
+      ...aiScene,
+      visualSource: 'ai_model',
+    };
+    if (options?.autoSaveVault !== false) {
+      void saveVisualTopicToSqliteAndDrive(query, subject, finalAiScene, {
+        userEmail: options?.userEmail,
+        googleAccessToken: options?.googleAccessToken,
+        syncDrive: true,
+      });
+    }
+    return finalAiScene;
+  }
+
+  // 3. Secondary AI fallback via sendMultiTurnChat with strict jsonMode (NO previous board text!)
+  const prompt = `You are a Visual Whiteboard Illustrator for ${subject.name} (${subject.nativeName}).
+Generate a clear, educational vector scene as STRICT JSON (no markdown fences) depicting EXCLUSIVELY: "${query}".
+
+Visual Stage uses normalized coordinates 0..1000 (x: 0 left -> 1000 right, y: 0 top -> 1000 bottom). Keep shapes cleanly inside x:[100..900], y:[100..900].
 Supported primitive objects in "primitives":
 - { "type": "coordinate_graph", "title": "...", "xMin": -5, "xMax": 5, "yMin": -5, "yMax": 10, "xLabel": "x", "yLabel": "y", "curves": [{"expression": "x^2", "label": "y=x²", "color": "#2563eb"}], "slopeSegment": {"x1": 0, "y1": 0, "x2": 2, "y2": 4, "showTriangle": true}, "points": [{"x": 2, "y": 4, "label": "(2,4)"}] }
 - { "type": "circle", "cx": 500, "cy": 500, "r": 180, "label": "...", "radiusLabel": "r=...", "stroke": "#2563eb", "fill": "rgba(37,99,235,0.12)" }
 - { "type": "ellipse", "cx": 500, "cy": 500, "rx": 180, "ry": 110, "label": "...", "stroke": "#059669" }
 - { "type": "rect", "x": 250, "y": 250, "width": 500, "height": 300, "label": "...", "widthLabel": "...", "heightLabel": "...", "stroke": "#7c3aed" }
 - { "type": "polygon", "points": [{"x": 200, "y": 750, "vertexLabel": "A"}, {"x": 800, "y": 750, "vertexLabel": "B"}, {"x": 500, "y": 220, "vertexLabel": "C"}], "edgeLabels": ["...","...","..."], "stroke": "#dc2626" }
-- { "type": "line", "x1": 200, "y1": 500, "x2": 800, "y2": 500, "label": "...", "arrowEnd": true, "dashed": false, "stroke": "#d97706" }
+- { "type": "line", "x1": 200, "y1": 500, x2: 800, "y2": 500, "label": "...", "arrowEnd": true, "dashed": false, "stroke": "#d97706" }
 - { "type": "curve_path", "points": [{"x": 150, "y": 600}, {"x": 500, "y": 250}, {"x": 850, "y": 600}], "stroke": "#2563eb", "label": "..." }
 - { "type": "bar_chart", "title": "...", "bars": [{"label": "A", "value": 40, "color": "#2563eb"}] }
 - { "type": "text", "x": 500, "y": 140, "text": "...", "fontSize": 24, "bold": true, "align": "center", "boxed": true }
@@ -897,39 +1052,51 @@ Return STRICT JSON:
   "subtitle": "Key property or relationship",
   "formulaBox": "Core formula, quote, or law (optional)",
   "steps": ["1. Step one...", "2. Step two...", "3. Step three...", "4. Conclusion"],
-  "primitives": [ ...2 to 9 vector primitives visualizing the concept clearly... ],
+  "primitives": [ ...4 to 10 vector primitives visualizing "${query}" clearly... ],
   "spokenSummary": "1-2 sentence explanation for TTS readout"
 }`;
 
   try {
     const res = await sendMultiTurnChat([{ role: 'user', text: prompt }], {
       role: 'adaptive_learning_tutor',
-      taskComplexity: 'complex',
+      taskComplexity: 'general',
       provider,
       modelOverride: model,
+      jsonMode: true,
     });
 
     const parsed = safeParseJson<WhiteboardVisualScene>(res.reply);
     if (parsed && parsed.title && Array.isArray(parsed.primitives)) {
       const sanitized = sanitizeWhiteboardPrimitives(parsed.primitives);
       if (sanitized.length > 0) {
-        return {
+        const secondaryScene: WhiteboardVisualScene = {
           title: parsed.title,
           subtitle: parsed.subtitle || subject.name,
           formulaBox: parsed.formulaBox,
           steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 5) : [],
           primitives: sanitized,
           spokenSummary: parsed.spokenSummary || parsed.title,
+          visualSource: 'ai_model',
           modelUsed: res.modelUsed || model,
         };
+        if (options?.autoSaveVault !== false) {
+          void saveVisualTopicToSqliteAndDrive(query, subject, secondaryScene, {
+            userEmail: options?.userEmail,
+            googleAccessToken: options?.googleAccessToken,
+            syncDrive: true,
+          });
+        }
+        return secondaryScene;
       }
     }
   } catch (err) {
-    console.warn('[WhiteboardVisual] Falling back to local subject visual scene:', err);
+    console.warn('[WhiteboardVisual] Falling back to topic concept map:', err);
   }
 
+  // 4. Offline topic-specific Concept Map (NEVER shows old concept diagram!)
   return {
     ...localScene,
-    modelUsed: 'Aura Visual Whiteboard Engine',
+    visualSource: 'offline_map',
+    modelUsed: 'Aura Concept Map Engine (Offline)',
   };
 }

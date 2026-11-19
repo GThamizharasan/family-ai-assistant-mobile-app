@@ -308,6 +308,7 @@ export async function sendMultiTurnChat(
     model?: string;
     provider?: 'gemini' | 'nvidia' | 'openai' | 'anthropic' | 'custom' | string;
     customSystemInstruction?: string;
+    jsonMode?: boolean;
   } = {}
 ): Promise<{ reply: string; modelUsed: string; roleUsed: string; taskComplexity: string; providerUsed?: string }> {
   try {
@@ -343,6 +344,7 @@ export async function sendMultiTurnChat(
         provider: selectedProvider,
         customConfig,
         customSystemInstruction: options.customSystemInstruction,
+        jsonMode: options.jsonMode,
         geminiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_custom_gemini_api_key') : null,
         nvidiaApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_nvidia_api_key') : null,
         openaiApiKey: typeof window !== 'undefined' ? localStorage.getItem('aura_openai_api_key') : null,

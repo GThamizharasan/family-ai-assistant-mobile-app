@@ -297,6 +297,7 @@ export interface WhiteboardVisualScene {
   spokenSummary: string;
   interactiveControl?: InteractiveControlConfig;
   modelUsed?: string;
+  visualSource?: 'sqlite' | 'google_drive' | 'parametric' | 'ai_model' | 'offline_map';
 }
 
 export interface InkStroke {
@@ -370,5 +371,19 @@ export interface MathAnswerCheckResult {
   usedOfflineFallback: boolean;
   modelUsed: string;
 }
+
+export interface SavedVisualTopicRecord {
+  id: string;
+  query: string;
+  title: string;
+  subjectId: SubjectId;
+  scene: WhiteboardVisualScene;
+  source: 'sqlite' | 'google_drive' | 'local';
+  driveFileId?: string;
+  driveWebViewLink?: string;
+  savedAt: string;
+  updatedAt: string;
+}
+
 
 

@@ -1221,6 +1221,718 @@ export function buildSceneForDiagramStamp(
   }
 }
 
+// Rich Procedural Scene Builders for Common School Topics & Everyday Visuals
+
+function buildSolarSystemScene(): WhiteboardVisualScene {
+  const planets = [
+    { name: 'Mercury', x: 255, r: 10, color: '#94a3b8' },
+    { name: 'Venus', x: 325, r: 15, color: '#f59e0b' },
+    { name: 'Earth', x: 410, r: 17, color: '#2563eb' },
+    { name: 'Mars', x: 495, r: 14, color: '#dc2626' },
+    { name: 'Jupiter', x: 605, r: 34, color: '#d97706' },
+    { name: 'Saturn', x: 725, r: 28, color: '#eab308' },
+    { name: 'Uranus', x: 825, r: 20, color: '#06b6d4' },
+    { name: 'Neptune', x: 905, r: 19, color: '#3b82f6' },
+  ];
+
+  const primitives: WhiteboardPrimitive[] = [
+    {
+      type: 'circle',
+      cx: 120,
+      cy: 500,
+      r: 86,
+      label: 'SUN ☀️',
+      stroke: '#ea580c',
+      fill: 'rgba(251, 191, 36, 0.35)',
+    },
+    {
+      type: 'line',
+      x1: 210,
+      y1: 500,
+      x2: 940,
+      y2: 500,
+      dashed: true,
+      stroke: '#64748b',
+    },
+  ];
+
+  planets.forEach((p, idx) => {
+    const labelY = idx % 2 === 0 ? 375 : 640;
+    primitives.push({
+      type: 'circle',
+      cx: p.x,
+      cy: 500,
+      r: p.r,
+      stroke: p.color,
+      fill: p.color,
+    });
+    if (p.name === 'Saturn') {
+      primitives.push({
+        type: 'ellipse',
+        cx: p.x,
+        cy: 500,
+        rx: 46,
+        ry: 12,
+        rotationDeg: -18,
+        stroke: '#fbbf24',
+        fill: 'transparent',
+      });
+    }
+    primitives.push({
+      type: 'line',
+      x1: p.x,
+      y1: 500 + (idx % 2 === 0 ? -p.r - 4 : p.r + 4),
+      x2: p.x,
+      y2: labelY + (idx % 2 === 0 ? 18 : -20),
+      stroke: p.color,
+      dashed: true,
+    });
+    primitives.push({
+      type: 'text',
+      x: p.x,
+      y: labelY,
+      text: p.name,
+      bold: true,
+      fontSize: 16,
+      align: 'center',
+      color: p.color,
+    });
+  });
+
+  primitives.push({
+    type: 'text',
+    x: 375,
+    y: 220,
+    text: 'Inner Rocky Planets (1–4)',
+    bold: true,
+    fontSize: 18,
+    align: 'center',
+    color: '#059669',
+    boxed: true,
+  });
+  primitives.push({
+    type: 'text',
+    x: 755,
+    y: 220,
+    text: 'Outer Gas & Ice Giants (5–8)',
+    bold: true,
+    fontSize: 18,
+    align: 'center',
+    color: '#7c3aed',
+    boxed: true,
+  });
+
+  return {
+    title: 'Solar System: 8 Planets Orbiting the Sun',
+    subtitle: 'Planetary order, relative sizes & inner vs. outer worlds',
+    formulaBox: 'Order: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune',
+    steps: [
+      '1. The Sun sits at the gravitational center (99.8% of total mass).',
+      '2. Inner 4 terrestrial planets are small & rocky.',
+      '3. Asteroid belt divides rocky worlds from the 4 giant planets.',
+      '4. Outer gas/ice giants have rings and dozens of moons.',
+    ],
+    primitives,
+    spokenSummary: 'Drawn the Solar System showing the Sun and all 8 planets in order from Mercury to Neptune.',
+  };
+}
+
+function buildWaterCycleScene(): WhiteboardVisualScene {
+  return {
+    title: 'The Water Cycle (Hydrologic Cycle)',
+    subtitle: 'Solar-driven phase changes circulating Earth’s water',
+    formulaBox: 'Evaporation (Liquid→Gas) → Condensation (Gas→Cloud) → Precipitation',
+    steps: [
+      '1. Evaporation: Sun heats oceans/lakes, turning liquid water into vapor.',
+      '2. Condensation: Rising vapor cools high in air into cloud droplets.',
+      '3. Precipitation: Heavy droplets fall back as rain, sleet, or snow.',
+      '4. Collection: Runoff returns via rivers & groundwater to the ocean.',
+    ],
+    primitives: [
+      { type: 'circle', cx: 160, cy: 170, r: 58, label: 'SUN ☀️', stroke: '#d97706', fill: 'rgba(251,191,36,0.3)' },
+      { type: 'ellipse', cx: 470, cy: 200, rx: 145, ry: 55, label: '☁️ Condensation Cloud', stroke: '#475569', fill: 'rgba(148,163,184,0.28)' },
+      { type: 'rect', x: 80, y: 720, width: 410, height: 150, label: 'Ocean & Lake Collection 🌊', stroke: '#2563eb', fill: 'rgba(37,99,235,0.2)', rounded: 14 },
+      {
+        type: 'polygon',
+        points: [
+          { x: 470, y: 790 },
+          { x: 740, y: 420, vertexLabel: 'Peak' },
+          { x: 920, y: 790 },
+        ],
+        stroke: '#059669',
+        fill: 'rgba(5,150,105,0.18)',
+      },
+      { type: 'line', x1: 260, y1: 710, x2: 360, y2: 270, label: 'Evaporation ↑', arrowEnd: true, stroke: '#d97706', lineWidth: 4 },
+      { type: 'line', x1: 600, y1: 210, x2: 725, y2: 390, label: 'Precipitation 🌧️', arrowEnd: true, dashed: true, stroke: '#2563eb', lineWidth: 4 },
+      { type: 'line', x1: 680, y1: 580, x2: 500, y2: 760, label: 'Surface Runoff →', arrowEnd: true, stroke: '#059669', lineWidth: 4 },
+    ],
+    spokenSummary: 'Visualized the Water Cycle: solar evaporation rises into condensation clouds, falls as precipitation, and collects back into oceans.',
+  };
+}
+
+function buildStatesOfMatterScene(): WhiteboardVisualScene {
+  const primitives: WhiteboardPrimitive[] = [
+    { type: 'rect', x: 75, y: 310, width: 230, height: 340, label: 'SOLID', stroke: '#2563eb', fill: 'rgba(37,99,235,0.08)', rounded: 14 },
+    { type: 'rect', x: 385, y: 310, width: 230, height: 340, label: 'LIQUID', stroke: '#059669', fill: 'rgba(5,150,105,0.08)', rounded: 14 },
+    { type: 'rect', x: 695, y: 310, width: 230, height: 340, label: 'GAS', stroke: '#dc2626', fill: 'rgba(220,38,38,0.08)', rounded: 14 },
+    { type: 'line', x1: 312, y1: 460, x2: 378, y2: 460, label: 'Melt +Heat', arrowEnd: true, stroke: '#d97706', lineWidth: 3.5 },
+    { type: 'line', x1: 622, y1: 460, x2: 688, y2: 460, label: 'Boil +Heat', arrowEnd: true, stroke: '#dc2626', lineWidth: 3.5 },
+    { type: 'text', x: 190, y: 700, text: 'Fixed Shape & Volume', bold: true, fontSize: 16, align: 'center', color: '#2563eb' },
+    { type: 'text', x: 500, y: 700, text: 'Flows • Fixed Volume', bold: true, fontSize: 16, align: 'center', color: '#059669' },
+    { type: 'text', x: 810, y: 700, text: 'Fast • Fills Container', bold: true, fontSize: 16, align: 'center', color: '#dc2626' },
+  ];
+
+  // Tight crystal lattice particles for Solid
+  for (let r = 0; r < 3; r++) {
+    for (let c = 0; c < 3; c++) {
+      primitives.push({
+        type: 'circle',
+        cx: 138 + c * 52,
+        cy: 500 + r * 48,
+        r: 18,
+        stroke: '#2563eb',
+        fill: 'rgba(37,99,235,0.45)',
+      });
+    }
+  }
+
+  // Flowing bottom particles for Liquid
+  const liqCoords = [
+    [435, 555], [495, 580], [560, 560], [455, 610], [525, 615], [575, 608], [415, 605],
+  ];
+  liqCoords.forEach(([cx, cy]) => {
+    primitives.push({
+      type: 'circle',
+      cx,
+      cy,
+      r: 17,
+      stroke: '#059669',
+      fill: 'rgba(5,150,105,0.45)',
+    });
+  });
+
+  // High-energy spread particles for Gas
+  const gasCoords = [
+    [740, 380, 775, 355],
+    [860, 415, 830, 385],
+    [775, 535, 815, 515],
+    [875, 590, 845, 555],
+  ];
+  gasCoords.forEach(([cx, cy, tx, ty]) => {
+    primitives.push({ type: 'circle', cx, cy, r: 15, stroke: '#dc2626', fill: 'rgba(220,38,38,0.45)' });
+    primitives.push({ type: 'line', x1: cx, y1: cy, x2: tx, y2: ty, arrowEnd: true, stroke: '#dc2626' });
+  });
+
+  return {
+    title: 'States of Matter: Solid, Liquid & Gas',
+    subtitle: 'Particle arrangement & thermal phase transitions',
+    formulaBox: 'Add Thermal Energy (Heat) → Particles Gain Kinetic Energy',
+    steps: [
+      '1. Solid: Tightly packed lattice particles vibrate in fixed positions.',
+      '2. Liquid: Particles slide past each other taking the container shape.',
+      '3. Gas: High-speed particles fly freely and compress easily.',
+      '4. Adding heat melts solids and vaporizes liquids.',
+    ],
+    primitives,
+    spokenSummary: 'Drawn States of Matter comparing tightly packed solid particles, flowing liquids, and high-energy gas particles.',
+  };
+}
+
+function buildFractionPieScene(numerator: number, denominator: number): WhiteboardVisualScene {
+  const den = Math.max(2, Math.min(16, Math.round(denominator)));
+  const num = Math.max(0, Math.min(den, Math.round(numerator)));
+  const pct = Number(((num / den) * 100).toFixed(1));
+  const cx = 500;
+  const cy = 500;
+  const radius = 235;
+
+  const primitives: WhiteboardPrimitive[] = [];
+
+  // Shaded polygon wedge slices for numerator
+  for (let s = 0; s < num; s++) {
+    const a0 = -Math.PI / 2 + (s * 2 * Math.PI) / den;
+    const a1 = -Math.PI / 2 + ((s + 1) * 2 * Math.PI) / den;
+    const pts: Array<{ x: number; y: number }> = [{ x: cx, y: cy }];
+    const arcSteps = 10;
+    for (let k = 0; k <= arcSteps; k++) {
+      const ang = a0 + ((a1 - a0) * k) / arcSteps;
+      pts.push({
+        x: Math.round(cx + radius * Math.cos(ang)),
+        y: Math.round(cy + radius * Math.sin(ang)),
+      });
+    }
+    primitives.push({
+      type: 'polygon',
+      points: pts,
+      stroke: '#2563eb',
+      fill: 'rgba(37, 99, 235, 0.36)',
+    });
+  }
+
+  // Outer circle boundary
+  primitives.push({
+    type: 'circle',
+    cx,
+    cy,
+    r: radius,
+    stroke: '#2563eb',
+    fill: 'transparent',
+  });
+
+  // Division spoke lines for every denominator slice
+  for (let s = 0; s < den; s++) {
+    const ang = -Math.PI / 2 + (s * 2 * Math.PI) / den;
+    primitives.push({
+      type: 'line',
+      x1: cx,
+      y1: cy,
+      x2: Math.round(cx + radius * Math.cos(ang)),
+      y2: Math.round(cy + radius * Math.sin(ang)),
+      stroke: '#0f172a',
+      lineWidth: 2.5,
+    });
+  }
+
+  primitives.push({
+    type: 'text',
+    x: 500,
+    y: 165,
+    text: `Shaded Fraction = ${num}/${den}  (${pct}%)`,
+    bold: true,
+    fontSize: 26,
+    align: 'center',
+    color: '#2563eb',
+    boxed: true,
+  });
+
+  primitives.push({
+    type: 'text',
+    x: 500,
+    y: 830,
+    text: `Numerator = ${num} parts shaded • Denominator = ${den} equal parts`,
+    bold: true,
+    fontSize: 18,
+    align: 'center',
+    color: '#059669',
+  });
+
+  return {
+    title: `Visual Fraction Pie: ${num}/${den}`,
+    subtitle: `${num} out of ${den} equal slices (${pct}%)`,
+    formulaBox: `Fraction = Part / Whole = ${num}/${den} = ${(num / den).toFixed(3)}`,
+    steps: [
+      `1. Total whole circle is cut evenly into ${den} equal pieces.`,
+      `2. Numerator (${num}) shades ${num} pieces in blue.`,
+      `3. Remaining unshaded fraction is ${den - num}/${den}.`,
+      `4. Decimal value = ${(num / den).toFixed(2)} (${pct}%).`,
+    ],
+    primitives,
+    spokenSummary: `Drawn fraction pie model for ${num} over ${den}, shading ${num} out of ${den} equal parts, which is ${pct} percent.`,
+  };
+}
+
+function buildBarChartScene(rawQuery: string): WhiteboardVisualScene {
+  const palette = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
+  const bars: Array<{ label: string; value: number; color?: string }> = [];
+
+  // Parse explicit pairs like "Apples: 30, Bananas: 45, Pears: 25"
+  const pairRegex = /([A-Za-z0-9_]+)\s*[:=]\s*(-?\d+(?:\.\d+)?)/g;
+  let m: RegExpExecArray | null;
+  while ((m = pairRegex.exec(rawQuery)) !== null && bars.length < 7) {
+    const val = Math.abs(parseFloat(m[2]));
+    bars.push({ label: m[1].slice(0, 10), value: val, color: palette[bars.length % palette.length] });
+  }
+
+  // Otherwise parse raw standalone numbers
+  if (bars.length === 0) {
+    const nums = (rawQuery.match(/\d+(?:\.\d+)?/g) || []).map(Number).filter((n) => Number.isFinite(n));
+    if (nums.length >= 2) {
+      nums.slice(0, 6).forEach((v, idx) => {
+        bars.push({ label: `Item ${idx + 1}`, value: v, color: palette[idx % palette.length] });
+      });
+    }
+  }
+
+  // Fallback sample categorical bar chart if prompt had no numbers
+  if (bars.length === 0) {
+    bars.push(
+      { label: 'Q1', value: 42, color: '#2563eb' },
+      { label: 'Q2', value: 68, color: '#059669' },
+      { label: 'Q3', value: 54, color: '#d97706' },
+      { label: 'Q4', value: 85, color: '#7c3aed' }
+    );
+  }
+
+  const maxBar = bars.reduce((a, b) => (b.value > a.value ? b : a), bars[0]);
+
+  return {
+    title: `Bar Graph Comparison (${bars.length} Categories)`,
+    subtitle: `Visualizing magnitude across ${bars.map((b) => b.label).join(', ')}`,
+    formulaBox: `Highest Bar = ${maxBar.label} (${maxBar.value})`,
+    steps: [
+      '1. Horizontal axis lists each distinct category evenly.',
+      '2. Vertical height scales directly with each category value.',
+      `3. Peak value is ${maxBar.label} at ${maxBar.value}.`,
+      '4. Bar gaps emphasize discrete categorical comparisons.',
+    ],
+    primitives: [
+      {
+        type: 'bar_chart',
+        title: 'Category Data Comparison',
+        bars,
+      },
+    ],
+    spokenSummary: `Generated a bar chart comparing ${bars.length} categories with ${maxBar.label} leading at ${maxBar.value}.`,
+  };
+}
+
+function buildUnitCircleTrigScene(): WhiteboardVisualScene {
+  return {
+    title: 'Unit Circle & Trigonometry (SOH-CAH-TOA)',
+    subtitle: 'Connecting (cos θ, sin θ) coordinates to right triangles',
+    formulaBox: 'x = cos(θ),  y = sin(θ)   |   sin²θ + cos²θ = 1',
+    steps: [
+      '1. Radius r = 1 sweeps counterclockwise angle θ from +X axis.',
+      '2. Horizontal leg = Adjacent = cos(θ); Vertical leg = Opposite = sin(θ).',
+      '3. Right-triangle Pythagorean law proves cos²θ + sin²θ = 1.',
+      '4. Slope of the radius line equals tan(θ) = sin(θ) / cos(θ).',
+    ],
+    primitives: [
+      { type: 'circle', cx: 480, cy: 500, r: 230, stroke: '#2563eb', fill: 'rgba(37,99,235,0.06)' },
+      { type: 'line', x1: 160, y1: 500, x2: 820, y2: 500, arrowEnd: true, label: 'cos θ (X)', stroke: '#64748b' },
+      { type: 'line', x1: 480, y1: 800, x2: 480, y2: 190, arrowEnd: true, label: 'sin θ (Y)', stroke: '#64748b' },
+      {
+        type: 'polygon',
+        points: [
+          { x: 480, y: 500, vertexLabel: 'O(0,0)' },
+          { x: 655, y: 500, vertexLabel: 'A' },
+          { x: 655, y: 350, vertexLabel: 'P(cosθ, sinθ)' },
+        ],
+        rightAngleAtVertex: 1,
+        edgeLabels: ['cos θ (Adj)', 'sin θ (Opp)', 'Hyp = 1'],
+        stroke: '#dc2626',
+        fill: 'rgba(220,38,38,0.14)',
+      },
+      { type: 'text', x: 545, y: 485, text: 'θ', bold: true, fontSize: 24, color: '#d97706' },
+    ],
+    spokenSummary: 'Drawn the Unit Circle and Trigonometry triangle showing cosine on X, sine on Y, and hypotenuse radius equal to 1.',
+  };
+}
+
+function buildBarMagnetScene(): WhiteboardVisualScene {
+  return {
+    title: 'Bar Magnet & Magnetic Field Lines',
+    subtitle: 'Flux loops exiting North (N) and entering South (S) pole',
+    formulaBox: 'External Field Direction: North (N) ──► South (S)',
+    steps: [
+      '1. Opposite poles attract (N↔S); like poles repel (N↔N).',
+      '2. Magnetic field lines always form closed continuous loops.',
+      '3. Outside the bar, arrows run from North pole to South pole.',
+      '4. Closest line spacing near poles marks strongest magnetic force.',
+    ],
+    primitives: [
+      { type: 'rect', x: 290, y: 430, width: 210, height: 130, label: 'NORTH (N)', stroke: '#dc2626', fill: 'rgba(220,38,38,0.28)', rounded: 8 },
+      { type: 'rect', x: 500, y: 430, width: 210, height: 130, label: 'SOUTH (S)', stroke: '#2563eb', fill: 'rgba(37,99,235,0.28)', rounded: 8 },
+      {
+        type: 'curve_path',
+        points: [
+          { x: 320, y: 430 },
+          { x: 350, y: 240 },
+          { x: 500, y: 185 },
+          { x: 650, y: 240 },
+          { x: 680, y: 430 },
+        ],
+        stroke: '#059669',
+        lineWidth: 4,
+        label: 'N → S Outer Flux',
+      },
+      {
+        type: 'curve_path',
+        points: [
+          { x: 360, y: 430 },
+          { x: 410, y: 315 },
+          { x: 500, y: 285 },
+          { x: 590, y: 315 },
+          { x: 640, y: 430 },
+        ],
+        stroke: '#059669',
+        dashed: true,
+      },
+      {
+        type: 'curve_path',
+        points: [
+          { x: 320, y: 560 },
+          { x: 350, y: 750 },
+          { x: 500, y: 805 },
+          { x: 650, y: 750 },
+          { x: 680, y: 560 },
+        ],
+        stroke: '#059669',
+        lineWidth: 4,
+      },
+      { type: 'line', x1: 470, y1: 185, x2: 535, y2: 185, arrowEnd: true, stroke: '#d97706', lineWidth: 5 },
+      { type: 'line', x1: 470, y1: 805, x2: 535, y2: 805, arrowEnd: true, stroke: '#d97706', lineWidth: 5 },
+    ],
+    spokenSummary: 'Drawn a Bar Magnet illustrating North and South poles with closed magnetic field lines flowing from North to South.',
+  };
+}
+
+function buildPendulumScene(): WhiteboardVisualScene {
+  return {
+    title: 'Simple Pendulum & Harmonic Motion',
+    subtitle: 'Periodic energy swap between Potential (PE) and Kinetic (KE)',
+    formulaBox: 'Period  T = 2π √(L / g)',
+    steps: [
+      '1. Pivot holds a string of length L supporting bob mass m.',
+      '2. At extremes (left/right), speed = 0 and Potential Energy is max.',
+      '3. Passing center equilibrium, speed & Kinetic Energy reach maximum.',
+      '4. Period T depends only on length L and gravity g (not mass!).',
+    ],
+    primitives: [
+      { type: 'line', x1: 310, y1: 145, x2: 690, y2: 145, label: 'Fixed Pivot', stroke: '#475569', lineWidth: 7 },
+      { type: 'line', x1: 500, y1: 145, x2: 500, y2: 730, dashed: true, stroke: '#94a3b8', lineWidth: 2.5 },
+      { type: 'circle', cx: 500, cy: 730, r: 42, label: 'Max KE', stroke: '#059669', fill: 'rgba(5,150,105,0.2)', dashed: true },
+      { type: 'line', x1: 500, y1: 145, x2: 710, y2: 645, label: 'Length L', stroke: '#2563eb', lineWidth: 4 },
+      { type: 'circle', cx: 710, cy: 645, r: 46, label: 'Bob m', stroke: '#2563eb', fill: 'rgba(37,99,235,0.35)' },
+      { type: 'line', x1: 500, y1: 145, x2: 290, y2: 645, dashed: true, stroke: '#7c3aed' },
+      { type: 'circle', cx: 290, cy: 645, r: 42, label: 'Max PE', stroke: '#7c3aed', fill: 'rgba(124,58,237,0.16)', dashed: true },
+      {
+        type: 'curve_path',
+        points: [
+          { x: 290, y: 695 },
+          { x: 500, y: 785 },
+          { x: 710, y: 695 },
+        ],
+        dashed: true,
+        stroke: '#d97706',
+        label: 'Swing Arc',
+      },
+      { type: 'line', x1: 710, y1: 695, x2: 710, y2: 830, arrowEnd: true, label: 'mg', stroke: '#dc2626', lineWidth: 3 },
+    ],
+    spokenSummary: 'Drawn a Simple Pendulum showing string length L, gravitational force, and oscillation between potential and kinetic energy.',
+  };
+}
+
+function buildVolcanoScene(): WhiteboardVisualScene {
+  return {
+    title: 'Volcano Cross-Section & Eruption',
+    subtitle: 'Magma rising from underground chamber through main vent',
+    formulaBox: 'Underground = Magma   |   Erupted on Surface = Lava',
+    steps: [
+      '1. Buoyant molten rock collects deep inside the Magma Chamber.',
+      '2. Gas pressure forces magma upward through the central Main Vent.',
+      '3. Magma bursts from the summit Crater as glowing lava & ash.',
+      '4. Cooled lava layers gradually build a tall composite cone.',
+    ],
+    primitives: [
+      { type: 'rect', x: 100, y: 760, width: 800, height: 130, stroke: '#475569', fill: 'rgba(100,116,139,0.28)', label: 'Earth’s Crust' },
+      {
+        type: 'polygon',
+        points: [
+          { x: 160, y: 760 },
+          { x: 430, y: 340 },
+          { x: 570, y: 340 },
+          { x: 840, y: 760 },
+        ],
+        stroke: '#7c2d12',
+        fill: 'rgba(180, 83, 9, 0.25)',
+      },
+      { type: 'ellipse', cx: 500, cy: 825, rx: 160, ry: 55, label: 'Magma Chamber', stroke: '#dc2626', fill: 'rgba(220,38,38,0.48)' },
+      { type: 'rect', x: 472, y: 340, width: 56, height: 435, label: 'Vent', stroke: '#dc2626', fill: 'rgba(234,88,12,0.55)' },
+      { type: 'ellipse', cx: 500, cy: 195, rx: 160, ry: 72, label: '☁️ Ash & Gas Cloud', stroke: '#475569', fill: 'rgba(148,163,184,0.35)' },
+      { type: 'line', x1: 500, y1: 350, x2: 500, y2: 240, arrowEnd: true, stroke: '#ea580c', lineWidth: 5 },
+      { type: 'curve_path', points: [{ x: 440, y: 340 }, { x: 355, y: 490 }, { x: 270, y: 650 }], stroke: '#dc2626', lineWidth: 6, label: 'Lava Flow' },
+      { type: 'circle', cx: 390, cy: 255, r: 16, fill: '#ea580c', stroke: '#ea580c' },
+      { type: 'circle', cx: 615, cy: 265, r: 14, fill: '#dc2626', stroke: '#dc2626' },
+    ],
+    spokenSummary: 'Drawn a Volcano cross-section illustrating the magma chamber, central main vent, summit crater, lava flows, and ash cloud.',
+  };
+}
+
+function buildFoodChainScene(): WhiteboardVisualScene {
+  return {
+    title: 'Ecological Energy Pyramid & Food Chain',
+    subtitle: '10% energy rule across trophic levels',
+    formulaBox: 'Each Trophic Step Passes ~10% Energy Upward',
+    steps: [
+      '1. Sun supplies radiant energy captured by green plant Producers (100%).',
+      '2. Primary Consumers (herbivores) eat plants, keeping ~10% energy.',
+      '3. Secondary Consumers (small carnivores) retain ~1% energy.',
+      '4. Apex Predators sit at the top (~0.1%), kept smaller in population.',
+    ],
+    primitives: [
+      { type: 'circle', cx: 145, cy: 205, r: 64, label: '☀️ Sun', stroke: '#d97706', fill: 'rgba(251,191,36,0.35)' },
+      { type: 'polygon', points: [{ x: 430, y: 310 }, { x: 570, y: 310 }, { x: 500, y: 175 }], stroke: '#dc2626', fill: 'rgba(220,38,38,0.28)' },
+      { type: 'polygon', points: [{ x: 345, y: 470 }, { x: 655, y: 470 }, { x: 570, y: 310 }, { x: 430, y: 310 }], stroke: '#d97706', fill: 'rgba(217,119,6,0.24)' },
+      { type: 'polygon', points: [{ x: 255, y: 635 }, { x: 745, y: 635 }, { x: 655, y: 470 }, { x: 345, y: 470 }], stroke: '#2563eb', fill: 'rgba(37,99,235,0.22)' },
+      { type: 'polygon', points: [{ x: 165, y: 810 }, { x: 835, y: 810 }, { x: 745, y: 635 }, { x: 255, y: 635 }], stroke: '#059669', fill: 'rgba(5,150,105,0.24)' },
+      { type: 'text', x: 500, y: 270, text: 'Apex (0.1%)', bold: true, fontSize: 16, align: 'center', color: '#dc2626' },
+      { type: 'text', x: 500, y: 405, text: 'Secondary Consumers (1%)', bold: true, fontSize: 18, align: 'center', color: '#d97706' },
+      { type: 'text', x: 500, y: 565, text: 'Primary Consumers / Herbivores (10%)', bold: true, fontSize: 19, align: 'center', color: '#2563eb' },
+      { type: 'text', x: 500, y: 735, text: 'Producers / Plants (100% Energy)', bold: true, fontSize: 21, align: 'center', color: '#059669' },
+      { type: 'line', x1: 180, y1: 275, x2: 265, y2: 685, arrowEnd: true, label: 'Photosynthesis', stroke: '#d97706', lineWidth: 3 },
+    ],
+    spokenSummary: 'Drawn the Ecological Food Pyramid illustrating producers at 100 percent energy decreasing by 10x at each higher consumer level.',
+  };
+}
+
+function buildAnalogClockScene(hour: number, minute: number): WhiteboardVisualScene {
+  const h12 = ((Math.round(hour) % 12) + 12) % 12 || 12;
+  const min = Math.max(0, Math.min(59, Math.round(minute)));
+  const minStr = String(min).padStart(2, '0');
+  const cx = 500;
+  const cy = 480;
+  const r = 240;
+
+  const primitives: WhiteboardPrimitive[] = [
+    { type: 'circle', cx, cy, r, stroke: '#2563eb', fill: 'rgba(37,99,235,0.06)' },
+    { type: 'circle', cx, cy, r: 16, stroke: '#0f172a', fill: '#0f172a' },
+  ];
+
+  // 12 clock hour numerals
+  for (let h = 1; h <= 12; h++) {
+    const ang = -Math.PI / 2 + (h * 2 * Math.PI) / 12;
+    primitives.push({
+      type: 'text',
+      x: Math.round(cx + 195 * Math.cos(ang)),
+      y: Math.round(cy + 195 * Math.sin(ang) + 8),
+      text: String(h),
+      bold: true,
+      fontSize: 22,
+      align: 'center',
+      color: '#0f172a',
+    });
+  }
+
+  // Hour & Minute angles
+  const hourAngle = -Math.PI / 2 + (((h12 % 12) + min / 60) * 2 * Math.PI) / 12;
+  const minAngle = -Math.PI / 2 + (min * 2 * Math.PI) / 60;
+
+  primitives.push({
+    type: 'line',
+    x1: cx,
+    y1: cy,
+    x2: Math.round(cx + 118 * Math.cos(hourAngle)),
+    y2: Math.round(cy + 118 * Math.sin(hourAngle)),
+    arrowEnd: true,
+    stroke: '#dc2626',
+    lineWidth: 7,
+  });
+  primitives.push({
+    type: 'line',
+    x1: cx,
+    y1: cy,
+    x2: Math.round(cx + 168 * Math.cos(minAngle)),
+    y2: Math.round(cy + 168 * Math.sin(minAngle)),
+    arrowEnd: true,
+    stroke: '#059669',
+    lineWidth: 4.5,
+  });
+  primitives.push({
+    type: 'text',
+    x: 500,
+    y: 805,
+    text: `Time Shown = ${h12}:${minStr}`,
+    bold: true,
+    fontSize: 28,
+    align: 'center',
+    color: '#2563eb',
+    boxed: true,
+  });
+
+  return {
+    title: `Telling Time: Analog Clock (${h12}:${minStr})`,
+    subtitle: 'Short red hour hand + long green minute hand (60 mins = 1 hr)',
+    formulaBox: '1 Hour = 60 Minutes  •  Each Big Number = 5 Minutes',
+    steps: [
+      `1. Look at the short red hand first: pointing near ${h12}.`,
+      `2. Look at the long green hand: ${min} minutes past the hour.`,
+      '3. Count by 5s clockwise around the 12 numbers for minutes.',
+      `4. Read both together cleanly as ${h12}:${minStr}.`,
+    ],
+    primitives,
+    spokenSummary: `Drawn an analog clock showing ${h12}:${minStr} with the short hour hand and long minute hand.`,
+  };
+}
+
+function buildSoundWaveScene(): WhiteboardVisualScene {
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i <= 48; i++) {
+    const t = (i / 48) * Math.PI * 4; // 2 full wavelengths
+    pts.push({
+      x: Math.round(110 + (i / 48) * 780),
+      y: Math.round(500 - 190 * Math.sin(t)),
+    });
+  }
+
+  return {
+    title: 'Wave Anatomy: Wavelength & Amplitude',
+    subtitle: 'Transverse wave representation of sound frequency & loudness',
+    formulaBox: 'Wave Speed (v) = Frequency (f) × Wavelength (λ)',
+    steps: [
+      '1. Wavelength (λ) is the distance from one Crest to the next Crest.',
+      '2. Amplitude (A) measures height from rest centerline — controls Loudness.',
+      '3. Frequency (f) = number of waves passing per second (Hz) — Pitch.',
+      '4. Higher frequency packs waves closer together (shorter λ).',
+    ],
+    primitives: [
+      { type: 'line', x1: 85, y1: 500, x2: 915, y2: 500, dashed: true, label: 'Equilibrium (Rest)', stroke: '#64748b' },
+      { type: 'curve_path', points: pts, stroke: '#2563eb', lineWidth: 5, label: 'Sound / Transverse Wave' },
+      // Wavelength Crest 1 (~x=207.5) to Crest 2 (~x=597.5) at y=310
+      { type: 'line', x1: 208, y1: 245, x2: 598, y2: 245, arrowStart: true, arrowEnd: true, label: 'Wavelength λ', stroke: '#d97706', lineWidth: 3.5 },
+      { type: 'line', x1: 208, y1: 310, x2: 208, y2: 245, dashed: true, stroke: '#d97706' },
+      { type: 'line', x1: 598, y1: 310, x2: 598, y2: 245, dashed: true, stroke: '#d97706' },
+      // Amplitude vertical double arrow at x=208
+      { type: 'line', x1: 208, y1: 500, x2: 208, y2: 315, arrowStart: true, arrowEnd: true, label: 'Amplitude A', stroke: '#059669', lineWidth: 4 },
+      { type: 'circle', cx: 208, cy: 310, r: 10, fill: '#dc2626', stroke: '#dc2626' },
+      { type: 'text', x: 792, y: 275, text: 'Crest (Peak)', bold: true, fontSize: 18, align: 'center', color: '#dc2626' },
+      { type: 'text', x: 792, y: 745, text: 'Trough (Valley)', bold: true, fontSize: 18, align: 'center', color: '#7c3aed' },
+    ],
+    spokenSummary: 'Drawn a wave diagram labeling Crest, Trough, Amplitude height for loudness, and Wavelength distance lambda.',
+  };
+}
+
+function buildDynamicConceptMapScene(
+  rawQuery: string,
+  subject: SubjectDefinition
+): WhiteboardVisualScene {
+  const cleanTopic = rawQuery.trim().slice(0, 44) || subject.name;
+  return {
+    title: `${subject.name}: ${cleanTopic}`,
+    subtitle: `Visual Concept Breakdown & Study Map`,
+    formulaBox: `Core Focus: "${cleanTopic}" (${subject.name})`,
+    steps: [
+      `1. Topic Center: Understanding "${cleanTopic}".`,
+      `2. Inspect Key Parts: Break "${cleanTopic}" into building blocks.`,
+      `3. How It Works: Follow step-by-step cause and mechanism arrows.`,
+      `4. Real-World Link: Connect to examples or configure an AI key for custom drawings.`,
+    ],
+    primitives: [
+      {
+        type: 'ellipse',
+        cx: 500,
+        cy: 495,
+        rx: 175,
+        ry: 82,
+        label: cleanTopic,
+        stroke: '#2563eb',
+        fill: 'rgba(37, 99, 235, 0.16)',
+      },
+      // 4 Radial Node Boxes
+      { type: 'rect', x: 75, y: 135, width: 295, height: 140, label: '1. Core Concept', stroke: '#059669', fill: 'rgba(5,150,105,0.12)', rounded: 16 },
+      { type: 'rect', x: 630, y: 135, width: 295, height: 140, label: '2. Key Components', stroke: '#7c3aed', fill: 'rgba(124,58,237,0.12)', rounded: 16 },
+      { type: 'rect', x: 75, y: 700, width: 295, height: 140, label: '3. How It Works', stroke: '#d97706', fill: 'rgba(217,119,6,0.12)', rounded: 16 },
+      { type: 'rect', x: 630, y: 700, width: 295, height: 140, label: '4. Real-World Link', stroke: '#dc2626', fill: 'rgba(220,38,38,0.12)', rounded: 16 },
+      // Connecting arrows
+      { type: 'line', x1: 380, y1: 430, x2: 270, y2: 282, arrowEnd: true, stroke: '#059669', lineWidth: 3 },
+      { type: 'line', x1: 620, y1: 430, x2: 730, y2: 282, arrowEnd: true, stroke: '#7c3aed', lineWidth: 3 },
+      { type: 'line', x1: 380, y1: 560, x2: 270, y2: 695, arrowEnd: true, stroke: '#d97706', lineWidth: 3 },
+      { type: 'line', x1: 620, y1: 560, x2: 730, y2: 695, arrowEnd: true, stroke: '#dc2626', lineWidth: 3 },
+    ],
+    spokenSummary: `Generated a visual concept breakdown map for ${cleanTopic} inside ${subject.name}.`,
+  };
+}
+
 // ============================================================================
 // 4. NATURAL LANGUAGE VISUAL PARSER FOR ANY SHAPE, GRAPH OR CONCEPT
 // ============================================================================
@@ -1242,12 +1954,20 @@ export function buildParametricVisualScene(
 
   // A. STRAIGHT LINE / SLOPE / GRAPH AND DRAW A SLOPE
   const hasExplicitCoords = q.match(/\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g);
+  const isNonlinearQuery =
+    lower.includes('^') ||
+    lower.includes('²') ||
+    lower.includes('³') ||
+    /\b(sin|cos|tan|log|ln|sqrt|exp|parabola|quadratic|cubic|tangent|curve)\b/.test(lower);
+  const linearEqRegex =
+    /y\s*=\s*-?\d*\.?\d*\s*\*?\s*x(?![\^²³a-z])(?:\s*[+-]\s*\d+(?:\.\d+)?)?/i;
   if (
-    lower.includes('slope') ||
-    lower.includes('straight line') ||
-    lower.includes('linear') ||
-    /y\s*=\s*-?\d*\.?\d*\s*x/i.test(lower) ||
-    (lower.includes('graph') && (lower.includes('line') || lower.includes('intercept')))
+    !isNonlinearQuery &&
+    (lower.includes('slope') ||
+      lower.includes('straight line') ||
+      lower.includes('linear') ||
+      linearEqRegex.test(lower) ||
+      (lower.includes('graph') && (lower.includes('line') || lower.includes('intercept'))))
   ) {
     // 1. Two points given: (x1, y1) and (x2, y2)
     if (hasExplicitCoords && hasExplicitCoords.length >= 2) {
@@ -1285,8 +2005,13 @@ export function buildParametricVisualScene(
     };
   }
 
-  // B. CIRCLE WITH GIVEN RADIUS OR DIAMETER
-  if (lower.includes('circle') || lower.includes('வட்டம்')) {
+  // B. CIRCLE WITH GIVEN RADIUS OR DIAMETER (exclude cycles & unit circle)
+  if (
+    (lower.includes('circle') || lower.includes('வட்டம்')) &&
+    !/\b(unit circle|life cycle|rock cycle|water cycle|carbon cycle|nitrogen cycle|circle of)\b/.test(
+      lower
+    )
+  ) {
     const rMatch = lower.match(/(?:radius|r)\s*(?:=|of|is)?\s*(\d+(?:\.\d+)?)/);
     const dMatch = lower.match(/(?:diameter|d)\s*(?:=|of|is)?\s*(\d+(?:\.\d+)?)/);
     const radius = rMatch
@@ -1300,8 +2025,11 @@ export function buildParametricVisualScene(
     };
   }
 
-  // C. SQUARE WITH SIDE
-  if (lower.includes('square') && !lower.includes('punnett')) {
+  // C. SQUARE WITH SIDE (exclude Punnett square, square law, square root, chi-square, completing square)
+  if (
+    lower.includes('square') &&
+    !/\b(punnett|law|root|chi|completing)\b/.test(lower)
+  ) {
     const sideMatch = lower.match(/(?:side|length|s|a)\s*(?:=|of|is)?\s*(\d+(?:\.\d+)?)/);
     const side = sideMatch ? parseFloat(sideMatch[1]) : nums.find((n) => n > 0) ?? 6;
     return {
@@ -1445,18 +2173,57 @@ export function buildParametricVisualScene(
   if (lower.includes('kural') || lower.includes('திருக்குறள்')) {
     return { scene: buildSceneForDiagramStamp('thirukkural_frame', subject), isExactMatch: true };
   }
-  if (lower.includes('story arc') || lower.includes('climax') || lower.includes('pyramid')) {
+  if (lower.includes('story arc') || lower.includes('climax') || lower.includes('freytag') || lower.includes('plot pyramid')) {
     return { scene: buildSceneForDiagramStamp('story_arc', subject), isExactMatch: true };
   }
 
-  // Fallback contextual scene for any unrecognized free-form request (allows AI enrichment step)
-  const fallbackStamp = subject.concepts[0]?.diagramStamp || 'parabola';
-  const baseScene = buildSceneForDiagramStamp(fallbackStamp, subject, subject.concepts[0]);
+  // H. EXTENDED SCHOOL & EVERYDAY VISUAL BUILDERS
+  if (lower.includes('solar system') || lower.includes('planets') || lower.includes('planetary orbit')) {
+    return { scene: buildSolarSystemScene(), isExactMatch: true };
+  }
+  if (lower.includes('water cycle') || lower.includes('evaporation') || lower.includes('precipitation') || lower.includes('hydrologic')) {
+    return { scene: buildWaterCycleScene(), isExactMatch: true };
+  }
+  if (lower.includes('states of matter') || lower.includes('solid liquid gas') || lower.includes('phase change')) {
+    return { scene: buildStatesOfMatterScene(), isExactMatch: true };
+  }
+  if (lower.includes('fraction') || lower.includes('pie chart') || lower.includes('numerator') || lower.includes('denominator')) {
+    const fracMatch = lower.match(/(\d+)\s*(?:\/|over|out of)\s*(\d+)/);
+    const num = fracMatch ? parseInt(fracMatch[1], 10) : 3;
+    const den = fracMatch ? parseInt(fracMatch[2], 10) : 4;
+    return { scene: buildFractionPieScene(num, den), isExactMatch: true };
+  }
+  if (lower.includes('bar chart') || lower.includes('bar graph') || lower.includes('histogram')) {
+    return { scene: buildBarChartScene(q), isExactMatch: true };
+  }
+  if (lower.includes('trigonometry') || lower.includes('unit circle') || lower.includes('soh cah toa') || lower.includes('sin cos tan') || lower.includes('pythagor')) {
+    return { scene: buildUnitCircleTrigScene(), isExactMatch: true };
+  }
+  if (lower.includes('magnet') || lower.includes('magnetic field') || lower.includes('electromagnet')) {
+    return { scene: buildBarMagnetScene(), isExactMatch: true };
+  }
+  if (lower.includes('pendulum') || lower.includes('oscillation') || lower.includes('shm') || lower.includes('harmonic motion')) {
+    return { scene: buildPendulumScene(), isExactMatch: true };
+  }
+  if (lower.includes('volcano') || lower.includes('eruption') || lower.includes('magma')) {
+    return { scene: buildVolcanoScene(), isExactMatch: true };
+  }
+  if (lower.includes('food chain') || lower.includes('food web') || lower.includes('trophic') || lower.includes('energy pyramid') || lower.includes('food pyramid')) {
+    return { scene: buildFoodChainScene(), isExactMatch: true };
+  }
+  if (lower.includes('clock') || lower.includes('telling time') || lower.includes('analog time')) {
+    const timeMatch = lower.match(/(\d{1,2})\s*:\s*(\d{2})/);
+    const hr = timeMatch ? parseInt(timeMatch[1], 10) : nums[0] ?? 3;
+    const mn = timeMatch ? parseInt(timeMatch[2], 10) : nums[1] ?? 15;
+    return { scene: buildAnalogClockScene(hr, mn), isExactMatch: true };
+  }
+  if (lower.includes('sound wave') || lower.includes('wavelength') || lower.includes('amplitude') || lower.includes('frequency') || lower.includes('transverse wave')) {
+    return { scene: buildSoundWaveScene(), isExactMatch: true };
+  }
+
+  // Fallback topic-specific mind map (NEVER repeats old/default diagram!)
   return {
-    scene: {
-      ...baseScene,
-      title: `${subject.name}: ${q.slice(0, 48)}`,
-    },
+    scene: buildDynamicConceptMapScene(q, subject),
     isExactMatch: false,
   };
 }
@@ -1951,6 +2718,10 @@ function renderSinglePrimitive(
         else ctx.lineTo(px, py);
       });
       if (prim.closed) ctx.closePath();
+      if (prim.fill && prim.fill !== 'transparent') {
+        ctx.fillStyle = prim.fill;
+        ctx.fill();
+      }
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.shadowBlur = 0;
@@ -2356,15 +3127,19 @@ export function renderWhiteboardSceneToCanvas(
   const startMs = performance.now();
   const durationMs = 520;
 
+  // Render initial frame synchronously so WebViews never linger on the old canvas
+  drawFrame(0.18);
+
   const tick = (now: number) => {
     if (cancelled) return;
     const rawP = Math.min(1, (now - startMs) / durationMs);
     // Ease out cubic
     const eased = 1 - Math.pow(1 - rawP, 3);
-    drawFrame(eased);
+    drawFrame(rawP >= 1 ? 1 : eased);
     if (rawP < 1) {
       rafId = requestAnimationFrame(tick);
     } else {
+      drawFrame(1);
       onComplete?.();
     }
   };
