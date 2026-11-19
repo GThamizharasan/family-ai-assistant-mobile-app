@@ -56,6 +56,7 @@ import {
   Eye,
   Navigation,
   CloudSun,
+  GraduationCap,
 } from 'lucide-react';
 import {
   WeatherData,
@@ -436,6 +437,26 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-2 flex-1">
+              {/* Super Feature: AI Adaptive Learning Classroom */}
+              <div
+                onClick={() => onNavigate('adaptive-learning')}
+                className="cursor-pointer p-3 rounded-2xl bg-gradient-to-r from-cyan-950/70 to-indigo-950/60 hover:from-cyan-900/60 hover:to-indigo-900/60 border border-cyan-500/40 hover:border-cyan-400 transition-all flex items-center justify-between group shadow-md"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-300 flex items-center justify-center shrink-0 border border-cyan-500/40 group-hover:scale-105 transition-transform">
+                    <GraduationCap className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white truncate">AI Adaptive Learning</span>
+                      <span className="text-[9px] font-mono px-1 rounded bg-cyan-500/25 text-cyan-200 font-bold">7 SUBJ</span>
+                    </div>
+                    <p className="text-[10px] text-cyan-200/80 truncate">Smart Blackboard & Telemetry</p>
+                  </div>
+                </div>
+                <ArrowUpRight className="w-3.5 h-3.5 text-cyan-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+              </div>
+
               {/* Feature 1: Apple Books & PDF Document Reader */}
               <div
                 onClick={() => onNavigate('ibooks')}
@@ -1678,6 +1699,77 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
             <span>Talk to Aura</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
+        </div>
+      </div>
+
+      {/* Featured Super Feature: AI Adaptive Learning Engine ("Classroom Nervous System") */}
+      <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-cyan-950/85 via-slate-900 to-purple-950/80 border border-cyan-500/40 shadow-2xl relative overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                Classroom Nervous System
+              </span>
+              <span className="text-[10px] text-amber-300 font-semibold font-mono">
+                Smart Blackboard • Auto-Grader • Live Telemetry
+              </span>
+            </div>
+            <h3 className="text-base sm:text-lg font-extrabold text-white tracking-tight">
+              AI Adaptive Learning Engine (All 7 Subjects)
+            </h3>
+            <p className="text-xs text-slate-300 max-w-xl">
+              Synaptic concept graphs, neon chalk blackboard with English & Tamil speech recognition, automated 4-axis grading, and real-time focus heatmaps.
+            </p>
+          </div>
+
+          <button
+            onClick={() => onNavigate('adaptive-learning')}
+            className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-cyan-500/25 transition-all shrink-0 active:scale-95 cursor-pointer"
+          >
+            <GraduationCap className="w-4 h-4" />
+            <span>Launch AI Classroom</span>
+            <ArrowUpRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* 7-Subject + Blackboard Direct Deep-Link Chips */}
+        <div className="mt-3 pt-3 border-t border-cyan-500/20 flex flex-wrap gap-1.5 text-[11px]">
+          {[
+            { id: 'english', label: '📖 English', pillar: 'adaptive' },
+            { id: 'tamil', label: '🪔 தமிழ் Tamil', pillar: 'adaptive' },
+            { id: 'maths', label: '📐 Maths', pillar: 'adaptive' },
+            { id: 'physics', label: '⚛️ Physics', pillar: 'adaptive' },
+            { id: 'chemistry', label: '🧪 Chemistry', pillar: 'adaptive' },
+            { id: 'botany', label: '🌿 Botany', pillar: 'adaptive' },
+            { id: 'zoology', label: '🧬 Zoology', pillar: 'adaptive' },
+            { id: 'physics', label: '🖍️ Smart Blackboard', pillar: 'blackboard' },
+          ].map((chip, idx) => (
+            <button
+              key={`${chip.id}-${idx}`}
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(
+                    'aura_adaptive_launch',
+                    JSON.stringify({ subject: chip.id, pillar: chip.pillar })
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent('aura_adaptive_learning_launch', {
+                      detail: { subject: chip.id, pillar: chip.pillar },
+                    })
+                  );
+                } catch {}
+                onNavigate('adaptive-learning');
+              }}
+              className={`px-2.5 py-1 rounded-xl border transition-colors flex items-center gap-1 cursor-pointer font-semibold ${
+                chip.pillar === 'blackboard'
+                  ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40'
+                  : 'bg-slate-950/75 hover:bg-slate-900 text-cyan-200 border-cyan-500/25'
+              }`}
+            >
+              <span>{chip.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 

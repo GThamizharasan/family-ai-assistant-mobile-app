@@ -38,6 +38,7 @@ import { AdobeScannerTab } from './components/tabs/AdobeScannerTab';
 import { ClockTab } from './components/tabs/ClockTab';
 import { NavigationTab } from './components/tabs/NavigationTab';
 import { WeatherForecastTab } from './components/tabs/WeatherForecastTab';
+import { AdaptiveLearningTab } from './components/tabs/AdaptiveLearningTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
 import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
@@ -237,6 +238,8 @@ const AppContent: React.FC = () => {
             onOpenInstaller={() => setIsInstallerOpen(true)}
           />
         );
+      case 'adaptive-learning':
+        return <AdaptiveLearningTab />;
       case 'weather':
         return (
           <WeatherForecastTab

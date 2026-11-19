@@ -34,6 +34,9 @@ import {
   getDynamicAiModelsFromSqlite,
   saveDynamicAiModelInSqlite,
   deleteDynamicAiModelFromSqlite,
+  getAdaptiveLearningRecordsFromSqlite,
+  saveAdaptiveLearningRecordToSqlite,
+  deleteAdaptiveLearningRecordFromSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -1042,6 +1045,55 @@ app.delete('/api/ai/dynamic-models/:id', (req, res) => {
   } catch (err: any) {
     console.error('Error deleting dynamic AI model from SQLite:', err);
     res.status(500).json({ error: err.message || 'Failed to delete dynamic model' });
+  }
+});
+
+// -------------------------------------------------------------
+// AI Adaptive Learning Engine ("Classroom Nervous System") Routes
+// -------------------------------------------------------------
+app.get('/api/adaptive-learning/records', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    const subjectId = typeof req.query.subjectId === 'string' ? req.query.subjectId : undefined;
+    const records = getAdaptiveLearningRecordsFromSqlite(userEmail, subjectId);
+    res.json({ success: true, records, count: records.length });
+  } catch (err: any) {
+    console.error('Error fetching adaptive learning records from SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch adaptive learning records' });
+  }
+});
+
+app.post('/api/adaptive-learning/records', (req, res) => {
+  try {
+    const { id, userEmail, subjectId, recordType, title, payload, score, masteryPercent } = req.body;
+    if (!subjectId || !recordType || !title) {
+      return res.status(400).json({ error: 'subjectId, recordType, and title are required.' });
+    }
+    const saved = saveAdaptiveLearningRecordToSqlite({
+      id,
+      userEmail,
+      subjectId,
+      recordType,
+      title,
+      payload: payload ?? {},
+      score: typeof score === 'number' ? score : undefined,
+      masteryPercent: typeof masteryPercent === 'number' ? masteryPercent : undefined,
+    });
+    res.json({ success: true, record: saved });
+  } catch (err: any) {
+    console.error('Error saving adaptive learning record to SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to save adaptive learning record' });
+  }
+});
+
+app.delete('/api/adaptive-learning/records/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    const ok = deleteAdaptiveLearningRecordFromSqlite(id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    console.error('Error deleting adaptive learning record from SQLite:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete adaptive learning record' });
   }
 });
 
@@ -3780,6 +3832,8 @@ app.post('/api/ai/chat-multiturn', async (req, res) => {
         'You are an award-winning creative author and storytelling consultant, offering vivid prose, emotional cadence, and polished screenplays.',
       guided_tutor:
         'You are the Gemini Sovereign Guided Learning Master Mentor and Socratic Curriculum Architect. You explain concepts with extreme pedagogical clarity, intuitive mental models, Socratic reflection checkpoints, step-by-step code, and hands-on family lab challenges.',
+      adaptive_learning_tutor:
+        'You are an elite multilingual (English & Tamil) Adaptive Classroom Professor and Pedagogical Nervous System spanning English, Tamil (தமிழ் இலக்கியம் & இலக்கணம்), Mathematics, Physics, Chemistry, Botany, and Zoology. You dynamically calibrate explanation depth to the learner’s mastery level, pinpoint misconceptions empathetically, generate step-by-step blackboard chalk derivations, and grade answers fairly with rubric transparency.',
     };
 
     const baseSystemPrompt =

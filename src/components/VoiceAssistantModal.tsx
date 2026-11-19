@@ -1242,7 +1242,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       lower.endsWith(' திற') ||
       lower === 'home' ||
       lower === 'home hub' ||
-      lower === 'go home';
+      lower === 'go home' ||
+      lower.includes('adaptive learning') ||
+      lower.includes('smart blackboard') ||
+      lower.includes('auto grader') ||
+      lower.includes('classroom engagement') ||
+      lower.includes('கற்றல்') ||
+      lower.includes('கரும்பலகை');
 
     // =========================================================================
     // AURO VOICE INTENT: PHONE ACCESS & EXTERNAL APP CONTROL
@@ -1992,6 +1998,72 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         onOpenOfflineSync();
         return;
       }
+    }
+
+    // 25b. AI Adaptive Learning Engine & Smart Blackboard (All 7 Subjects)
+    if (
+      lower.includes('adaptive learning') ||
+      lower.includes('adaptive engine') ||
+      lower.includes('smart blackboard') ||
+      lower.includes('blackboard') ||
+      lower.includes('classroom') ||
+      lower.includes('auto grader') ||
+      lower.includes('automated grading') ||
+      lower.includes('teach me') ||
+      lower.includes('study physics') ||
+      lower.includes('study tamil') ||
+      lower.includes('study maths') ||
+      lower.includes('study chemistry') ||
+      lower.includes('study botany') ||
+      lower.includes('study zoology') ||
+      lower.includes('study english') ||
+      lower.includes('கற்றல்') ||
+      lower.includes('கரும்பலகை') ||
+      lower.includes('வகுப்பறை')
+    ) {
+      const detectedSubject =
+        lower.includes('tamil') || lower.includes('தமிழ்')
+          ? 'tamil'
+          : lower.includes('math') || lower.includes('கணிதம்')
+          ? 'maths'
+          : lower.includes('chemistry') || lower.includes('வேதியியல்')
+          ? 'chemistry'
+          : lower.includes('botany') || lower.includes('தாவரவியல்')
+          ? 'botany'
+          : lower.includes('zoology') || lower.includes('விலங்கியல்')
+          ? 'zoology'
+          : lower.includes('english') || lower.includes('ஆங்கிலம்')
+          ? 'english'
+          : 'physics';
+
+      const detectedPillar =
+        lower.includes('blackboard') || lower.includes('கரும்பலகை')
+          ? 'blackboard'
+          : lower.includes('grad')
+          ? 'grader'
+          : lower.includes('engagement') || lower.includes('telemetry')
+          ? 'engagement'
+          : 'adaptive';
+
+      try {
+        sessionStorage.setItem(
+          'aura_adaptive_launch',
+          JSON.stringify({ subject: detectedSubject, pillar: detectedPillar })
+        );
+        window.dispatchEvent(
+          new CustomEvent('aura_adaptive_learning_launch', {
+            detail: { subject: detectedSubject, pillar: detectedPillar },
+          })
+        );
+      } catch {}
+
+      executeVoiceNavigation(
+        'adaptive-learning',
+        undefined,
+        `Opening the AI Adaptive Learning Engine for ${detectedSubject} on your Smart Classroom now.`,
+        `${detectedSubject} பாடத்திற்கான AI அடாப்டிவ் கற்றல் மற்றும் ஸ்மார்ட் கரும்பலகை வகுப்பறையை இப்போது திறக்கிறேன்.`
+      );
+      return;
     }
 
     // 26. Global AI Engine & Model Architecture Configurator

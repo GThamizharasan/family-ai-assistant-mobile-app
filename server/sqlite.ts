@@ -440,6 +440,19 @@ export async function initSqliteDb(): Promise<Database> {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS adaptive_learning_records (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      subject_id TEXT NOT NULL,
+      record_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      score REAL,
+      mastery_percent REAL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2266,6 +2279,140 @@ export function saveDynamicAiModelInSqlite(model: Partial<DynamicAiModelRecord> 
 export function deleteDynamicAiModelFromSqlite(id: string): boolean {
   if (!db) return false;
   db.run('DELETE FROM dynamic_ai_models WHERE id = ?', [id]);
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// AI Adaptive Learning Engine ("Classroom Nervous System") Store
+// -------------------------------------------------------------
+export interface AdaptiveLearningRecordRow {
+  id: string;
+  userEmail: string;
+  subjectId: string;
+  recordType: string;
+  title: string;
+  payload: any;
+  score?: number;
+  masteryPercent?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getAdaptiveLearningRecordsFromSqlite(
+  userEmail?: string,
+  subjectId?: string
+): AdaptiveLearningRecordRow[] {
+  if (!db) return [];
+  try {
+    let query = `
+      SELECT id, user_email, subject_id, record_type, title, payload_json, score, mastery_percent, created_at, updated_at
+      FROM adaptive_learning_records
+    `;
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (userEmail) {
+      conditions.push('user_email = ?');
+      params.push(userEmail.toLowerCase().trim());
+    }
+    if (subjectId) {
+      conditions.push('subject_id = ?');
+      params.push(subjectId);
+    }
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+    query += ' ORDER BY updated_at DESC LIMIT 200';
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) {
+      stmt.bind(params);
+    }
+    const rows: AdaptiveLearningRecordRow[] = [];
+    while (stmt.step()) {
+      const row = stmt.get();
+      let payload: any = {};
+      try {
+        payload = JSON.parse((row[5] as string) || '{}');
+      } catch {}
+      rows.push({
+        id: row[0] as string,
+        userEmail: row[1] as string,
+        subjectId: row[2] as string,
+        recordType: row[3] as string,
+        title: row[4] as string,
+        payload,
+        score: typeof row[6] === 'number' ? row[6] : undefined,
+        masteryPercent: typeof row[7] === 'number' ? row[7] : undefined,
+        createdAt: row[8] as string,
+        updatedAt: row[9] as string,
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch (err) {
+    console.warn('[SQLite] getAdaptiveLearningRecords error:', err);
+    return [];
+  }
+}
+
+export function saveAdaptiveLearningRecordToSqlite(
+  record: Partial<AdaptiveLearningRecordRow> & {
+    subjectId: string;
+    recordType: string;
+    title: string;
+    payload: any;
+  }
+): AdaptiveLearningRecordRow {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const userEmail = (record.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const id =
+    record.id ||
+    `alr-${record.recordType}-${record.subjectId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const payloadJson = typeof record.payload === 'string' ? record.payload : JSON.stringify(record.payload ?? {});
+
+  db.run(
+    `INSERT INTO adaptive_learning_records (id, user_email, subject_id, record_type, title, payload_json, score, mastery_percent, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       payload_json = excluded.payload_json,
+       score = COALESCE(excluded.score, adaptive_learning_records.score),
+       mastery_percent = COALESCE(excluded.mastery_percent, adaptive_learning_records.mastery_percent),
+       updated_at = excluded.updated_at`,
+    [
+      id,
+      userEmail,
+      record.subjectId,
+      record.recordType,
+      record.title,
+      payloadJson,
+      typeof record.score === 'number' ? record.score : null,
+      typeof record.masteryPercent === 'number' ? record.masteryPercent : null,
+      record.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    subjectId: record.subjectId,
+    recordType: record.recordType,
+    title: record.title,
+    payload: record.payload,
+    score: record.score,
+    masteryPercent: record.masteryPercent,
+    createdAt: record.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function deleteAdaptiveLearningRecordFromSqlite(id: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM adaptive_learning_records WHERE id = ?', [id]);
   scheduleSave();
   return true;
 }
@@ -4684,6 +4831,7 @@ export function getSqliteDbStats() {
     'inter_instance_communications',
     'hub_api_keys',
     'dynamic_ai_models',
+    'adaptive_learning_records',
     'assistant_memory_store',
     'voice_assistant_conversations',
     'google_keep_notes',
