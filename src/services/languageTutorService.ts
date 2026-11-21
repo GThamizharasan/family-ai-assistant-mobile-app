@@ -7,19 +7,31 @@
 
 import {
   ConstructedLanguageLesson,
+  EssayClinicResult,
+  FamilyTutorSuiteState,
   LanguageModuleSummary,
   LiveTutorMessage,
   ProficiencyLevel,
+  PronunciationHeatmapResult,
+  RegisterRewriteResult,
   SavedLanguageTutorRecord,
   SpeakingEvaluationResult,
+  SrsVocabItem,
+  StageCompletionCertificate,
+  TutorFamilyLearnerProfile,
   TutorLanguage,
   TutorProgressState,
+  WordHeatmapToken,
 } from '../types/languageTutor';
 import {
   buildFallbackLanguageLesson,
   ENGLISH_CURRICULUM_MODULES,
   TAMIL_CURRICULUM_MODULES,
 } from '../data/languageTutorCurriculum';
+import {
+  buildStarterSrsDeck,
+  DEFAULT_FAMILY_LEARNERS,
+} from '../data/languageTutorAdvancedData';
 import { getActiveAiModel, getActiveAiProvider } from './aiConfig';
 import { getApiUrl } from './api';
 import { getOrCreateGoogleDriveFolder } from './googleWorkspace';
@@ -85,7 +97,7 @@ function getTutorActiveAiParams() {
 }
 
 export function buildAsciiDriveTitle(
-  recordType: 'course_lesson' | 'live_session' | 'progress_snapshot',
+  recordType: SavedLanguageTutorRecord['recordType'],
   language: TutorLanguage,
   level: ProficiencyLevel,
   moduleId?: string,
@@ -1182,5 +1194,546 @@ export async function saveTutorProgress(
       exportMarkdownToDrive: false,
     }
   );
+}
+
+// ============================================================================
+// 5. BUNDLE 1: WORD-BY-WORD PRONUNCIATION HEATMAP & 3-REGISTER LIVE REWRITER
+// ============================================================================
+
+function wordEditDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[m][n];
+}
+
+export function analyzeWordPronunciationHeatmap(
+  targetPhrase: string,
+  spokenTranscript: string,
+  language: TutorLanguage
+): PronunciationHeatmapResult {
+  const cleanTokens = (s: string) =>
+    s
+      .replace(/[^\p{L}\p{N}\s']/gu, ' ')
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter(Boolean);
+
+  const targetWords = cleanTokens(targetPhrase);
+  const spokenWords = cleanTokens(spokenTranscript).map((w) => w.toLowerCase());
+
+  if (targetWords.length === 0) {
+    return {
+      overallAccuracy: 0,
+      tokens: [],
+      coachSummary: 'Select or enter a phrase first, then speak it clearly.',
+    };
+  }
+
+  let clearCount = 0;
+  let driftCount = 0;
+  const tokens: WordHeatmapToken[] = targetWords.map((rawWord) => {
+    const norm = rawWord.toLowerCase();
+    let bestSim = 0;
+    for (const sw of spokenWords) {
+      if (sw === norm) {
+        bestSim = 1;
+        break;
+      }
+      const maxLen = Math.max(norm.length, sw.length);
+      if (maxLen > 0) {
+        const sim = 1 - wordEditDistance(norm, sw) / maxLen;
+        if (sim > bestSim) bestSim = sim;
+      }
+    }
+
+    const hasTrickyTamil = /[ழளலணனநறர]/.test(rawWord);
+    if (bestSim >= 0.85) {
+      clearCount++;
+      return { word: rawWord, status: 'clear' };
+    }
+    if (bestSim >= 0.45) {
+      driftCount++;
+      return {
+        word: rawWord,
+        status: 'drift',
+        tip:
+          language === 'tamil' && hasTrickyTamil
+            ? 'Watch tongue curl on ழ/ள/ல or ண/ன/ந — try 0.75× slow shadow!'
+            : language === 'tamil'
+            ? 'Give each vowel its crisp length (குறில் vs நெடில்).'
+            : 'Slightly slow down and stress the main syllable cleanly.',
+      };
+    }
+    return {
+      word: rawWord,
+      status: 'missed',
+      tip:
+        language === 'tamil'
+          ? `Missed or muffled "${rawWord}" — listen once slowly and repeat.`
+          : `Missed "${rawWord}" — project this word clearly with crisp ending sounds.`,
+    };
+  });
+
+  const overallAccuracy = Math.round(((clearCount + driftCount * 0.55) / targetWords.length) * 100);
+  const coachSummary =
+    overallAccuracy >= 85
+      ? language === 'tamil'
+        ? `அருமை! ${overallAccuracy}% தெளிவான உச்சரிப்பு — இயல்பான குரல் நயம்!`
+        : `Brilliant clarity (${overallAccuracy}%)! Your rhythm and articulation landed cleanly.`
+      : overallAccuracy >= 60
+      ? language === 'tamil'
+        ? `நல்ல முயற்சி (${overallAccuracy}%)! மஞ்சள்/சிவப்பு சொற்களை 0.75× வேகத்தில் கேட்டு மீண்டும் சொல்லுங்கள்.`
+        : `Solid momentum (${overallAccuracy}%)! Shadow the amber/red words slowly once and watch your score jump.`
+      : language === 'tamil'
+      ? `தொடங்குவதே வெற்றி (${overallAccuracy}%)! முதலில் ஆசிரியரின் குரலை மெதுவாகக் கேட்டு ஒவ்வொரு சொல்லாகப் பயிற்சி செய்யுங்கள்.`
+      : `Great first run (${overallAccuracy}%)! Listen at 0.75× slow speed and shadow 3 words at a time.`;
+
+  return { overallAccuracy, tokens, coachSummary };
+}
+
+export async function rewriteSentenceThreeRegisters(
+  text: string,
+  language: TutorLanguage
+): Promise<RegisterRewriteResult> {
+  const clean = text.trim();
+  const aiCfg = getTutorActiveAiParams();
+
+  try {
+    const res = await fetch(getApiUrl('/api/language-tutor/register-rewrite'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: clean, language, ...aiCfg }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.result && data.result.casual) {
+        return {
+          input: clean,
+          language,
+          casual: String(data.result.casual),
+          casualTranslit: data.result.casualTranslit ? String(data.result.casualTranslit) : undefined,
+          formal: String(data.result.formal || data.result.casual),
+          formalTranslit: data.result.formalTranslit ? String(data.result.formalTranslit) : undefined,
+          literary: String(data.result.literary || data.result.formal || data.result.casual),
+          literaryTranslit: data.result.literaryTranslit
+            ? String(data.result.literaryTranslit)
+            : undefined,
+          coachingNote: String(data.result.coachingNote || 'Notice how verb endings and word choices elevate tone.'),
+          modelUsed: data.modelUsed || aiCfg.model,
+        };
+      }
+    }
+  } catch {}
+
+  if (language === 'tamil') {
+    return {
+      input: clean,
+      language: 'tamil',
+      casual: `இதைப் பத்தி ரொம்ப சந்தோஷமா பேசுறேன்: "${clean}"`,
+      casualTranslit: `Idhai paththi romba sandhoshamaa pesuren: "${clean}"`,
+      formal: `இதைப் பற்றி மிக்க மகிழ்ச்சியுடன் பகிர்ந்து கொள்கிறேன்: "${clean}"`,
+      formalTranslit: `Idhai patri mikka magizhchiyudan pagirndhu kolgiren: "${clean}"`,
+      literary: `இக்கருத்தினைப் பெருமகிழ்வோடு தங்களின் முன் சமர்ப்பிக்கின்றேன்: "${clean}"`,
+      literaryTranslit: `Ikkaruththinai perumagizhvodhu thangalin mun samarppikkindren: "${clean}"`,
+      coachingNote:
+        'Notice the progression: Spoken பேச்சுத் தமிழ் ("பத்தி / பேசுறேன்") -> Formal ("பற்றி / பகிர்ந்து கொள்கிறேன்") -> Literary செந்தமிழ் ("இக்கருத்தினை / சமர்ப்பிக்கின்றேன்").',
+      modelUsed: 'Offline Register Engine',
+    };
+  }
+
+  return {
+    input: clean,
+    language: 'english',
+    casual: `Hey, just wanted to share this: ${clean}`,
+    formal: `I would like to clearly share the following update: ${clean}`,
+    literary: `Allow me to underscore a pivotal perspective: ${clean}`,
+    coachingNote:
+      'Casual uses warm contractions, Professional centers on clarity, and Executive C2 uses elevated verbs ("underscore", "pivotal").',
+    modelUsed: 'Offline Register Engine',
+  };
+}
+
+// ============================================================================
+// 6. BUNDLE 2: AI ESSAY, EMAIL & SPEECH CLINIC (BILINGUAL RED-PEN GRADER)
+// ============================================================================
+
+export async function gradeWritingWithEssayClinic(params: {
+  text: string;
+  language: TutorLanguage;
+  genre: string;
+  level: ProficiencyLevel;
+  userEmail?: string;
+  googleAccessToken?: string | null;
+}): Promise<{ clinic: EssayClinicResult; savedRecord: SavedLanguageTutorRecord }> {
+  const aiCfg = getTutorActiveAiParams();
+  let clinic: EssayClinicResult | null = null;
+
+  try {
+    const res = await fetch(getApiUrl('/api/language-tutor/essay-clinic'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: params.text,
+        language: params.language,
+        genre: params.genre,
+        level: params.level,
+        ...aiCfg,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && data.clinic && data.clinic.polishedVersion) {
+        const c = data.clinic;
+        clinic = {
+          cefrBand: String(c.cefrBand || 'B1'),
+          fluencyScore: Number(c.fluencyScore) || 82,
+          grammarScore: Number(c.grammarScore) || 80,
+          vocabRichness: Number(c.vocabRichness) || 78,
+          clarityScore: Number(c.clarityScore) || 84,
+          corrections: Array.isArray(c.corrections) ? c.corrections.slice(0, 6) : [],
+          polishedVersion: String(c.polishedVersion),
+          encouragement: String(c.encouragement || 'Wonderful voice and clarity!'),
+          modelUsed: data.modelUsed || aiCfg.model,
+        };
+      }
+    }
+  } catch {}
+
+  if (!clinic) {
+    const words = params.text.trim().split(/\s+/).filter(Boolean).length;
+    const score = Math.min(92, Math.max(70, 66 + Math.min(24, words)));
+    clinic = {
+      cefrBand: score >= 86 ? 'B2' : score >= 78 ? 'B1' : 'A2',
+      fluencyScore: score,
+      grammarScore: score - 1,
+      vocabRichness: score - 2,
+      clarityScore: Math.min(95, score + 2),
+      corrections: [
+        {
+          original: params.text.slice(0, 60),
+          improved:
+            params.language === 'tamil'
+              ? `${params.text.trim()} (சந்தி மற்றும் மரியாதை விகுதிகளைச் சரிபார்க்கவும்)`
+              : `${params.text.trim()} — try opening with a crisp topic sentence and one vivid transition.`,
+          reason:
+            params.language === 'tamil'
+              ? 'தெளிவான முன்னுரை மற்றும் முறையான வினை முடிவுகள் கட்டுரைக்கு அழகு சேர்க்கும்.'
+              : 'Adding a clear connector and active verb immediately elevates readability.',
+        },
+      ],
+      polishedVersion: params.text.trim(),
+      encouragement:
+        params.language === 'tamil'
+          ? 'அருமையான எழுத்து முயற்சி! தொடர்ந்து தினமும் 4–5 வாக்கியங்கள் எழுதினால் உங்கள் செந்தமிழ் விரைவில் ஒளிரும்.'
+          : 'Warm, authentic writing! Keep pairing crisp active verbs with clear transitions to reach the next CEFR band.',
+      modelUsed: 'Offline Writing Clinic',
+    };
+  }
+
+  const savedRecord = await saveTutorRecordEverywhere(
+    {
+      id: `clinic-${params.language}-${Date.now().toString(36)}`,
+      language: params.language,
+      level: params.level,
+      recordType: 'essay_clinic',
+      title: `${params.genre} Clinic (${clinic.cefrBand} · ${clinic.fluencyScore}%)`,
+      payload: {
+        originalText: params.text,
+        genre: params.genre,
+        clinic,
+      },
+      masteryPercent: clinic.fluencyScore,
+    },
+    {
+      userEmail: params.userEmail,
+      googleAccessToken: params.googleAccessToken,
+      exportMarkdownToDrive: true,
+    }
+  );
+
+  return { clinic, savedRecord };
+}
+
+// ============================================================================
+// 7. BUNDLE 3: SM-2 SPACED REPETITION ENGINE
+// ============================================================================
+
+export function scheduleSrsCardReview(
+  item: SrsVocabItem,
+  quality: 'again' | 'good' | 'easy'
+): SrsVocabItem {
+  let ease = item.easeFactor || 2.5;
+  let reps = item.repetitions || 0;
+  let interval = item.intervalDays || 1;
+
+  if (quality === 'again') {
+    reps = 0;
+    interval = 1;
+    ease = Math.max(1.3, ease - 0.2);
+  } else if (quality === 'good') {
+    reps += 1;
+    interval = reps === 1 ? 1 : reps === 2 ? 3 : Math.round(interval * ease);
+  } else {
+    reps += 1;
+    ease = Math.min(3.0, ease + 0.15);
+    interval = reps === 1 ? 3 : reps === 2 ? 7 : Math.round(interval * ease * 1.25);
+  }
+
+  const nextDate = new Date();
+  nextDate.setDate(nextDate.getDate() + interval);
+
+  return {
+    ...item,
+    easeFactor: Number(ease.toFixed(2)),
+    repetitions: reps,
+    intervalDays: interval,
+    nextReviewDate: nextDate.toISOString().split('T')[0],
+    lastReviewedAt: new Date().toISOString(),
+  };
+}
+
+// ============================================================================
+// 8. BUNDLE 4: MULTI-LEARNER FAMILY SUITE, CERTIFICATES & FLUENCY ANALYTICS
+// ============================================================================
+
+const FAMILY_SUITE_KEY = 'aura_language_tutor_family_suite_v1';
+
+export function buildDefaultProgressForLearner(isKid = false): TutorProgressState {
+  const today = new Date().toISOString().split('T')[0];
+  return {
+    xp: isKid ? 120 : 240,
+    streakDays: 1,
+    lastActiveDate: today,
+    completedModules: {},
+    masteredVocabIds: [],
+    totalLiveTurns: 0,
+    averageFluency: 84,
+    englishLevel: isKid ? 'beginner' : 'intermediate',
+    tamilLevel: 'beginner',
+    speakingMinutes: 0,
+    tracedLettersCount: 0,
+    essaysGradedCount: 0,
+    sentencePuzzlesSolved: 0,
+    srsDeck: [...buildStarterSrsDeck('tamil'), ...buildStarterSrsDeck('english')],
+    certificates: [],
+    fluencyHistory: [
+      { date: today, language: 'tamil', fluencyScore: 80, speakingMinutes: 5, xpEarned: 60 },
+      { date: today, language: 'english', fluencyScore: 86, speakingMinutes: 6, xpEarned: 80 },
+    ],
+    placementResult: {},
+  };
+}
+
+export function loadFamilyTutorSuite(): FamilyTutorSuiteState {
+  const fallbackSuite: FamilyTutorSuiteState = {
+    activeLearnerId: DEFAULT_FAMILY_LEARNERS[0].id,
+    learners: DEFAULT_FAMILY_LEARNERS,
+    progressByLearner: {
+      [DEFAULT_FAMILY_LEARNERS[0].id]: {
+        ...buildDefaultProgressForLearner(false),
+        ...loadTutorProgress(),
+      },
+      [DEFAULT_FAMILY_LEARNERS[1].id]: buildDefaultProgressForLearner(true),
+    },
+  };
+
+  if (typeof window === 'undefined') return fallbackSuite;
+  try {
+    const raw = localStorage.getItem(FAMILY_SUITE_KEY);
+    if (!raw) return fallbackSuite;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.learners) || parsed.learners.length === 0) {
+      return fallbackSuite;
+    }
+    return {
+      activeLearnerId: parsed.activeLearnerId || parsed.learners[0].id,
+      learners: parsed.learners,
+      progressByLearner: parsed.progressByLearner || fallbackSuite.progressByLearner,
+    };
+  } catch {
+    return fallbackSuite;
+  }
+}
+
+export async function saveFamilyTutorSuite(
+  suite: FamilyTutorSuiteState,
+  userEmail?: string,
+  accessToken?: string | null
+): Promise<void> {
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(FAMILY_SUITE_KEY, JSON.stringify(suite));
+    } catch {}
+  }
+
+  const activeProg =
+    suite.progressByLearner[suite.activeLearnerId] || buildDefaultProgressForLearner(false);
+
+  await saveTutorRecordEverywhere(
+    {
+      id: 'lt-family-suite-state',
+      language: 'english',
+      level: activeProg.englishLevel,
+      recordType: 'family_suite_state',
+      title: `Family Language Tutor Suite (${suite.learners.length} Learners)`,
+      payload: suite,
+      masteryPercent: activeProg.averageFluency,
+    },
+    {
+      userEmail,
+      googleAccessToken: accessToken,
+      exportMarkdownToDrive: false,
+    }
+  );
+}
+
+export async function issueStageCertificateAndSync(params: {
+  learner: TutorFamilyLearnerProfile;
+  language: TutorLanguage;
+  stageNumber: number;
+  cefrCode: string;
+  stageTitle: string;
+  scorePercent: number;
+  userEmail?: string;
+  googleAccessToken?: string | null;
+}): Promise<StageCompletionCertificate> {
+  const signedBy =
+    params.language === 'tamil'
+      ? 'ஆசிரியர் கலைவாணி (Prof. Kalaivani)'
+      : 'Prof. Clara Vance';
+  const issuedAt = new Date().toISOString();
+  const certId = `cert-${params.learner.id}-${params.language}-s${params.stageNumber}`;
+
+  const cert: StageCompletionCertificate = {
+    id: certId,
+    learnerId: params.learner.id,
+    learnerName: params.learner.name,
+    language: params.language,
+    stageNumber: params.stageNumber,
+    cefrCode: params.cefrCode,
+    stageTitle: params.stageTitle,
+    scorePercent: params.scorePercent,
+    signedBy,
+    issuedAt,
+  };
+
+  const md = [
+    `# Certificate of Mastery — ${params.language === 'tamil' ? 'தமிழ் (Tamil)' : 'English'}`,
+    '',
+    `**Awarded To:** ${cert.learnerName} (${params.learner.roleLabel})`,
+    `**Stage Completed:** Stage ${cert.stageNumber} (${cert.cefrCode}) — ${cert.stageTitle}`,
+    `**Mastery Score:** ${cert.scorePercent}%`,
+    `**Signed By:** ${cert.signedBy}`,
+    `**Issued On:** ${new Date(issuedAt).toLocaleDateString()}`,
+    '',
+    '> *Archived in Aura Family AI Assistant — SQLite & Google Drive (Family Circle / Language Tutor Studio).*',
+  ].join('\n');
+
+  const token = getEffectiveGoogleToken(params.googleAccessToken);
+  if (token) {
+    try {
+      const uploaded = await syncAnyAiOutputToDrive(
+        `Certificate_${params.language}_Stage${params.stageNumber}_${params.learner.name.replace(/[^a-zA-Z0-9]/g, '_')}`,
+        md,
+        token,
+        {
+          folderName: `${DRIVE_STUDIO_FOLDER}`,
+          category: 'language-tutor-certificate',
+          userEmail: params.userEmail,
+        }
+      );
+      if (uploaded) cert.driveWebViewLink = uploaded.driveWebViewLink;
+    } catch {}
+  }
+
+  await saveTutorRecordEverywhere(
+    {
+      id: certId,
+      language: params.language,
+      level: 'mastery',
+      recordType: 'certificate',
+      title: `Certificate: ${cert.learnerName} — ${params.language === 'tamil' ? 'Tamil' : 'English'} ${cert.cefrCode}`,
+      payload: cert,
+      masteryPercent: cert.scorePercent,
+      driveWebViewLink: cert.driveWebViewLink,
+    },
+    {
+      userEmail: params.userEmail,
+      googleAccessToken: params.googleAccessToken,
+      exportMarkdownToDrive: false,
+    }
+  );
+
+  return cert;
+}
+
+export async function exportTutorFluencyReportToDrive(params: {
+  learner: TutorFamilyLearnerProfile;
+  progress: TutorProgressState;
+  accessToken?: string | null;
+  userEmail?: string;
+}): Promise<{ ok: boolean; message: string; webViewLink?: string }> {
+  const { learner, progress, accessToken, userEmail } = params;
+  const token = getEffectiveGoogleToken(accessToken);
+
+  const md = [
+    `# Language Tutor Weekly Fluency & Mastery Report`,
+    `**Learner:** ${learner.avatar} ${learner.name} (${learner.roleLabel})`,
+    `**Generated:** ${new Date().toLocaleString()}`,
+    '',
+    '## Key Fluency Metrics',
+    `- **Total XP:** ${progress.xp} XP`,
+    `- **Current Streak:** ${progress.streakDays} Days`,
+    `- **Average Live Fluency:** ${progress.averageFluency}%`,
+    `- **Speaking Time Logged:** ${progress.speakingMinutes || 0} minutes (${progress.totalLiveTurns} live turns)`,
+    `- **English Level:** ${progress.englishLevel} | **Tamil Level:** ${progress.tamilLevel}`,
+    `- **Vocabulary Mastered / SRS Deck:** ${(progress.srsDeck || []).length} cards`,
+    `- **Letters Traced:** ${progress.tracedLettersCount || 0} | **Essays Graded:** ${progress.essaysGradedCount || 0} | **Sentence Puzzles Solved:** ${progress.sentencePuzzlesSolved || 0}`,
+    `- **Certificates Earned:** ${(progress.certificates || []).length}`,
+    '',
+    '## Fluency Trend History',
+    ...(progress.fluencyHistory || []).slice(-10).map(
+      (pt) => `- ${pt.date} (${pt.language.toUpperCase()}): Fluency ${pt.fluencyScore}% · ${pt.speakingMinutes}m · +${pt.xpEarned} XP`
+    ),
+  ].join('\n');
+
+  if (!token) {
+    return {
+      ok: false,
+      message: 'Analytics saved to SQLite! Sign in with Google to export this report to Google Drive.',
+    };
+  }
+
+  try {
+    const res = await syncAnyAiOutputToDrive(
+      `Language_Fluency_Report_${learner.name.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      md,
+      token,
+      {
+        folderName: DRIVE_STUDIO_FOLDER,
+        category: 'language-tutor-analytics',
+        userEmail,
+      }
+    );
+    if (res) {
+      return {
+        ok: true,
+        webViewLink: res.driveWebViewLink,
+        message: 'Weekly Fluency Report exported to Google Drive (Family Circle / Language Tutor Studio)!',
+      };
+    }
+    return { ok: false, message: 'Could not upload report to Google Drive right now.' };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || 'Drive upload failed.' };
+  }
 }
 

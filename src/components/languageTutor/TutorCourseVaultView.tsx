@@ -39,7 +39,7 @@ export const TutorCourseVaultView: React.FC<TutorCourseVaultViewProps> = ({
   const [typeFilter, setTypeFilter] = useState<'all' | 'course_lesson' | 'live_session'>('all');
 
   const visibleRecords = records.filter((r) => {
-    if (r.recordType === 'progress_snapshot') return false;
+    if (r.recordType === 'progress_snapshot' || r.recordType === 'family_suite_state') return false;
     if (langFilter !== 'all' && r.language !== langFilter) return false;
     if (typeFilter !== 'all' && r.recordType !== typeFilter) return false;
     if (searchQuery.trim()) {

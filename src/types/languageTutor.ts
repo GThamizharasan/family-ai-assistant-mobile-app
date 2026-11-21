@@ -18,7 +18,14 @@ export type TutorEmotion =
   | 'listening'
   | 'coaching';
 
-export type TutorStudioView = 'live' | 'roadmap' | 'lesson' | 'vault';
+export type TutorStudioView =
+  | 'live'
+  | 'roadmap'
+  | 'lesson'
+  | 'writing'
+  | 'immersion'
+  | 'analytics'
+  | 'vault';
 
 export interface TutorPersona {
   language: TutorLanguage;
@@ -209,7 +216,13 @@ export interface SavedLanguageTutorRecord {
   id: string;
   language: TutorLanguage;
   level: ProficiencyLevel;
-  recordType: 'course_lesson' | 'live_session' | 'progress_snapshot';
+  recordType:
+    | 'course_lesson'
+    | 'live_session'
+    | 'progress_snapshot'
+    | 'essay_clinic'
+    | 'certificate'
+    | 'family_suite_state';
   moduleId?: string;
   title: string;
   payload: any;
@@ -223,6 +236,138 @@ export interface SavedLanguageTutorRecord {
   updatedAt: string;
 }
 
+// Bundle 1: Pronunciation Heatmap & 3-Register Live Rewriter
+export interface WordHeatmapToken {
+  word: string;
+  status: 'clear' | 'drift' | 'missed';
+  tip?: string;
+}
+
+export interface PronunciationHeatmapResult {
+  overallAccuracy: number;
+  tokens: WordHeatmapToken[];
+  coachSummary: string;
+}
+
+export interface RegisterRewriteResult {
+  input: string;
+  language: TutorLanguage;
+  casual: string;
+  casualTranslit?: string;
+  formal: string;
+  formalTranslit?: string;
+  literary: string;
+  literaryTranslit?: string;
+  coachingNote: string;
+  modelUsed: string;
+}
+
+// Bundle 2: AI Essay/Email Clinic & Sentence Tile Builder
+export interface EssayClinicResult {
+  cefrBand: string;
+  fluencyScore: number;
+  grammarScore: number;
+  vocabRichness: number;
+  clarityScore: number;
+  corrections: Array<{
+    original: string;
+    improved: string;
+    reason: string;
+  }>;
+  polishedVersion: string;
+  encouragement: string;
+  modelUsed: string;
+}
+
+export interface SentenceTilePuzzle {
+  id: string;
+  language: TutorLanguage;
+  level: ProficiencyLevel;
+  promptMeaning: string;
+  correctTokens: string[];
+  grammarNote: string;
+  transliteration?: string;
+}
+
+// Bundle 3: Placement Diagnostic, SM-2 Spaced Repetition & Daily Immersion
+export interface PlacementQuestion {
+  id: string;
+  language: TutorLanguage;
+  stageNumber: number;
+  targetLevel: ProficiencyLevel;
+  prompt: string;
+  nativePrompt?: string;
+  options: string[];
+  correctAnswer: string;
+  explanation: string;
+}
+
+export interface SrsVocabItem {
+  id: string;
+  language: TutorLanguage;
+  term: string;
+  transliteration?: string;
+  phonetic?: string;
+  meaning: string;
+  exampleSentence?: string;
+  intervalDays: number;
+  easeFactor: number;
+  repetitions: number;
+  nextReviewDate: string; // YYYY-MM-DD
+  lastReviewedAt?: string;
+}
+
+export interface DailyImmersionItem {
+  id: string;
+  language: TutorLanguage;
+  category: 'story' | 'tirukkural' | 'idiom';
+  title: string;
+  nativeTitle?: string;
+  body: string;
+  transliteration?: string;
+  translation: string;
+  wordGlossary: Array<{
+    word: string;
+    meaning: string;
+    transliteration?: string;
+  }>;
+  reflectionPrompt: string;
+}
+
+// Bundle 4: Family Learner Profiles, Certificates & Fluency Analytics
+export type LearnerAgeGroup = 'kids_6_10' | 'teens' | 'adult' | 'elder';
+
+export interface TutorFamilyLearnerProfile {
+  id: string;
+  name: string;
+  avatar: string;
+  ageGroup: LearnerAgeGroup;
+  roleLabel: string;
+  createdAt: string;
+}
+
+export interface StageCompletionCertificate {
+  id: string;
+  learnerId: string;
+  learnerName: string;
+  language: TutorLanguage;
+  stageNumber: number;
+  cefrCode: string;
+  stageTitle: string;
+  scorePercent: number;
+  signedBy: string;
+  issuedAt: string;
+  driveWebViewLink?: string;
+}
+
+export interface FluencyHistoryPoint {
+  date: string; // YYYY-MM-DD
+  language: TutorLanguage;
+  fluencyScore: number;
+  speakingMinutes: number;
+  xpEarned: number;
+}
+
 export interface TutorProgressState {
   xp: number;
   streakDays: number;
@@ -233,5 +378,19 @@ export interface TutorProgressState {
   averageFluency: number;
   englishLevel: ProficiencyLevel;
   tamilLevel: ProficiencyLevel;
+  speakingMinutes?: number;
+  tracedLettersCount?: number;
+  essaysGradedCount?: number;
+  sentencePuzzlesSolved?: number;
+  srsDeck?: SrsVocabItem[];
+  certificates?: StageCompletionCertificate[];
+  fluencyHistory?: FluencyHistoryPoint[];
+  placementResult?: Partial<Record<TutorLanguage, { level: ProficiencyLevel; score: number; completedAt: string }>>;
+}
+
+export interface FamilyTutorSuiteState {
+  activeLearnerId: string;
+  learners: TutorFamilyLearnerProfile[];
+  progressByLearner: Record<string, TutorProgressState>;
 }
 

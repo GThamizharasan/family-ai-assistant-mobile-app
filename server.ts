@@ -1118,6 +1118,7 @@ app.post('/api/adaptive-learning/recognize-ink', async (req, res) => {
       geminiApiKey,
       modelOverride,
       practiceMode,
+      expectedAnswerKind = 'number',
     } = req.body;
 
     if (!imageBase64 || typeof imageBase64 !== 'string') {
@@ -1144,17 +1145,31 @@ app.post('/api/adaptive-learning/recognize-ink', async (req, res) => {
       subjectId === 'tamil' || String(language).toLowerCase().startsWith('ta');
 
     const isMathAnswerCheck = practiceMode === 'math_answer_check';
+    const mathKindGuidance =
+      expectedAnswerKind === 'compare'
+        ? 'Transcribe ONLY the comparison symbol visually drawn: "<", ">", or "=".'
+        : expectedAnswerKind === 'fraction'
+        ? 'Transcribe ONLY the fraction visually drawn in "numerator/denominator" format (e.g. "3/4", "1/2"), even if drawn vertically stacked with a horizontal bar.'
+        : expectedAnswerKind === 'time'
+        ? 'Transcribe ONLY the clock time visually drawn in "H:MM" format (e.g. "3:45", "10:30").'
+        : 'Transcribe ONLY the exact digits visually drawn inside the image (single or multi-digit integer, with an optional leading minus sign "-").';
+
     const systemInstruction = isMathAnswerCheck
-      ? `You are a strict optical digit reader for a child's handwritten math answer box on a clean white background.
-YOUR ONLY JOB: Transcribe the exact digits visually drawn inside the image (single or multi-digit integer, with an optional leading minus sign "-").
-CRITICAL RULES:
-1. NEVER solve, calculate, infer, or guess what the right answer might be — strictly transcribe ONLY the digits visually present in the image, even if wrong, messy, tilted, or wide-spaced.
-2. If the image is blank or unreadable, return "".
-3. Do NOT output spaces between digits (e.g. write "42", not "4 2").
-4. Return STRICT JSON matching:
+      ? `You are a strict optical handwriting reader for a child's handwritten math answer box on a clean white background.
+YOUR ONLY JOB: ${mathKindGuidance}
+CRITICAL OPTICAL ACCURACY RULES:
+1. NEVER solve, calculate, infer, or guess what the right answer might be — strictly transcribe ONLY the ink visually present in the image, even if wrong, messy, tilted, or wide-spaced.
+2. DISTINGUISH "8" vs "9" WITH EXTREME CARE:
+   - "8" has TWO loops (an upper loop AND a lower loop, either drawn as a continuous figure-8 crossing in the middle OR two stacked circles). Even if one loop is slightly open or smaller, two stacked loops / figure-8 crossing = "8".
+   - "9" has ONLY ONE loop at the top and a single open straight/curved stem descending downward with NO bottom loop.
+   - "6" has ONLY ONE loop at the bottom with an open curved stem rising from the top.
+   - "0" has ONE single large oval loop with NO middle pinch or crossing.
+3. If the image is blank or unreadable, return "".
+4. Do NOT output spaces between digits (e.g. write "42", not "4 2").
+5. Return STRICT JSON matching:
 {
   "detectedCategory": "text_characters",
-  "recognizedText": "<exact digits or empty string>",
+  "recognizedText": "<exact transcribed answer or empty string>",
   "detectedPurpose": "Child handwritten math answer",
   "solvedAnswer": null,
   "visualQuery": null,
@@ -1201,6 +1216,7 @@ Return STRICT JSON matching:
           'gemini-3.5-flash',
           'gemini-3.1-flash-lite',
           'gemini-2.5-flash',
+          'gemini-2.0-flash',
         ].filter((m): m is string => Boolean(m && typeof m === 'string'))
       )
     );
@@ -2024,6 +2040,153 @@ Return STRICT JSON only:
       fallback: true,
       reason: err?.message || 'Speaking evaluation failed',
     });
+  }
+});
+
+// Bundle 1: 3-Register Live Rewriter (Spoken/Casual -> Formal -> Literary/Executive C2)
+app.post('/api/language-tutor/register-rewrite', async (req, res) => {
+  try {
+    const {
+      language = 'english',
+      text = '',
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+    } = req.body || {};
+
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+    if (!cleanText) {
+      return res.status(400).json({ error: 'text is required.' });
+    }
+
+    const isTamil = language === 'tamil';
+    const systemPrompt = isTamil
+      ? `You are ஆசிரியர் கலைவாணி (Prof. Kalaivani), a master of Spoken Tamil (பேச்சுத் தமிழ்), Formal Tamil (முறையான தமிழ்), and Classical Senthamizh (செந்தமிழ்).
+Transform the user's input sentence (whether typed in English, Tanglish, or Tamil) into ALL THREE authentic Tamil registers, plus clear Tanglish transliteration for each.
+Return STRICT JSON only:
+{
+  "casual": "Natural warm spoken Tamil (பேச்சுத் தமிழ்)",
+  "casualTranslit": "Tanglish transliteration",
+  "formal": "Polite professional Tamil (முறையான தமிழ்)",
+  "formalTranslit": "Tanglish transliteration",
+  "literary": "Graceful Senthamizh (செந்தமிழ்)",
+  "literaryTranslit": "Tanglish transliteration",
+  "coachingNote": "1-2 sentences explaining the key word/verb shift across the 3 registers."
+}`
+      : `You are Prof. Clara Vance, an executive English rhetoric & tone coach.
+Transform the user's sentence into ALL THREE distinct English registers: Casual Everyday, Workplace Professional, and Executive C2 Eloquence.
+Return STRICT JSON only:
+{
+  "casual": "Warm natural everyday English",
+  "formal": "Polished workplace professional English",
+  "literary": "Crisp executive C2 / persuasive oratorical English",
+  "coachingNote": "1-2 sentences highlighting the phrasing upgrade and tone shift."
+}`;
+
+    const aiRes = await dispatchLanguageTutorAiJson({
+      systemPrompt,
+      userMessage: `Transform this sentence across 3 registers: "${cleanText}"`,
+      provider,
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.45,
+      maxTokens: 1000,
+    });
+
+    if ('fallbackReason' in aiRes) {
+      return res.status(200).json({ success: false, fallback: true, reason: aiRes.fallbackReason });
+    }
+
+    return res.json({
+      success: true,
+      result: aiRes.json,
+      modelUsed: `${aiRes.providerUsed} · ${aiRes.modelUsed}`,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/language-tutor/register-rewrite:', err);
+    return res.status(200).json({ success: false, fallback: true, reason: err?.message });
+  }
+});
+
+// Bundle 2: AI Essay, Email & Speech Clinic (Bilingual Red-Pen Grader)
+app.post('/api/language-tutor/essay-clinic', async (req, res) => {
+  try {
+    const {
+      language = 'english',
+      genre = 'School Essay',
+      level = 'intermediate',
+      text = '',
+      provider = 'gemini',
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+    } = req.body || {};
+
+    const cleanText = typeof text === 'string' ? text.trim() : '';
+    if (!cleanText) {
+      return res.status(400).json({ error: 'text is required.' });
+    }
+
+    const isTamil = language === 'tamil';
+    const systemPrompt = `You are ${
+      isTamil ? 'ஆசிரியர் கலைவாணி (Prof. Kalaivani)' : 'Prof. Clara Vance'
+    }, conducting a warm, encouraging, production-grade Red-Pen Writing Clinic on a learner's ${genre} (${language}, target level: ${level}).
+Evaluate grammar, Sandhi/spelling (if Tamil), tone, vocabulary richness, and flow. Provide concrete original -> improved diffs and a complete polished version.
+Return STRICT JSON only:
+{
+  "cefrBand": "A1 | A2 | B1 | B2 | C1 | C2",
+  "fluencyScore": 84,
+  "grammarScore": 82,
+  "vocabRichness": 80,
+  "clarityScore": 86,
+  "corrections": [
+    { "original": "exact snippet from learner text", "improved": "stronger natural version", "reason": "warm 1-sentence explanation" }
+  ],
+  "polishedVersion": "Complete upgraded version of the learner's text preserving their authentic voice",
+  "encouragement": "Warm 2-sentence human mentor note praising what shone and recommending 1 next focus"
+}`;
+
+    const aiRes = await dispatchLanguageTutorAiJson({
+      systemPrompt,
+      userMessage: `Grade and polish this ${genre}:\n"""\n${cleanText.slice(0, 3000)}\n"""`,
+      provider,
+      model,
+      customConfig,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.35,
+      maxTokens: 1800,
+    });
+
+    if ('fallbackReason' in aiRes) {
+      return res.status(200).json({ success: false, fallback: true, reason: aiRes.fallbackReason });
+    }
+
+    return res.json({
+      success: true,
+      clinic: aiRes.json,
+      modelUsed: `${aiRes.providerUsed} · ${aiRes.modelUsed}`,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/language-tutor/essay-clinic:', err);
+    return res.status(200).json({ success: false, fallback: true, reason: err?.message });
   }
 });
 

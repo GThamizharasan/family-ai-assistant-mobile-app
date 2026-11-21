@@ -45,6 +45,7 @@ import {
   InkRecognitionResult,
   InkStroke,
   InteractiveControlConfig,
+  KidsMathAnalyticsState,
   MathAnswerCheckResult,
   SavedVisualTopicRecord,
   SubjectDefinition,
@@ -67,6 +68,15 @@ import {
   paintMultiplicationTablesChart,
   repaintPracticeZoneOnly,
 } from '../../services/mathPracticeEngine';
+import {
+  generateAiStoryWordProblem,
+  loadKidsMathAnalytics,
+  recordCompletedMathSession,
+  recordMathAttemptOutcome,
+  saveKidsMathAnalytics,
+  syncKidsMathAnalyticsFromSqlite,
+} from '../../services/kidsMathAnalyticsService';
+import { KidsMathInsightsModal } from './KidsMathInsightsModal';
 import {
   buildCircleScene,
   buildCurveGraphScene,
@@ -234,11 +244,38 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   const [showCelebration, setShowCelebration] = useState<boolean>(false);
   const [isAnswerRevealed, setIsAnswerRevealed] = useState<boolean>(false);
 
+  // Bundle A/B/C State: Tables Quiz, AI Word Stories, Daily 5-Min Challenge, Mistake Bank & Parent Insights
+  const [tablesQuizTarget, setTablesQuizTarget] = useState<number | 'mixed'>('mixed');
+  const [isGeneratingAiStory, setIsGeneratingAiStory] = useState<boolean>(false);
+  const [isFiveMinChallenge, setIsFiveMinChallenge] = useState<boolean>(false);
+  const [fiveMinSecondsLeft, setFiveMinSecondsLeft] = useState<number>(300);
+  const [kidsAnalytics, setKidsAnalytics] = useState<KidsMathAnalyticsState>(() =>
+    loadKidsMathAnalytics()
+  );
+  const [insightsModalOpen, setInsightsModalOpen] = useState<boolean>(false);
+  const [insightsModalTab, setInsightsModalTab] = useState<'stickers' | 'mistakes' | 'report'>(
+    'stickers'
+  );
+  const questionStartMsRef = useRef<number>(Date.now());
+
   const practiceStrokesRef = useRef<InkStroke[]>([]);
   const autoCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const celebrationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentProblem = worksheet[currentIdx] || worksheet[0];
+
+  // Hydrate Kids Math Analytics & Mistake Bank from SQLite on mount
+  useEffect(() => {
+    void syncKidsMathAnalyticsFromSqlite(userEmail).then((synced) => {
+      setKidsAnalytics(synced);
+      if (synced.totalStars > 0) setStars((s) => Math.max(s, synced.totalStars));
+    });
+  }, [userEmail]);
+
+  // Track solve time per question
+  useEffect(() => {
+    questionStartMsRef.current = Date.now();
+  }, [currentProblem?.id]);
 
   useEffect(() => {
     if (initialMode) {
@@ -272,6 +309,22 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   const [topicQuery, setTopicQuery] = useState('');
   const [isRenderingVisual, setIsRenderingVisual] = useState(false);
   const [speakAiAnswer, setSpeakAiAnswer] = useState(true);
+
+  // Daily 5-Minute Star Challenge countdown timer
+  useEffect(() => {
+    if (!isFiveMinChallenge || boardMode !== 'math_practice') return;
+    if (fiveMinSecondsLeft <= 0) {
+      setIsFiveMinChallenge(false);
+      if (speakAiAnswer) {
+        speechEngine.speak('Time is up for the 5 minute challenge! Great effort!');
+      }
+      return;
+    }
+    const timer = setInterval(() => {
+      setFiveMinSecondsLeft((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isFiveMinChallenge, fiveMinSecondsLeft, boardMode, speakAiAnswer]);
   const [micNotice, setMicNotice] = useState<string | null>(null);
 
   const webRecognitionRef = useRef<any>(null);
@@ -618,53 +671,112 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     bgStyle,
   ]);
 
-  // Paperless Math Practice Helpers
+  // Paperless Math Practice Helpers (Core + Bundles A, B & C)
   const handleStartNewWorksheet = useCallback(
-    (nextFilter?: ArithmeticFilter, nextTier?: ArithmeticTier) => {
+    (
+      nextFilter?: ArithmeticFilter,
+      nextTier?: ArithmeticTier,
+      opts?: { tableNum?: number | 'mixed'; startFiveMin?: boolean }
+    ) => {
       setPracticeSubView('problems');
       const targetFilter = nextFilter ?? practiceFilter;
       const targetTier = nextTier ?? practiceTier;
+      const targetTable = opts?.tableNum ?? tablesQuizTarget;
       if (nextFilter) setPracticeFilter(targetFilter);
       if (nextTier) {
         setPracticeTier(targetTier);
         setPracticeLayout(targetTier === 'starter' ? 'horizontal' : 'column');
       }
+      if (opts?.tableNum !== undefined) {
+        setTablesQuizTarget(opts.tableNum);
+      }
+      if (opts?.startFiveMin) {
+        setIsFiveMinChallenge(true);
+        setFiveMinSecondsLeft(300);
+      } else {
+        setIsFiveMinChallenge(false);
+      }
       if (autoCheckTimerRef.current) clearTimeout(autoCheckTimerRef.current);
-      const fresh = generateWorksheetBatch(targetFilter, targetTier, 10);
+      const activeMistakeProblems = kidsAnalytics.mistakeBank
+        .filter((m) => !m.resolved)
+        .map((m) => m.problem);
+      const fresh = generateWorksheetBatch(targetFilter, targetTier, 10, {
+        tableNum: targetTable,
+        mistakes: activeMistakeProblems,
+      });
       setWorksheet(fresh);
       setCurrentIdx(0);
       setPracticeResult(null);
       setShowPracticeHint(false);
       setIsAnswerRevealed(false);
       setManualCorrectionInput('');
+      questionStartMsRef.current = Date.now();
     },
-    [practiceFilter, practiceTier]
+    [practiceFilter, practiceTier, tablesQuizTarget, kidsAnalytics.mistakeBank]
   );
 
+  const handleGenerateAiStory = useCallback(async () => {
+    setIsGeneratingAiStory(true);
+    try {
+      const storyProblem = await generateAiStoryWordProblem(practiceTier, speechLang);
+      setPracticeSubView('problems');
+      setPracticeFilter('word_story');
+      setWorksheet((prev) => {
+        const next = [...prev];
+        next[currentIdx] = storyProblem;
+        return next;
+      });
+      setPracticeResult(null);
+      setShowPracticeHint(false);
+      setIsAnswerRevealed(false);
+      practiceStrokesRef.current = [];
+      if (speakAiAnswer) {
+        const spoken =
+          speechLang.startsWith('ta') && storyProblem.storyTamil
+            ? storyProblem.storyTamil
+            : storyProblem.storyText || storyProblem.displayHorizontal;
+        speechEngine.speak(spoken);
+      }
+    } finally {
+      setIsGeneratingAiStory(false);
+    }
+  }, [practiceTier, speechLang, currentIdx, speakAiAnswer]);
+
   const handleCheckPracticeAnswer = useCallback(
-    async (overrideNumber?: number) => {
+    async (overrideAnswer?: number | string) => {
       if (!currentProblem) return;
       if (autoCheckTimerRef.current) {
         clearTimeout(autoCheckTimerRef.current);
         autoCheckTimerRef.current = null;
       }
 
+      const answerKind = currentProblem.answerKind || 'number';
+      const expectedText = currentProblem.expectedText ?? String(currentProblem.correctAnswer);
+
       setIsCheckingAnswer(true);
       try {
         let result: MathAnswerCheckResult;
-        if (typeof overrideNumber === 'number' && Number.isFinite(overrideNumber)) {
-          const isCorrect = overrideNumber === currentProblem.correctAnswer;
+        if (overrideAnswer !== undefined && String(overrideAnswer).trim() !== '') {
+          const cleanOverride = String(overrideAnswer).trim();
+          const numVal = Number(cleanOverride);
+          const isNumeric = answerKind === 'number' && Number.isFinite(numVal);
+          const isCorrect = isNumeric
+            ? numVal === currentProblem.correctAnswer
+            : cleanOverride.replace(/\s+/g, '') === expectedText.replace(/\s+/g, '');
+
           result = {
-            recognizedNumber: overrideNumber,
-            rawRecognizedText: String(overrideNumber),
+            recognizedNumber: isNumeric ? numVal : isCorrect ? currentProblem.correctAnswer : null,
+            recognizedText: cleanOverride,
+            rawRecognizedText: cleanOverride,
             isCorrect,
             expectedAnswer: currentProblem.correctAnswer,
+            expectedText,
             feedbackMessage: isCorrect
-              ? `Awesome! ${currentProblem.operandA} ${currentProblem.symbol} ${currentProblem.operandB} = ${currentProblem.correctAnswer} is spot on! ⭐`
-              : `Good try! Checked ${overrideNumber}. Try adjusting or peek at 💡 Step Hint!`,
+              ? `Awesome! ${expectedText} is spot on! ⭐`
+              : `Good try! Checked ${cleanOverride}. Try adjusting or peek at 💡 Step Hint!`,
             spokenFeedback: isCorrect
-              ? `Awesome! Equals ${currentProblem.correctAnswer}.`
-              : `Good try! ${overrideNumber} is not quite right yet.`,
+              ? `Awesome! ${expectedText} is completely right!`
+              : `Good try! ${cleanOverride} is not quite right yet.`,
             confidence: 1,
             usedOfflineFallback: false,
             modelUsed: 'Direct Quick Check',
@@ -679,10 +791,13 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
         const wasAlreadyCorrect = currentProblem.status === 'correct';
         const attemptsBefore = currentProblem.attempts;
+        const solveSec = Math.max(1, Math.round((Date.now() - questionStartMsRef.current) / 1000));
+        const hasValidRead =
+          result.recognizedNumber !== null || Boolean(result.recognizedText && result.recognizedText.trim());
 
         setPracticeResult(result);
 
-        if (result.recognizedNumber !== null) {
+        if (hasValidRead) {
           setWorksheet((prev) =>
             prev.map((q, idx) =>
               idx !== currentIdx
@@ -696,18 +811,60 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                       ? 'correct'
                       : 'tried',
                     studentAnswer: result.recognizedNumber ?? q.studentAnswer,
+                    studentAnswerText: result.recognizedText || q.studentAnswerText,
+                    solveSeconds: solveSec,
                   }
             )
           );
         }
 
         if (result.isCorrect) {
+          const earnedStars = !wasAlreadyCorrect
+            ? attemptsBefore === 0
+              ? 10
+              : 5
+            : 0;
+          const nextStreak = !wasAlreadyCorrect ? streak + 1 : streak;
+
           if (!wasAlreadyCorrect) {
-            setStreak((s) => s + 1);
-            setStars((st) => st + (attemptsBefore === 0 ? 10 : 5));
+            setStreak(nextStreak);
+            setStars((st) => st + earnedStars);
             setShowCelebration(true);
             if (celebrationTimerRef.current) clearTimeout(celebrationTimerRef.current);
             celebrationTimerRef.current = setTimeout(() => setShowCelebration(false), 2400);
+
+            // Update Bundle C analytics + Mistake Bank + SQLite
+            setKidsAnalytics((prev) => {
+              let next = recordMathAttemptOutcome(prev, {
+                problem: currentProblem,
+                isCorrect: true,
+                solveSeconds: solveSec,
+                starsDelta: earnedStars,
+                currentStreak: nextStreak,
+              });
+              const nowSolvedCount =
+                worksheet.filter((q, i) => (i === currentIdx ? true : q.status === 'correct')).length;
+              if (nowSolvedCount === worksheet.length) {
+                const bonusStars = isFiveMinChallenge ? 30 : 10;
+                next = recordCompletedMathSession(
+                  { ...next, totalStars: next.totalStars + bonusStars },
+                  {
+                    topic: practiceFilter,
+                    tier: practiceTier,
+                    solved: nowSolvedCount,
+                    total: worksheet.length,
+                    starsEarned: earnedStars + bonusStars,
+                    avgSeconds: solveSec,
+                    isFiveMinChallenge,
+                  }
+                );
+                if (isFiveMinChallenge) {
+                  setIsFiveMinChallenge(false);
+                }
+              }
+              saveKidsMathAnalytics(next, userEmail);
+              return next;
+            });
           }
 
           const ctx = canvasRef.current?.getContext('2d');
@@ -724,6 +881,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
               checkState: {
                 status: 'correct',
                 recognized: result.recognizedNumber ?? currentProblem.correctAnswer,
+                recognizedText: result.recognizedText || expectedText,
               },
             });
             pushHistory();
@@ -731,10 +889,20 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
           onBlackboardActivity(
             'ai_solve',
-            `Solved ${currentProblem.operandA} ${currentProblem.symbol} ${currentProblem.operandB} = ${currentProblem.correctAnswer}`
+            `Solved ${currentProblem.displayHorizontal} = ${expectedText}`
           );
-        } else if (result.recognizedNumber !== null) {
+        } else if (hasValidRead) {
           setStreak(0);
+          setKidsAnalytics((prev) => {
+            const next = recordMathAttemptOutcome(prev, {
+              problem: currentProblem,
+              isCorrect: false,
+              wrongAnswer: result.recognizedText || String(result.recognizedNumber ?? ''),
+              solveSeconds: solveSec,
+            });
+            saveKidsMathAnalytics(next, userEmail);
+            return next;
+          });
         }
 
         if (speakAiAnswer && result.spokenFeedback) {
@@ -747,7 +915,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
     [
       currentProblem,
       currentIdx,
-      worksheet.length,
+      worksheet,
       speechLang,
       boardTheme,
       bgStyle,
@@ -756,6 +924,11 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
       pushHistory,
       onBlackboardActivity,
       speakAiAnswer,
+      streak,
+      isFiveMinChallenge,
+      practiceFilter,
+      practiceTier,
+      userEmail,
     ]
   );
 
@@ -1933,11 +2106,11 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
           </div>
         )}
 
-        {/* KID PRACTICE CONTROL BAR (Paperless Math Practice Mode Only) */}
+        {/* KID PRACTICE CONTROL BAR (Paperless Math Practice Studio — Ages 6–10) */}
         {boardMode === 'math_practice' && (
-          <div className="pt-2 border-t border-slate-800/80 space-y-2">
+          <div className="pt-2 border-t border-slate-800/80 space-y-2.5">
+            {/* Row 1: Core Operations + Tables 1–10 + Tables Speed Quiz */}
             <div className="flex flex-wrap items-center justify-between gap-2">
-              {/* Operation Selector Pills + Tables 1-10 Right After Div */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {(
                   [
@@ -1974,16 +2147,29 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                 >
                   🔢 Tables 1–10
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleStartNewWorksheet('tables_quiz', practiceTier)}
+                  className={`px-2.5 py-1 rounded-xl text-xs font-bold border cursor-pointer transition-all ${
+                    practiceSubView === 'problems' && practiceFilter === 'tables_quiz'
+                      ? 'bg-gradient-to-r from-orange-500 to-amber-400 text-slate-950 border-amber-300 shadow'
+                      : 'bg-slate-950 text-orange-300 border-orange-500/40 hover:bg-slate-800'
+                  }`}
+                  title="Interactive Tables 1–10 Speed Quiz"
+                >
+                  ⚡ Table Quiz
+                </button>
               </div>
 
-              {/* Tier Pills + Column/Horizontal Toggle (Practice Problems Only) */}
+              {/* Age 6–10 Difficulty Tiers + Carry Grid / Horizontal Toggle */}
               {practiceSubView === 'problems' ? (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {(
                     [
-                      { id: 'starter', label: '⭐ Starter' },
-                      { id: 'builder', label: '⭐⭐ Builder' },
-                      { id: 'champion', label: '⭐⭐⭐ Champion' },
+                      { id: 'starter', label: '🌱 Age 6–7' },
+                      { id: 'builder', label: '🚀 Age 7–9' },
+                      { id: 'champion', label: '🏆 Age 9–10' },
                     ] as const
                   ).map((t) => (
                     <button
@@ -2006,13 +2192,13 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                         key={lay}
                         type="button"
                         onClick={() => setPracticeLayout(lay)}
-                        className={`px-2 py-0.5 rounded-lg capitalize cursor-pointer ${
+                        className={`px-2 py-0.5 rounded-lg cursor-pointer ${
                           practiceLayout === lay
                             ? 'bg-indigo-500 text-white'
                             : 'text-slate-400 hover:text-white'
                         }`}
                       >
-                        {lay}
+                        {lay === 'column' ? 'H|T|O Grid' : 'Horizontal'}
                       </button>
                     ))}
                   </div>
@@ -2023,6 +2209,149 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                 </div>
               )}
             </div>
+
+            {/* Row 2: Bundle B Visual Kids Labs + AI Story Word Problems + Bundle C Engagement */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-slate-800/60">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(
+                  [
+                    { id: 'clock', label: '🕐 Clock', active: 'from-sky-500 to-cyan-400 text-slate-950' },
+                    { id: 'fractions', label: '🍕 Fractions', active: 'from-pink-500 to-rose-400 text-white' },
+                    { id: 'money', label: '💰 ₹ Money', active: 'from-emerald-500 to-teal-400 text-slate-950' },
+                    { id: 'compare_pattern', label: '🐊 < > & Patterns', active: 'from-lime-400 to-emerald-400 text-slate-950' },
+                    { id: 'word_story', label: '📖 Story (EN/தமிழ்)', active: 'from-violet-500 to-fuchsia-500 text-white' },
+                  ] as const
+                ).map((lab) => (
+                  <button
+                    key={lab.id}
+                    type="button"
+                    onClick={() => handleStartNewWorksheet(lab.id, practiceTier)}
+                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border cursor-pointer transition-all ${
+                      practiceSubView === 'problems' && practiceFilter === lab.id
+                        ? `bg-gradient-to-r ${lab.active} border-white/40 shadow-md`
+                        : 'bg-slate-950/90 text-slate-200 border-slate-800 hover:border-slate-600'
+                    }`}
+                  >
+                    {lab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Bundle C: Daily 5-Min Challenge, Mistake Bank & Stickers/Parent Report */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isFiveMinChallenge) {
+                      setIsFiveMinChallenge(false);
+                    } else {
+                      handleStartNewWorksheet('mixed', practiceTier, { startFiveMin: true });
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-extrabold border cursor-pointer transition-all ${
+                    isFiveMinChallenge
+                      ? 'bg-gradient-to-r from-rose-500 to-amber-500 text-white border-amber-300 animate-pulse shadow-lg'
+                      : 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-400/40'
+                  }`}
+                >
+                  {isFiveMinChallenge
+                    ? `⏱️ ${Math.floor(fiveMinSecondsLeft / 60)}:${String(fiveMinSecondsLeft % 60).padStart(2, '0')} Left`
+                    : '⚡ 5-Min Quest'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInsightsModalTab('mistakes');
+                    setInsightsModalOpen(true);
+                  }}
+                  className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 border border-rose-400/40 cursor-pointer transition-all"
+                >
+                  🔁 Mistakes ({kidsAnalytics.mistakeBank.filter((m) => !m.resolved).length})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInsightsModalTab('stickers');
+                    setInsightsModalOpen(true);
+                  }}
+                  className="px-2.5 py-1 rounded-xl text-[11px] font-extrabold bg-gradient-to-r from-indigo-500/30 to-fuchsia-500/30 hover:brightness-110 text-fuchsia-100 border border-fuchsia-400/40 cursor-pointer transition-all"
+                >
+                  🏆 Stickers & Parent Report
+                </button>
+              </div>
+            </div>
+
+            {/* Optional Sub-Bar: Table Quiz Picker (Mixed or Specific Table 1..10) */}
+            {practiceSubView === 'problems' && practiceFilter === 'tables_quiz' && (
+              <div className="flex flex-wrap items-center gap-1 bg-amber-950/30 border border-amber-500/30 rounded-2xl px-2.5 py-1.5">
+                <span className="text-[10px] font-bold uppercase text-amber-300 mr-1">
+                  Quiz Table:
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleStartNewWorksheet('tables_quiz', practiceTier, { tableNum: 'mixed' })
+                  }
+                  className={`px-2 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer ${
+                    tablesQuizTarget === 'mixed'
+                      ? 'bg-amber-400 text-slate-950'
+                      : 'bg-slate-950 text-slate-300'
+                  }`}
+                >
+                  Mixed 2–10
+                </button>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((tNum) => (
+                  <button
+                    key={tNum}
+                    type="button"
+                    onClick={() =>
+                      handleStartNewWorksheet('tables_quiz', practiceTier, { tableNum: tNum })
+                    }
+                    className={`w-6 h-6 rounded-lg text-[11px] font-mono font-bold cursor-pointer ${
+                      tablesQuizTarget === tNum
+                        ? 'bg-amber-400 text-slate-950'
+                        : 'bg-slate-950 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {tNum}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Optional Sub-Bar: AI Word Story Actions */}
+            {practiceSubView === 'problems' && practiceFilter === 'word_story' && currentProblem && (
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-violet-950/35 border border-violet-500/35 rounded-2xl px-3 py-1.5">
+                <span className="text-[11px] font-semibold text-violet-200">
+                  📖 Bilingual Story Mode — listen & write the answer on the board!
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const textToRead =
+                        speechLang.startsWith('ta') && currentProblem.storyTamil
+                          ? currentProblem.storyTamil
+                          : currentProblem.storyText || currentProblem.displayHorizontal;
+                      speechEngine.speak(textToRead);
+                    }}
+                    className="px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-200 border border-emerald-400/40 text-[11px] font-bold cursor-pointer"
+                  >
+                    🔊 Read Story ({speechLang.startsWith('ta') ? 'தமிழ்' : 'EN'})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleGenerateAiStory()}
+                    disabled={isGeneratingAiStory}
+                    className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-600 disabled:opacity-50 text-white text-[11px] font-extrabold cursor-pointer"
+                  >
+                    {isGeneratingAiStory ? '✨ Writing Story...' : '✨ AI Fresh Story'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {practiceSubView === 'problems' ? (
               /* Live Progress Counters + 1..10 Question Navigator Pills */
@@ -2229,6 +2558,18 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
 
             <button
               type="button"
+              onClick={() =>
+                handleStartNewWorksheet('tables_quiz', practiceTier, {
+                  tableNum: highlightedTable ?? 'mixed',
+                })
+              }
+              className="px-3.5 py-2.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:brightness-110 text-white text-xs font-extrabold flex items-center gap-1.5 cursor-pointer shadow-md"
+            >
+              <span>⚡ Speed Quiz {highlightedTable ? `Table ${highlightedTable}` : 'Tables 2–10'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setPracticeSubView('problems')}
               className="px-3.5 py-2.5 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
@@ -2269,6 +2610,22 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                 )}
                 <span>Check My Answer</span>
               </button>
+
+              {currentProblem?.answerKind === 'compare' && (
+                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-2xl border border-lime-500/40">
+                  {(['<', '=', '>'] as const).map((sym) => (
+                    <button
+                      key={sym}
+                      type="button"
+                      onClick={() => void handleCheckPracticeAnswer(sym)}
+                      className="w-8 h-8 rounded-xl bg-lime-500/20 hover:bg-lime-400 hover:text-slate-950 text-lime-200 font-black text-base cursor-pointer transition-all"
+                      title={`Check symbol ${sym}`}
+                    >
+                      {sym}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <button
                 type="button"
@@ -2370,9 +2727,12 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                   >
                     {practiceResult.isCorrect ? '⭐ Correct!' : '💡 Keep Going!'}
                   </span>
-                  {practiceResult.recognizedNumber !== null && (
+                  {(practiceResult.recognizedText || practiceResult.recognizedNumber !== null) && (
                     <span className="text-xs font-mono text-slate-200 bg-slate-950/70 px-2 py-0.5 rounded-lg border border-slate-700">
-                      I read: <strong>{practiceResult.recognizedNumber}</strong>
+                      I read:{' '}
+                      <strong>
+                        {practiceResult.recognizedText ?? practiceResult.recognizedNumber}
+                      </strong>
                     </span>
                   )}
                   <span className="text-[10px] font-mono text-slate-400">
@@ -2399,19 +2759,27 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();
-                        const parsed = parseInt(manualCorrectionInput.trim(), 10);
-                        if (Number.isFinite(parsed)) {
-                          void handleCheckPracticeAnswer(parsed);
+                        const val = manualCorrectionInput.trim();
+                        if (val) {
+                          void handleCheckPracticeAnswer(val);
                           setManualCorrectionInput('');
                         }
                       }}
                       className="flex items-center gap-1"
                     >
                       <input
-                        type="number"
+                        type="text"
                         value={manualCorrectionInput}
                         onChange={(e) => setManualCorrectionInput(e.target.value)}
-                        placeholder="Misread? Type #"
+                        placeholder={
+                          currentProblem?.answerKind === 'fraction'
+                            ? 'e.g. 3/4'
+                            : currentProblem?.answerKind === 'time'
+                            ? 'e.g. 3:30'
+                            : currentProblem?.answerKind === 'compare'
+                            ? '< , > or ='
+                            : 'Misread? Type #'
+                        }
                         className="w-32 px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-white focus:outline-none focus:border-cyan-400"
                       />
                       <button
@@ -2933,6 +3301,20 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
         </div>
       </div>
       )}
+
+      {/* Bundle C: Kids Math Trophy Stickers, Mistake Bank & Parent Weekly Report Modal */}
+      <KidsMathInsightsModal
+        isOpen={insightsModalOpen}
+        initialTab={insightsModalTab}
+        analytics={kidsAnalytics}
+        googleAccessToken={googleAccessToken}
+        userEmail={userEmail}
+        onClose={() => setInsightsModalOpen(false)}
+        onLaunchMistakeBank={() => handleStartNewWorksheet('mistake_bank', practiceTier)}
+        onLaunchFiveMinChallenge={() =>
+          handleStartNewWorksheet('mixed', practiceTier, { startFiveMin: true })
+        }
+      />
     </div>
   );
 };

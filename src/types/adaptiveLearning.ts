@@ -346,9 +346,18 @@ export interface InkRecognitionResult {
 }
 
 export type ArithmeticOp = 'add' | 'sub' | 'mul' | 'div';
-export type ArithmeticFilter = ArithmeticOp | 'mixed';
+export type MathVisualLabTopic =
+  | 'tables_quiz'
+  | 'word_story'
+  | 'clock'
+  | 'fractions'
+  | 'money'
+  | 'compare_pattern'
+  | 'mistake_bank';
+export type ArithmeticFilter = ArithmeticOp | 'mixed' | MathVisualLabTopic;
 export type ArithmeticTier = 'starter' | 'builder' | 'champion';
 export type ArithmeticLayout = 'column' | 'horizontal';
+export type MathAnswerKind = 'number' | 'fraction' | 'time' | 'compare';
 
 export interface ArithmeticProblem {
   id: string;
@@ -357,25 +366,124 @@ export interface ArithmeticProblem {
   operandA: number;
   operandB: number;
   correctAnswer: number;
+  answerKind?: MathAnswerKind;
+  expectedText?: string;
+  topicCategory?: ArithmeticFilter;
   tier: ArithmeticTier;
   displayHorizontal: string;
   hintSteps: string[];
-  visualHintKind: 'dots_add' | 'dots_sub' | 'array_mul' | 'groups_div' | 'place_value';
+  visualHintKind:
+    | 'dots_add'
+    | 'dots_sub'
+    | 'array_mul'
+    | 'groups_div'
+    | 'place_value'
+    | 'clock_visual'
+    | 'fraction_visual'
+    | 'money_visual'
+    | 'compare_visual'
+    | 'story_visual';
+  storyText?: string;
+  storyTamil?: string;
+  clockData?: {
+    hours: number;
+    minutes: number;
+    mode: 'read' | 'elapsed';
+    elapsedMins?: number;
+  };
+  fractionData?: {
+    numerator: number;
+    denominator: number;
+    shape: 'pizza' | 'chocolate';
+  };
+  moneyData?: {
+    itemName: string;
+    itemEmoji: string;
+    price: number;
+    paid: number;
+    currency: '₹' | '$';
+    askKind: 'change' | 'total';
+    secondItemName?: string;
+    secondItemPrice?: number;
+  };
+  compareData?: {
+    leftVal: number;
+    rightVal: number;
+    kind: 'compare' | 'pattern';
+    sequence?: Array<number | null>;
+    stepRule?: string;
+  };
+  showCarryBoxes?: boolean;
   status: 'pending' | 'correct' | 'tried';
   attempts: number;
   studentAnswer?: number;
+  studentAnswerText?: string;
+  startedAtMs?: number;
+  solveSeconds?: number;
 }
 
 export interface MathAnswerCheckResult {
   recognizedNumber: number | null;
+  recognizedText?: string;
   rawRecognizedText: string;
   isCorrect: boolean;
   expectedAnswer: number;
+  expectedText?: string;
   feedbackMessage: string;
   spokenFeedback: string;
   confidence: number;
   usedOfflineFallback: boolean;
   modelUsed: string;
+}
+
+export interface MathMistakeRecord {
+  id: string;
+  problem: ArithmeticProblem;
+  wrongAnswer: string;
+  missedAt: string;
+  retryCount: number;
+  resolved: boolean;
+}
+
+export interface MathTopicStat {
+  topic: string;
+  label: string;
+  attempted: number;
+  correct: number;
+  totalSeconds: number;
+}
+
+export interface MathStickerBadge {
+  id: string;
+  title: string;
+  emoji: string;
+  description: string;
+  unlocked: boolean;
+  unlockedAt?: string;
+  progress: number;
+  target: number;
+  gradient: string;
+}
+
+export interface KidsMathAnalyticsState {
+  totalStars: number;
+  bestStreak: number;
+  dailyChallengesCompleted: number;
+  lastPracticeDate: string;
+  dailySolvedToday: number;
+  topicStats: Record<string, MathTopicStat>;
+  mistakeBank: MathMistakeRecord[];
+  recentSessions: Array<{
+    id: string;
+    topic: string;
+    tier: ArithmeticTier;
+    solved: number;
+    total: number;
+    starsEarned: number;
+    avgSeconds: number;
+    isFiveMinChallenge?: boolean;
+    completedAt: string;
+  }>;
 }
 
 export interface SavedVisualTopicRecord {

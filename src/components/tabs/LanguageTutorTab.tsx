@@ -11,14 +11,21 @@ import {
   CheckCircle2,
   X,
   MessageSquare,
+  PenTool,
+  Sun,
+  Award,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
   ConstructedLanguageLesson,
+  FamilyTutorSuiteState,
   LanguageModuleSummary,
+  LearnerAgeGroup,
   LiveTutorMessage,
   ProficiencyLevel,
   SavedLanguageTutorRecord,
+  SrsVocabItem,
+  StageCompletionCertificate,
   TutorLanguage,
   TutorProgressState,
   TutorStudioView,
@@ -31,10 +38,12 @@ import {
   buildFallbackLanguageLesson,
 } from '../../data/languageTutorCurriculum';
 import {
+  buildDefaultProgressForLearner,
   constructLanguageLessonWithAi,
   deleteTutorRecordEverywhere,
   loadAllSavedTutorRecords,
-  loadTutorProgress,
+  loadFamilyTutorSuite,
+  saveFamilyTutorSuite,
   saveTutorProgress,
   saveTutorRecordEverywhere,
   syncAllLocalRecordsToSqliteAndDrive,
@@ -45,6 +54,9 @@ import { LiveTutorSessionView } from '../languageTutor/LiveTutorSessionView';
 import { CourseRoadmapStudioView } from '../languageTutor/CourseRoadmapStudioView';
 import { InteractiveLessonView } from '../languageTutor/InteractiveLessonView';
 import { TutorCourseVaultView } from '../languageTutor/TutorCourseVaultView';
+import { WritingAndTracingLabView } from '../languageTutor/WritingAndTracingLabView';
+import { ImmersionAndPlacementView } from '../languageTutor/ImmersionAndPlacementView';
+import { FamilyAnalyticsAndCertificatesView } from '../languageTutor/FamilyAnalyticsAndCertificatesView';
 
 export const LanguageTutorTab: React.FC = () => {
   const { user, googleAccessToken } = useApp();
@@ -66,7 +78,16 @@ export const LanguageTutorTab: React.FC = () => {
 
   const [language, setLanguage] = useState<TutorLanguage>(initialLaunch.language || 'tamil');
   const [activeView, setActiveView] = useState<TutorStudioView>(initialLaunch.view || 'live');
-  const [progress, setProgress] = useState<TutorProgressState>(() => loadTutorProgress());
+  const [familySuite, setFamilySuite] = useState<FamilyTutorSuiteState>(() =>
+    loadFamilyTutorSuite()
+  );
+  const activeLearner =
+    familySuite.learners.find((l) => l.id === familySuite.activeLearnerId) ||
+    familySuite.learners[0];
+  const progress: TutorProgressState =
+    familySuite.progressByLearner[activeLearner.id] ||
+    buildDefaultProgressForLearner(activeLearner.ageGroup === 'kids_6_10');
+
   const [savedRecords, setSavedRecords] = useState<SavedLanguageTutorRecord[]>([]);
   const [activeLessonByLang, setActiveLessonByLang] = useState<
     Record<TutorLanguage, ConstructedLanguageLesson | null>
@@ -110,7 +131,7 @@ export const LanguageTutorTab: React.FC = () => {
       if (detail.language === 'english' || detail.language === 'tamil') {
         setLanguage(detail.language);
       }
-      if (['live', 'roadmap', 'lesson', 'vault'].includes(detail.view)) {
+      if (['live', 'roadmap', 'lesson', 'writing', 'immersion', 'analytics', 'vault'].includes(detail.view)) {
         setActiveView(detail.view);
       }
     };
@@ -126,10 +147,17 @@ export const LanguageTutorTab: React.FC = () => {
         const merged = await loadAllSavedTutorRecords(effectiveEmail, effectiveToken, forceDrive);
         setSavedRecords(merged);
 
-        // Restore latest progress snapshot if newer
-        const snap = merged.find((r) => r.recordType === 'progress_snapshot' && r.payload?.xp);
-        if (snap && snap.payload.xp > progress.xp) {
-          setProgress((prev) => ({ ...prev, ...snap.payload }));
+        // Restore family suite state from SQLite/Drive if available
+        const suiteRec = merged.find(
+          (r) => r.recordType === 'family_suite_state' && Array.isArray(r.payload?.learners)
+        );
+        if (suiteRec && suiteRec.payload.learners.length > 0) {
+          setFamilySuite((prev) => {
+            const remote = suiteRec.payload as FamilyTutorSuiteState;
+            const prevXp = prev.progressByLearner[prev.activeLearnerId]?.xp || 0;
+            const remXp = remote.progressByLearner?.[remote.activeLearnerId]?.xp || 0;
+            return remXp > prevXp || remote.learners.length > prev.learners.length ? remote : prev;
+          });
         }
       } finally {
         setIsSyncing(false);
@@ -155,10 +183,21 @@ export const LanguageTutorTab: React.FC = () => {
   };
 
   const updateAndPersistProgress = (updater: (prev: TutorProgressState) => TutorProgressState) => {
-    setProgress((prev) => {
-      const next = updater(prev);
-      void saveTutorProgress(next, effectiveEmail, effectiveToken);
-      return next;
+    setFamilySuite((prevSuite) => {
+      const learnerId = prevSuite.activeLearnerId;
+      const curProg =
+        prevSuite.progressByLearner[learnerId] || buildDefaultProgressForLearner(false);
+      const nextProg = updater(curProg);
+      const nextSuite: FamilyTutorSuiteState = {
+        ...prevSuite,
+        progressByLearner: {
+          ...prevSuite.progressByLearner,
+          [learnerId]: nextProg,
+        },
+      };
+      void saveFamilyTutorSuite(nextSuite, effectiveEmail, effectiveToken);
+      void saveTutorProgress(nextProg, effectiveEmail, effectiveToken);
+      return nextSuite;
     });
   };
 
@@ -368,36 +407,58 @@ export const LanguageTutorTab: React.FC = () => {
             </p>
           </div>
 
-          {/* Tactile Language Toggle Pill */}
-          <div className="flex items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-2xl border border-white/15 self-start lg:self-center shrink-0">
-            <button
-              onClick={() => {
-                speechEngine.stopSpeaking();
-                setLanguage('english');
+          {/* Tactile Language Toggle + Family Learner Quick Switcher */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 shrink-0">
+            <select
+              value={familySuite.activeLearnerId}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setFamilySuite((prev) => {
+                  const next = { ...prev, activeLearnerId: nextId };
+                  void saveFamilyTutorSuite(next, effectiveEmail, effectiveToken);
+                  return next;
+                });
               }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
-                language === 'english'
-                  ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white shadow-lg shadow-sky-500/30'
-                  : 'text-slate-300 hover:text-white'
-              }`}
+              className="px-3 py-2 rounded-2xl bg-slate-950/85 border border-amber-400/35 text-xs font-extrabold text-amber-200 outline-none cursor-pointer"
+              title="Switch active family learner profile"
             >
-              <span>🇬🇧</span>
-              <span>English (Clara)</span>
-            </button>
-            <button
-              onClick={() => {
-                speechEngine.stopSpeaking();
-                setLanguage('tamil');
-              }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
-                language === 'tamil'
-                  ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 text-white shadow-lg shadow-amber-500/30'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <span>🪔</span>
-              <span>தமிழ் (கலைவாணி)</span>
-            </button>
+              {familySuite.learners.map((l) => (
+                <option key={l.id} value={l.id} className="bg-slate-900 text-white">
+                  {l.avatar} {l.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex items-center gap-1.5 bg-slate-950/80 p-1.5 rounded-2xl border border-white/15">
+              <button
+                onClick={() => {
+                  speechEngine.stopSpeaking();
+                  setLanguage('english');
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  language === 'english'
+                    ? 'bg-gradient-to-r from-sky-500 to-indigo-600 text-white shadow-lg shadow-sky-500/30'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <span>🇬🇧</span>
+                <span>English (Clara)</span>
+              </button>
+              <button
+                onClick={() => {
+                  speechEngine.stopSpeaking();
+                  setLanguage('tamil');
+                }}
+                className={`px-3.5 py-2 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  language === 'tamil'
+                    ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 text-white shadow-lg shadow-amber-500/30'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                <span>🪔</span>
+                <span>தமிழ் (கலைவாணி)</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -461,34 +522,55 @@ export const LanguageTutorTab: React.FC = () => {
         </div>
       )}
 
-      {/* 4 Studio Navigation Views */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {/* 7 Studio Navigation Views (All 4 Production Bundles) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
         {[
           {
             id: 'live' as TutorStudioView,
-            label: 'Live Human Tutor',
-            sub: 'Voice & Role-Play',
+            label: 'Live Call Tutor',
+            sub: 'Hands-Free + Heatmap',
             icon: Mic,
             grad: 'from-rose-500 to-amber-500',
           },
           {
             id: 'roadmap' as TutorStudioView,
             label: 'Course Roadmap',
-            sub: '18 Stages + AI Builder',
+            sub: '18 Stages + AI',
             icon: Map,
             grad: 'from-violet-500 to-fuchsia-600',
           },
           {
             id: 'lesson' as TutorStudioView,
-            label: 'Lesson & Script Lab',
+            label: 'Lesson & Lab',
             sub: isTamil ? 'உயிர்மெய் + Drills' : '12-Tense + Drills',
             icon: BookOpen,
             grad: 'from-cyan-500 to-indigo-600',
           },
           {
+            id: 'writing' as TutorStudioView,
+            label: 'Writing & Trace',
+            sub: 'Tracing + Clinic + Tiles',
+            icon: PenTool,
+            grad: 'from-fuchsia-500 to-pink-600',
+          },
+          {
+            id: 'immersion' as TutorStudioView,
+            label: 'Daily & Exam',
+            sub: 'SRS + A1–C2 Test',
+            icon: Sun,
+            grad: 'from-amber-500 to-orange-600',
+          },
+          {
+            id: 'analytics' as TutorStudioView,
+            label: 'Family & Certs',
+            sub: `${(progress.certificates || []).length} Certs · Analytics`,
+            icon: Award,
+            grad: 'from-indigo-500 to-sky-500',
+          },
+          {
             id: 'vault' as TutorStudioView,
-            label: 'SQLite + Drive Vault',
-            sub: `${savedRecords.filter((r) => r.recordType !== 'progress_snapshot').length} Saved Items`,
+            label: 'SQLite + Drive',
+            sub: `${savedRecords.filter((r) => !['progress_snapshot', 'family_suite_state'].includes(r.recordType)).length} Saved`,
             icon: Cloud,
             grad: 'from-emerald-500 to-teal-600',
           },
@@ -499,23 +581,23 @@ export const LanguageTutorTab: React.FC = () => {
             <button
               key={item.id}
               onClick={() => setActiveView(item.id)}
-              className={`rounded-2xl p-3 border text-left transition-all cursor-pointer flex items-center gap-2.5 ${
+              className={`rounded-2xl p-2.5 border text-left transition-all cursor-pointer flex items-center gap-2 ${
                 isActive
                   ? `bg-gradient-to-r ${item.grad} text-white border-white/30 shadow-lg`
                   : 'bg-slate-900/80 border-white/10 text-slate-300 hover:border-white/25 hover:text-white'
               }`}
             >
               <div
-                className={`p-2 rounded-xl shrink-0 ${
+                className={`p-1.5 rounded-xl shrink-0 ${
                   isActive ? 'bg-white/20' : 'bg-slate-950/80'
                 }`}
               >
                 <Icon className="w-4 h-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-extrabold truncate">{item.label}</div>
+                <div className="text-[11px] font-extrabold truncate">{item.label}</div>
                 <div
-                  className={`text-[10px] truncate ${
+                  className={`text-[9.5px] truncate ${
                     isActive ? 'text-white/85' : 'text-slate-400'
                   }`}
                 >
@@ -535,17 +617,158 @@ export const LanguageTutorTab: React.FC = () => {
           activeLevel={currentLevel}
           activeLesson={activeLesson}
           onTurnAwardXp={(xp, fluencyScore) => {
+            const today = new Date().toISOString().split('T')[0];
+            updateAndPersistProgress((prev) => {
+              const nextFluency =
+                typeof fluencyScore === 'number'
+                  ? Math.round((prev.averageFluency * 3 + fluencyScore) / 4)
+                  : prev.averageFluency;
+              const history = [...(prev.fluencyHistory || [])];
+              const last = history[history.length - 1];
+              if (last && last.date === today && last.language === language) {
+                history[history.length - 1] = {
+                  ...last,
+                  fluencyScore: nextFluency,
+                  speakingMinutes: last.speakingMinutes + 1,
+                  xpEarned: last.xpEarned + xp,
+                };
+              } else {
+                history.push({
+                  date: today,
+                  language,
+                  fluencyScore: nextFluency,
+                  speakingMinutes: 1,
+                  xpEarned: xp,
+                });
+              }
+              return {
+                ...prev,
+                xp: prev.xp + xp,
+                totalLiveTurns: prev.totalLiveTurns + 1,
+                speakingMinutes: (prev.speakingMinutes || 0) + 1,
+                averageFluency: nextFluency,
+                fluencyHistory: history.slice(-14),
+              };
+            });
+          }}
+          onSaveSessionRecord={handleSaveSessionRecord}
+        />
+      )}
+
+      {activeView === 'writing' && (
+        <WritingAndTracingLabView
+          language={language}
+          activeLevel={currentLevel}
+          userEmail={effectiveEmail}
+          googleAccessToken={effectiveToken}
+          onAwardXp={(xp, kind) => {
             updateAndPersistProgress((prev) => ({
               ...prev,
               xp: prev.xp + xp,
-              totalLiveTurns: prev.totalLiveTurns + 1,
-              averageFluency:
-                typeof fluencyScore === 'number'
-                  ? Math.round((prev.averageFluency * 3 + fluencyScore) / 4)
-                  : prev.averageFluency,
+              tracedLettersCount: (prev.tracedLettersCount || 0) + (kind === 'trace' ? 1 : 0),
+              essaysGradedCount: (prev.essaysGradedCount || 0) + (kind === 'essay' ? 1 : 0),
+              sentencePuzzlesSolved: (prev.sentencePuzzlesSolved || 0) + (kind === 'puzzle' ? 1 : 0),
             }));
           }}
-          onSaveSessionRecord={handleSaveSessionRecord}
+          onRecordSaved={(rec) => {
+            setSavedRecords((prev) => [rec, ...prev.filter((r) => r.id !== rec.id)]);
+          }}
+        />
+      )}
+
+      {activeView === 'immersion' && (
+        <ImmersionAndPlacementView
+          language={language}
+          srsDeck={progress.srsDeck || []}
+          lastPlacement={progress.placementResult?.[language]}
+          onCompletePlacement={(newLevel, scorePercent) => {
+            updateAndPersistProgress((prev) => ({
+              ...prev,
+              xp: prev.xp + 60,
+              ...(language === 'tamil' ? { tamilLevel: newLevel } : { englishLevel: newLevel }),
+              placementResult: {
+                ...(prev.placementResult || {}),
+                [language]: {
+                  level: newLevel,
+                  score: scorePercent,
+                  completedAt: new Date().toISOString(),
+                },
+              },
+            }));
+            flashBanner(
+              `🎯 Placement Verified: ${newLevel.replace('_', ' ').toUpperCase()} (${scorePercent}%) — Saved to SQLite & Drive!`
+            );
+          }}
+          onUpdateSrsCard={(updated: SrsVocabItem) => {
+            updateAndPersistProgress((prev) => ({
+              ...prev,
+              srsDeck: (prev.srsDeck || []).map((c) => (c.id === updated.id ? updated : c)),
+            }));
+          }}
+          onAwardXp={(xp) => {
+            updateAndPersistProgress((prev) => ({ ...prev, xp: prev.xp + xp }));
+          }}
+        />
+      )}
+
+      {activeView === 'analytics' && (
+        <FamilyAnalyticsAndCertificatesView
+          language={language}
+          learners={familySuite.learners}
+          activeLearner={activeLearner}
+          progress={progress}
+          userEmail={effectiveEmail}
+          googleAccessToken={effectiveToken}
+          onSelectLearner={(learnerId) => {
+            setFamilySuite((prev) => {
+              const next = { ...prev, activeLearnerId: learnerId };
+              void saveFamilyTutorSuite(next, effectiveEmail, effectiveToken);
+              return next;
+            });
+          }}
+          onAddLearner={({ name, avatar, ageGroup }: { name: string; avatar: string; ageGroup: LearnerAgeGroup }) => {
+            const roleMap: Record<LearnerAgeGroup, string> = {
+              kids_6_10: 'Playful Kids Track (Age 6–10)',
+              teens: 'School & Debate Track',
+              adult: 'Executive & Classical Track',
+              elder: 'Heritage & Leisure Track',
+            };
+            const newId = `learner-${Date.now().toString(36)}`;
+            setFamilySuite((prev) => {
+              const next: FamilyTutorSuiteState = {
+                activeLearnerId: newId,
+                learners: [
+                  ...prev.learners,
+                  {
+                    id: newId,
+                    name,
+                    avatar,
+                    ageGroup,
+                    roleLabel: roleMap[ageGroup],
+                    createdAt: new Date().toISOString(),
+                  },
+                ],
+                progressByLearner: {
+                  ...prev.progressByLearner,
+                  [newId]: buildDefaultProgressForLearner(ageGroup === 'kids_6_10'),
+                },
+              };
+              void saveFamilyTutorSuite(next, effectiveEmail, effectiveToken);
+              return next;
+            });
+            flashBanner(`👨‍👩‍👧‍👦 Added family learner "${name}" & synced to SQLite + Drive!`);
+          }}
+          onCertificateIssued={(cert: StageCompletionCertificate) => {
+            updateAndPersistProgress((prev) => ({
+              ...prev,
+              xp: prev.xp + 100,
+              certificates: [
+                cert,
+                ...(prev.certificates || []).filter((c) => c.id !== cert.id),
+              ],
+            }));
+            flashBanner(`🎓 Stage ${cert.stageNumber} (${cert.cefrCode}) Certificate issued & archived to SQLite + Drive!`);
+          }}
         />
       )}
 
