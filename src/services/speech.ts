@@ -73,6 +73,9 @@ export class VoiceAssistantEngine {
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private currentAudioElement: HTMLAudioElement | null = null;
+  private sharedAudioElement: HTMLAudioElement | null = null;
+  private activeTtsWatchdog: any = null;
+  private speakSessionId: number = 0;
   private currentBufferSource: AudioBufferSourceNode | null = null;
   private cachedVoices: SpeechSynthesisVoice[] = [];
 
@@ -944,37 +947,97 @@ export class VoiceAssistantEngine {
     }
   }
 
-  /**
-   * Direct high-fidelity Google TTS streaming audio fallback (essential for Tamil on devices without Tamil OS voice packs).
-   * Splits text into natural sentence chunks and plays them seamlessly in sequence.
-   */
-  public async playGoogleTtsDirect(text: string, langCode: string, onEnd?: () => void): Promise<boolean> {
-    try {
-      await this.unlockAudio();
-      // Split into sentences / natural chunks (<= 150 chars for Google translate_tts)
-      const sentences = text.match(/[^.!?\n,;]+[.!?\n,;]*/g) || [text];
-      const chunks: string[] = [];
-      let currentChunk = '';
-      for (const s of sentences) {
-        if ((currentChunk + ' ' + s).trim().length <= 150) {
-          currentChunk = (currentChunk + ' ' + s).trim();
+  private getSharedAudioElement(): HTMLAudioElement {
+    if (!this.sharedAudioElement) {
+      const el = new Audio();
+      try {
+        (el as any).playsInline = true;
+        el.setAttribute('playsinline', 'true');
+        el.setAttribute('webkit-playsinline', 'true');
+      } catch {}
+      el.preload = 'auto';
+      this.sharedAudioElement = el;
+    }
+    return this.sharedAudioElement;
+  }
+
+  private clearAudioHandlers(audio: HTMLAudioElement | null) {
+    if (!audio) return;
+    audio.onplay = null;
+    audio.onplaying = null;
+    audio.ontimeupdate = null;
+    audio.onended = null;
+    audio.onerror = null;
+  }
+
+  private splitTextIntoTtsChunks(text: string, maxLen = 150): string[] {
+    const sentences = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
+    const chunks: string[] = [];
+    let currentChunk = '';
+
+    for (const rawSentence of sentences) {
+      const s = rawSentence.trim();
+      if (!s) continue;
+
+      if ((currentChunk + ' ' + s).trim().length <= maxLen) {
+        currentChunk = (currentChunk + ' ' + s).trim();
+      } else {
+        if (currentChunk) {
+          chunks.push(currentChunk);
+          currentChunk = '';
+        }
+        if (s.length <= maxLen) {
+          currentChunk = s;
         } else {
-          if (currentChunk) chunks.push(currentChunk);
-          currentChunk = s.trim().slice(0, 150);
+          // Split overly long sentence on commas/spaces without dropping words
+          const words = s.split(/\s+/);
+          let piece = '';
+          for (const w of words) {
+            if ((piece + ' ' + w).trim().length <= maxLen) {
+              piece = (piece + ' ' + w).trim();
+            } else {
+              if (piece) chunks.push(piece);
+              piece = w.slice(0, maxLen);
+            }
+          }
+          if (piece) currentChunk = piece;
         }
       }
-      if (currentChunk) chunks.push(currentChunk);
+    }
+    if (currentChunk) chunks.push(currentChunk);
+    return chunks;
+  }
 
+  /**
+   * Direct high-fidelity Google TTS streaming audio fallback (essential for Tamil on devices without Tamil OS voice packs).
+   * Reuses a single gesture-unlocked HTMLAudioElement across chunks so mobile browsers play all lines seamlessly.
+   */
+  public async playGoogleTtsDirect(
+    text: string,
+    langCode: string,
+    onEnd?: () => void,
+    sessionId?: number
+  ): Promise<boolean> {
+    const activeSession = sessionId ?? this.speakSessionId;
+    try {
+      void this.unlockAudio();
+      const chunks = this.splitTextIntoTtsChunks(text, 150);
       if (chunks.length === 0) return false;
 
       let idx = 0;
       this.isSpeakingNow = true;
       this.onSpeakingChange?.(true);
 
+      const audio = this.getSharedAudioElement();
+
       const playNext = (): Promise<boolean> => {
-        if (idx >= chunks.length || !this.isSpeakingNow) {
+        if (activeSession !== this.speakSessionId || !this.isSpeakingNow) {
+          return Promise.resolve(true);
+        }
+        if (idx >= chunks.length) {
           this.isSpeakingNow = false;
           this.onSpeakingChange?.(false);
+          this.clearAudioHandlers(audio);
           this.currentAudioElement = null;
           onEnd?.();
           return Promise.resolve(true);
@@ -982,7 +1045,7 @@ export class VoiceAssistantEngine {
 
         const chunk = chunks[idx++];
         const directUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${langCode}&client=tw-ob`;
-        const audio = new Audio();
+        this.clearAudioHandlers(audio);
         try {
           (audio as any).referrerPolicy = 'no-referrer';
         } catch {}
@@ -991,25 +1054,68 @@ export class VoiceAssistantEngine {
 
         return new Promise<boolean>((resolve) => {
           let chunkDone = false;
+          let startedPlaying = false;
+
+          const clearStartupWatchdog = () => {
+            if (this.activeTtsWatchdog) {
+              clearTimeout(this.activeTtsWatchdog);
+              this.activeTtsWatchdog = null;
+            }
+          };
+
           const onChunkDone = (success: boolean) => {
             if (chunkDone) return;
             chunkDone = true;
+            clearStartupWatchdog();
+            this.clearAudioHandlers(audio);
+
+            if (activeSession !== this.speakSessionId) {
+              resolve(true);
+              return;
+            }
+
             if (success) {
               playNext().then(resolve);
             } else {
               this.isSpeakingNow = false;
               this.onSpeakingChange?.(false);
               this.currentAudioElement = null;
-              onEnd?.();
               resolve(false);
             }
           };
 
+          // Startup-only watchdog: cleared as soon as audio actually begins playing
+          clearStartupWatchdog();
+          this.activeTtsWatchdog = setTimeout(() => {
+            if (!chunkDone && !startedPlaying) {
+              try { audio.pause(); } catch {}
+              onChunkDone(false);
+            }
+          }, 8000);
+
+          const markStarted = () => {
+            if (!startedPlaying) {
+              startedPlaying = true;
+              clearStartupWatchdog();
+            }
+          };
+
+          audio.onplay = markStarted;
+          audio.onplaying = markStarted;
+          audio.ontimeupdate = () => {
+            if (audio.currentTime > 0) {
+              markStarted();
+            }
+          };
           audio.onended = () => onChunkDone(true);
           audio.onerror = (e) => {
             console.warn('Direct Google TTS chunk error:', e);
             onChunkDone(false);
           };
+
+          try {
+            audio.load();
+          } catch {}
 
           audio.play().catch((playErr) => {
             console.warn('Direct Google TTS chunk play error:', playErr);
@@ -1027,7 +1133,7 @@ export class VoiceAssistantEngine {
 
   /**
    * Direct TTS streaming audio playback from /api/tts endpoint with automatic Google TTS fallback.
-   * Guarantees 100% audible Tamil and English voice on every OS and browser.
+   * Guarantees 100% audible full-length Tamil and English voice on mobile and web.
    */
   public async playTtsStream(
     text: string,
@@ -1035,80 +1141,143 @@ export class VoiceAssistantEngine {
       onEnd?: () => void;
       pitch?: number;
       rate?: number;
-    } = {}
+      lang?: string;
+    } = {},
+    sessionId?: number
   ): Promise<boolean> {
+    const activeSession = sessionId ?? this.speakSessionId;
+    const cleanText = text
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/#+\s/g, '')
+      .replace(/`{1,3}.*?`{1,3}/g, '')
+      .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+      .trim();
+
+    if (!cleanText) return false;
+
+    const hasTamilChars = /[\u0B80-\u0BFF]/.test(cleanText);
+    const effectiveLang = options.lang || this.currentLanguage;
+    const langCode = hasTamilChars
+      ? 'ta'
+      : options.lang
+      ? options.lang.toLowerCase().startsWith('ta')
+        ? 'ta'
+        : 'en'
+      : effectiveLang.toLowerCase().startsWith('ta')
+      ? 'ta'
+      : 'en';
+
     try {
-      await this.unlockAudio();
-      const cleanText = text
-        .replace(/\*\*(.*?)\*\*/g, '$1')
-        .replace(/\*\*(.*?)\*/g, '$1')
-        .replace(/#+\s/g, '')
-        .replace(/`{1,3}.*?`{1,3}/g, '')
-        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-        .trim();
+      // Do NOT await unlockAudio() before audio.play() so mobile browsers preserve the user tap gesture
+      void this.unlockAudio();
 
-      if (!cleanText) return false;
+      const ttsUrl = getApiUrl(`/api/tts?text=${encodeURIComponent(cleanText.slice(0, 1200))}&lang=${langCode}`);
 
-      const hasTamilChars = /[\u0B80-\u0BFF]/.test(cleanText);
-      const langCode = hasTamilChars ? 'ta' : (this.currentLanguage.startsWith('ta') ? 'ta' : 'en');
-      const ttsUrl = getApiUrl(`/api/tts?text=${encodeURIComponent(cleanText.slice(0, 450))}&lang=${langCode}`);
-
-      // Try local/configured /api/tts endpoint with 3.5s timeout
+      // Try local/configured /api/tts endpoint with startup-only watchdog (cleared as soon as playback starts!)
       const streamSuccess = await new Promise<boolean>((resolve) => {
+        if (activeSession !== this.speakSessionId) {
+          resolve(true);
+          return;
+        }
+
         let hasEnded = false;
-        const audio = new Audio(ttsUrl);
+        let hasStartedPlaying = false;
+        const audio = this.getSharedAudioElement();
+        this.clearAudioHandlers(audio);
+        audio.src = ttsUrl;
         this.currentAudioElement = audio;
 
-        const watchdog = setTimeout(() => {
-          if (!hasEnded) {
+        const clearStartupWatchdog = () => {
+          if (this.activeTtsWatchdog) {
+            clearTimeout(this.activeTtsWatchdog);
+            this.activeTtsWatchdog = null;
+          }
+        };
+
+        const markPlaying = () => {
+          if (!hasStartedPlaying) {
+            hasStartedPlaying = true;
+            clearStartupWatchdog();
+          }
+          if (activeSession === this.speakSessionId) {
+            this.isSpeakingNow = true;
+            this.onSpeakingChange?.(true);
+          }
+        };
+
+        // Startup-only timeout (8s for mobile / Cloud Run cold start) — NEVER cuts off active playback!
+        clearStartupWatchdog();
+        this.activeTtsWatchdog = setTimeout(() => {
+          if (!hasEnded && !hasStartedPlaying) {
             hasEnded = true;
-            try { audio.pause(); } catch (e) {}
+            this.clearAudioHandlers(audio);
+            try { audio.pause(); } catch {}
             resolve(false);
           }
-        }, 3500);
+        }, 8000);
 
-        audio.onplay = () => {
-          this.isSpeakingNow = true;
-          this.onSpeakingChange?.(true);
+        audio.onplay = markPlaying;
+        audio.onplaying = markPlaying;
+        audio.ontimeupdate = () => {
+          if (audio.currentTime > 0) {
+            markPlaying();
+          }
         };
+
         audio.onended = () => {
           if (hasEnded) return;
           hasEnded = true;
-          clearTimeout(watchdog);
-          this.isSpeakingNow = false;
-          this.onSpeakingChange?.(false);
-          this.currentAudioElement = null;
-          options.onEnd?.();
+          clearStartupWatchdog();
+          this.clearAudioHandlers(audio);
+          if (activeSession === this.speakSessionId) {
+            this.isSpeakingNow = false;
+            this.onSpeakingChange?.(false);
+            this.currentAudioElement = null;
+            options.onEnd?.();
+          }
           resolve(true);
         };
+
         audio.onerror = (e) => {
           if (hasEnded) return;
           hasEnded = true;
-          clearTimeout(watchdog);
+          clearStartupWatchdog();
+          this.clearAudioHandlers(audio);
           console.warn('TTS stream audio error, trying direct Google TTS gateway:', e);
           resolve(false);
         };
 
+        try {
+          audio.load();
+        } catch {}
+
         audio.play().catch((playErr) => {
           if (hasEnded) return;
           hasEnded = true;
-          clearTimeout(watchdog);
+          clearStartupWatchdog();
+          this.clearAudioHandlers(audio);
           console.warn('TTS stream audio.play() rejected, trying direct Google TTS gateway:', playErr);
           resolve(false);
         });
       });
 
+      if (activeSession !== this.speakSessionId) {
+        return true;
+      }
+
       if (streamSuccess) {
         return true;
       }
 
-      // If backend TTS endpoint failed (e.g. remote Cloud Run returning HTML), play via direct Google TTS
-      return await this.playGoogleTtsDirect(cleanText, langCode, options.onEnd);
+      // If backend TTS endpoint failed (e.g. offline/remote returning HTML), play via direct Google TTS
+      return await this.playGoogleTtsDirect(cleanText, langCode, options.onEnd, activeSession);
     } catch (streamErr) {
+      if (activeSession !== this.speakSessionId) {
+        return true;
+      }
       console.warn('playTtsStream error, falling back to direct Google TTS:', streamErr);
-      const hasTamilChars = /[\u0B80-\u0BFF]/.test(text);
-      const langCode = hasTamilChars ? 'ta' : (this.currentLanguage.startsWith('ta') ? 'ta' : 'en');
-      return await this.playGoogleTtsDirect(text, langCode, options.onEnd);
+      return await this.playGoogleTtsDirect(cleanText, langCode, options.onEnd, activeSession);
     }
   }
 
@@ -1116,7 +1285,7 @@ export class VoiceAssistantEngine {
    * Natural Empathetic Speech Synthesis (TTS)
    * 1. Plays pre-rendered high-fidelity audio (from /api/chat) via Web Audio API.
    * 2. Plays streamed audio from /api/tts for crystal-clear Tamil and English pronunciation.
-   * 3. Resilient fallback to browser SpeechSynthesis.
+   * 3. Resilient chunked fallback to browser SpeechSynthesis.
    */
   public speak(
     text: string,
@@ -1124,11 +1293,13 @@ export class VoiceAssistantEngine {
       pitch?: number;
       rate?: number;
       emotion?: string;
+      lang?: string;
       audioBase64?: string | null;
       onEnd?: () => void;
     } = {}
   ) {
     this.stopSpeaking();
+    const sessionId = this.speakSessionId;
     // CRITICAL: Stop microphone so AI voice does not feed back into mic and cause glitches/echo
     this.stopListening(false);
     this.isSpeakingNow = true;
@@ -1137,13 +1308,16 @@ export class VoiceAssistantEngine {
     // 1. If high-fidelity audio was returned by backend, play it
     if (options.audioBase64) {
       this.playAudioBase64(options.audioBase64, () => {
+        if (sessionId !== this.speakSessionId) return;
         this.isSpeakingNow = false;
         options.onEnd?.();
       }).then((success) => {
+        if (sessionId !== this.speakSessionId) return;
         if (!success) {
-          this.playTtsStream(text, options).then((streamSuccess) => {
+          this.playTtsStream(text, options, sessionId).then((streamSuccess) => {
+            if (sessionId !== this.speakSessionId) return;
             if (!streamSuccess) {
-              this.speakBrowserSynthesis(text, options);
+              this.speakBrowserSynthesis(text, options, sessionId);
             }
           });
         }
@@ -1152,10 +1326,11 @@ export class VoiceAssistantEngine {
     }
 
     // 2. Stream natural voice audio from backend /api/tts
-    this.playTtsStream(text, options).then((streamSuccess) => {
+    this.playTtsStream(text, options, sessionId).then((streamSuccess) => {
+      if (sessionId !== this.speakSessionId) return;
       if (!streamSuccess) {
-        // 3. Fallback to browser SpeechSynthesis
-        this.speakBrowserSynthesis(text, options);
+        // 3. Fallback to chunked browser SpeechSynthesis
+        this.speakBrowserSynthesis(text, options, sessionId);
       }
     });
   }
@@ -1165,9 +1340,12 @@ export class VoiceAssistantEngine {
     options: {
       pitch?: number;
       rate?: number;
+      lang?: string;
       onEnd?: () => void;
-    } = {}
+    } = {},
+    sessionId?: number
   ) {
+    const activeSession = sessionId ?? this.speakSessionId;
     if (!this.synth) {
       this.isSpeakingNow = false;
       options.onEnd?.();
@@ -1189,8 +1367,6 @@ export class VoiceAssistantEngine {
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-
     // Pick best voice: detect if text actually contains Tamil characters
     const hasTamilChars = /[\u0B80-\u0BFF]/.test(cleanText);
     const voices = this.cachedVoices.length > 0 ? this.cachedVoices : this.synth.getVoices();
@@ -1210,31 +1386,32 @@ export class VoiceAssistantEngine {
         return lang.startsWith('ta') || name.includes('tamil') || name.includes('தமிழ்');
       });
 
-    const isTamilText = hasTamilChars || (this.currentLanguage.startsWith('ta') && !!tamilVoice);
+    const effectiveLang = options.lang || this.currentLanguage;
+    const isTamilText = hasTamilChars || (effectiveLang.toLowerCase().startsWith('ta') && !!tamilVoice);
 
     // If text contains Tamil characters but the OS has no installed Tamil voice (e.g. Windows),
     // delegate to direct Google TTS so the user hears authentic Tamil audio instead of silence
     if (hasTamilChars && !tamilVoice) {
-      this.playGoogleTtsDirect(cleanText, 'ta', options.onEnd);
+      void this.playGoogleTtsDirect(cleanText, 'ta', options.onEnd, activeSession);
       return;
     }
 
     let preferredVoice: SpeechSynthesisVoice | undefined;
-    if (isTamilText && tamilVoice) {
-      utterance.pitch = options.pitch ?? this.tamilSpeechPitch;
-      utterance.rate = options.rate ?? this.tamilSpeechRate;
+    let targetLang = 'en-US';
+    let targetPitch = options.pitch ?? 1.04;
+    let targetRate = options.rate ?? 1.0;
 
-      // 1. If user selected a specific voice URI in settings, prioritize it
+    if (isTamilText && tamilVoice) {
+      targetPitch = options.pitch ?? this.tamilSpeechPitch;
+      targetRate = options.rate ?? this.tamilSpeechRate;
+
       if (this.selectedTamilVoiceURI) {
         preferredVoice = voices.find((v) => v.voiceURI === this.selectedTamilVoiceURI) || tamilVoice;
       } else {
         preferredVoice = tamilVoice;
       }
-      utterance.lang = preferredVoice?.lang || 'ta-IN';
+      targetLang = preferredVoice?.lang || 'ta-IN';
     } else {
-      utterance.pitch = options.pitch ?? 1.04;
-      utterance.rate = options.rate ?? 1.0;
-
       preferredVoice =
         voices.find(
           (v) =>
@@ -1250,17 +1427,21 @@ export class VoiceAssistantEngine {
               v.name.includes('Zira') ||
               v.name.includes('David'))
         ) || voices.find((v) => v.lang.startsWith('en')) || voices[0];
-      utterance.lang = preferredVoice?.lang || 'en-US';
+      targetLang = options.lang || preferredVoice?.lang || 'en-US';
     }
 
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+    // Split long text into natural sentence chunks so Android WebView / iOS Safari never drops long recitations
+    const chunks = this.splitTextIntoTtsChunks(cleanText, 160);
+    if (chunks.length === 0) {
+      this.isSpeakingNow = false;
+      options.onEnd?.();
+      return;
     }
 
-    let hasEnded = false;
-    const finish = () => {
-      if (hasEnded) return;
-      hasEnded = true;
+    let chunkIndex = 0;
+
+    const finishAll = () => {
+      if (activeSession !== this.speakSessionId) return;
       this.isSpeakingNow = false;
       this.onSpeakingChange?.(false);
       this.currentUtterance = null;
@@ -1270,59 +1451,88 @@ export class VoiceAssistantEngine {
       options.onEnd?.();
     };
 
-    // Watchdog to prevent Chrome/Android WebView from stalling utterances
-    const wordCount = cleanText.split(/\s+/).filter(Boolean).length;
-    const maxDuration = Math.max(2500, Math.min(30000, wordCount * 500 + 1800));
-    const watchdogTimer = setTimeout(() => {
-      if (!hasEnded) {
-        if (this.synth) {
-          try {
-            this.synth.cancel();
-          } catch (e) {}
-        }
-        finish();
+    const speakNextChunk = () => {
+      if (!this.synth || activeSession !== this.speakSessionId || !this.isSpeakingNow) {
+        return;
       }
-    }, maxDuration);
+      if (chunkIndex >= chunks.length) {
+        finishAll();
+        return;
+      }
 
-    const safeFinish = () => {
-      clearTimeout(watchdogTimer);
-      finish();
+      const chunkText = chunks[chunkIndex++];
+      const utterance = new SpeechSynthesisUtterance(chunkText);
+      utterance.pitch = targetPitch;
+      utterance.rate = targetRate;
+      utterance.lang = targetLang;
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      let chunkFinished = false;
+      const wordCount = chunkText.split(/\s+/).filter(Boolean).length;
+      const chunkMaxDuration = Math.max(4500, Math.min(25000, wordCount * 750 + 2500));
+
+      const watchdogTimer = setTimeout(() => {
+        if (!chunkFinished && activeSession === this.speakSessionId) {
+          chunkFinished = true;
+          if (this.synth) {
+            try { this.synth.cancel(); } catch {}
+          }
+          speakNextChunk();
+        }
+      }, chunkMaxDuration);
+
+      const onChunkComplete = () => {
+        if (chunkFinished) return;
+        chunkFinished = true;
+        clearTimeout(watchdogTimer);
+        if (activeSession !== this.speakSessionId) return;
+        speakNextChunk();
+      };
+
+      utterance.onstart = () => {
+        if (activeSession === this.speakSessionId) {
+          this.isSpeakingNow = true;
+          this.onSpeakingChange?.(true);
+        }
+      };
+      utterance.onend = onChunkComplete;
+      utterance.onerror = (e) => {
+        console.warn('SpeechSynthesis chunk error:', e);
+        onChunkComplete();
+      };
+
+      // Prevent garbage collection in Chromium/WebKit browsers
+      this.currentUtterance = utterance;
+      if (typeof window !== 'undefined') {
+        window.__activeAuroUtterance = utterance;
+      }
+
+      try {
+        this.synth.resume();
+        this.synth.speak(utterance);
+      } catch (speakErr) {
+        console.warn('SpeechSynthesis speak failed:', speakErr);
+        clearTimeout(watchdogTimer);
+        finishAll();
+      }
     };
-
-    utterance.onstart = () => {
-      this.isSpeakingNow = true;
-      this.onSpeakingChange?.(true);
-    };
-
-    utterance.onend = safeFinish;
-    utterance.onerror = (e) => {
-      console.warn('SpeechSynthesis error:', e);
-      safeFinish();
-    };
-
-    // Prevent garbage collection in Chromium browsers
-    this.currentUtterance = utterance;
-    if (typeof window !== 'undefined') {
-      window.__activeAuroUtterance = utterance;
-    }
 
     try {
-      // In Chrome, avoid immediate cancel() before speak() which triggers cancellation bugs
       if (this.synth.speaking || this.synth.pending) {
         this.synth.cancel();
         setTimeout(() => {
-          if (this.synth) {
-            this.synth.resume();
-            this.synth.speak(utterance);
+          if (activeSession === this.speakSessionId) {
+            speakNextChunk();
           }
-        }, 50);
+        }, 60);
       } else {
-        this.synth.resume();
-        this.synth.speak(utterance);
+        speakNextChunk();
       }
-    } catch (speakErr) {
-      console.warn('SpeechSynthesis speak failed:', speakErr);
-      safeFinish();
+    } catch (err) {
+      console.warn('SpeechSynthesis init failed:', err);
+      finishAll();
     }
   }
 
@@ -1336,7 +1546,12 @@ export class VoiceAssistantEngine {
   }
 
   public stopSpeaking() {
+    this.speakSessionId++;
     this.isSpeakingNow = false;
+    if (this.activeTtsWatchdog) {
+      clearTimeout(this.activeTtsWatchdog);
+      this.activeTtsWatchdog = null;
+    }
     if (this.currentBufferSource) {
       try {
         this.currentBufferSource.stop();
@@ -1346,6 +1561,7 @@ export class VoiceAssistantEngine {
     }
 
     if (this.currentAudioElement) {
+      this.clearAudioHandlers(this.currentAudioElement);
       try {
         this.currentAudioElement.pause();
         this.currentAudioElement.currentTime = 0;
@@ -1359,6 +1575,9 @@ export class VoiceAssistantEngine {
       } catch (e) {}
     }
     this.currentUtterance = null;
+    if (typeof window !== 'undefined') {
+      window.__activeAuroUtterance = null;
+    }
     this.onSpeakingChange?.(false);
   }
 }

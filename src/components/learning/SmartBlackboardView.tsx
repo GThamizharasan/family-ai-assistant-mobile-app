@@ -216,6 +216,7 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   const [practiceSubView, setPracticeSubView] = useState<'problems' | 'tables'>('problems');
   const [highlightedTable, setHighlightedTable] = useState<number | null>(null);
   const [hideTableAnswers, setHideTableAnswers] = useState<boolean>(false);
+  const [isReadingTable, setIsReadingTable] = useState<boolean>(false);
   const [practiceFilter, setPracticeFilter] = useState<ArithmeticFilter>('mixed');
   const [practiceTier, setPracticeTier] = useState<ArithmeticTier>('starter');
   const [practiceLayout, setPracticeLayout] = useState<ArithmeticLayout>('horizontal');
@@ -280,6 +281,35 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
   useEffect(() => {
     setSpeechLang(subject.defaultLanguage === 'ta-IN' ? 'ta-IN' : 'en-IN');
   }, [subject]);
+
+  // Stop active table recitation cleanly if table, language, or view changes
+  useEffect(() => {
+    if (isReadingTable) {
+      speechEngine.stopSpeaking();
+      setIsReadingTable(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightedTable, speechLang, practiceSubView, boardMode]);
+
+  useEffect(() => {
+    return () => {
+      speechEngine.stopSpeaking();
+    };
+  }, []);
+
+  const handleToggleReadTable = useCallback(() => {
+    if (isReadingTable) {
+      speechEngine.stopSpeaking();
+      setIsReadingTable(false);
+      return;
+    }
+    const tableNum = highlightedTable ?? 1;
+    setIsReadingTable(true);
+    speechEngine.speak(buildTableRecitationText(tableNum, speechLang), {
+      lang: speechLang,
+      onEnd: () => setIsReadingTable(false),
+    });
+  }, [isReadingTable, highlightedTable, speechLang]);
 
   const pushHistory = useCallback(() => {
     const canvas = canvasRef.current;
@@ -2158,13 +2188,19 @@ export const SmartBlackboardView: React.FC<SmartBlackboardViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() =>
-                speechEngine.speak(buildTableRecitationText(highlightedTable ?? 1, speechLang))
-              }
-              className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 text-slate-950 text-xs sm:text-sm font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer active:scale-95"
+              onClick={handleToggleReadTable}
+              className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer active:scale-95 transition-all ${
+                isReadingTable
+                  ? 'bg-gradient-to-r from-rose-500 to-orange-500 hover:from-rose-400 hover:to-orange-400 text-white'
+                  : 'bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-300 hover:to-orange-300 text-slate-950'
+              }`}
             >
-              <Volume2 className="w-4 h-4" />
-              <span>🔊 Read Table {highlightedTable ?? 1} Aloud</span>
+              <Volume2 className={`w-4 h-4 ${isReadingTable ? 'animate-pulse' : ''}`} />
+              <span>
+                {isReadingTable
+                  ? `⏹️ Stop Reading Table ${highlightedTable ?? 1}`
+                  : `🔊 Read Table ${highlightedTable ?? 1} Aloud`}
+              </span>
             </button>
 
             <button

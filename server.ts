@@ -2244,23 +2244,25 @@ async function generateTtsAudioBuffer(text: string, lang?: string): Promise<Buff
     const detectedLang = lang || (/[\u0B80-\u0BFF]/.test(cleanText) ? 'ta' : 'en');
     const langCode = detectedLang.startsWith('ta') ? 'ta' : 'en';
 
-    // Split text into small natural sentences (<= 180 chars per Google TTS request)
-    const sentences = cleanText.match(/[^.!?\n,]+[.!?\n,]*/g) || [cleanText];
+    // Split text into small natural sentences (<= 160 chars per Google TTS request)
+    const sentences = cleanText.match(/[^.!?\n]+[.!?\n]*/g) || [cleanText];
     const chunks: string[] = [];
     let currentChunk = '';
 
-    for (const s of sentences) {
-      if ((currentChunk + ' ' + s).trim().length <= 180) {
+    for (const rawSentence of sentences) {
+      const s = rawSentence.trim();
+      if (!s) continue;
+      if ((currentChunk + ' ' + s).trim().length <= 160) {
         currentChunk = (currentChunk + ' ' + s).trim();
       } else {
         if (currentChunk) chunks.push(currentChunk);
-        currentChunk = s.trim().slice(0, 180);
+        currentChunk = s.slice(0, 160);
       }
     }
     if (currentChunk) chunks.push(currentChunk);
 
-    // Fetch up to 6 chunks in parallel for fast, low-latency streaming
-    const chunksToFetch = chunks.slice(0, 6);
+    // Fetch up to 14 chunks in parallel so full multiplication tables (English & Tamil) play completely
+    const chunksToFetch = chunks.slice(0, 14);
     const chunkPromises = chunksToFetch.map(async (chunk) => {
       try {
         const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${langCode}&client=tw-ob`;
