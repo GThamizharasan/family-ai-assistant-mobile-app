@@ -212,7 +212,90 @@ export async function ensureDriveFolderPath(
   return { folderId: parentId, cleanPath };
 }
 
-// Resumable chunked upload to Google Drive v3 with progress, pause/resume & retry
+// Reliable RFC 2387 multipart/related upload with real XHR progress (works cleanly across all browsers & Android WebView)
+async function uploadBlobMultipartToDrive(params: {
+  blob: Blob;
+  fileName: string;
+  mimeType: string;
+  folderId: string;
+  token: string;
+  onProgress?: (percent: number, uploadedBytes: number) => void;
+}): Promise<{
+  driveFileId: string;
+  driveFolderId: string;
+  driveWebViewLink: string;
+  driveDownloadUrl: string;
+}> {
+  const { blob, fileName, mimeType, folderId, token, onProgress } = params;
+  const safeMime = mimeType || 'application/octet-stream';
+  const boundary = `-------AuraMediaVault${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  const metadata = {
+    name: fileName,
+    mimeType: safeMime,
+    parents: [folderId],
+  };
+
+  const multipartBody = new Blob(
+    [
+      `--${boundary}\r\n`,
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+      JSON.stringify(metadata),
+      `\r\n--${boundary}\r\n`,
+      `Content-Type: ${safeMime}\r\n\r\n`,
+      blob,
+      `\r\n--${boundary}--`,
+    ],
+    { type: `multipart/related; boundary=${boundary}` }
+  );
+
+  const url =
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,webViewLink,webContentLink,size,mimeType';
+
+  const uploadedMeta: any = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('Content-Type', `multipart/related; boundary=${boundary}`);
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && ev.total > 0) {
+        const pct = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
+        onProgress?.(pct, Math.min(blob.size, ev.loaded));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          onProgress?.(100, blob.size);
+          resolve(JSON.parse(xhr.responseText || '{}'));
+        } catch {
+          reject(new Error('Invalid JSON from Google Drive upload'));
+        }
+      } else if (xhr.status === 401) {
+        reject(new Error('Google Drive session expired (401). Please reconnect Google Drive in the header.'));
+      } else if (xhr.status === 403) {
+        reject(new Error('Google Drive write permission denied (403). Please reconnect Google with Drive access.'));
+      } else {
+        reject(new Error(`Google Drive multipart upload failed (${xhr.status}): ${(xhr.responseText || '').slice(0, 140)}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Network error during Google Drive upload.'));
+    xhr.send(multipartBody);
+  });
+
+  const fileId = uploadedMeta?.id;
+  if (!fileId) throw new Error('Google Drive upload completed without file ID.');
+
+  return {
+    driveFileId: fileId,
+    driveFolderId: folderId,
+    driveWebViewLink: uploadedMeta.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
+    driveDownloadUrl: uploadedMeta.webContentLink || `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+  };
+}
+
+// Hybrid Upload to Google Drive v3:
+// - Files <= 15 MB: RFC 2387 multipart upload with XHR progress (100% browser CORS safe)
+// - Files > 15 MB: Chunked resumable upload (with automatic multipart fallback if CORS hides Location header)
 export async function uploadFileResumableToDrive(params: {
   file: File;
   folderPath: string;
@@ -230,6 +313,18 @@ export async function uploadFileResumableToDrive(params: {
 }> {
   const { file, folderPath, token, userEmail, onProgress, shouldAbort } = params;
   const { folderId } = await ensureDriveFolderPath(folderPath, token, userEmail);
+
+  // Use reliable multipart upload for files <= 15 MB (PDFs, docs, images, audio)
+  if (!params.existingSessionUri && file.size <= 15 * 1024 * 1024) {
+    return uploadBlobMultipartToDrive({
+      blob: file,
+      fileName: file.name,
+      mimeType: file.type || 'application/octet-stream',
+      folderId,
+      token,
+      onProgress: (pct, bytes) => onProgress?.(pct, bytes, ''),
+    });
+  }
 
   let sessionUri = params.existingSessionUri || '';
   let offset = params.startByte || 0;
@@ -253,11 +348,24 @@ export async function uploadFileResumableToDrive(params: {
       }
     );
     if (!initRes.ok) {
+      if (initRes.status === 401) {
+        throw new Error('Google Drive session expired (401). Please reconnect Google Drive in the header.');
+      }
       const errTxt = await initRes.text().catch(() => '');
       throw new Error(`Drive resumable init failed (${initRes.status}): ${errTxt.slice(0, 120)}`);
     }
     sessionUri = initRes.headers.get('Location') || '';
-    if (!sessionUri) throw new Error('Google Drive did not return a resumable upload session URI.');
+    if (!sessionUri) {
+      // Fallback to multipart if browser CORS hid the Location header
+      return uploadBlobMultipartToDrive({
+        blob: file,
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        folderId,
+        token,
+        onProgress: (pct, bytes) => onProgress?.(pct, bytes, ''),
+      });
+    }
   }
 
   let uploadedMeta: any = null;
@@ -320,14 +428,78 @@ export async function uploadFileResumableToDrive(params: {
   };
 }
 
-// Recursive Metadata-Only Sync from Google Drive ("Family Circle / Media Library Vault") -> Local SQLite
+// Push a single local-only SQLite media item UP to Google Drive ("Family Circle / Media Library Vault")
+export async function pushSingleLocalMediaItemToDrive(
+  item: MediaLibraryItem,
+  googleAccessToken?: string | null,
+  userEmail?: string
+): Promise<MediaLibraryItem> {
+  const token = getEffectiveGoogleToken(googleAccessToken);
+  if (!token) throw new Error('Please connect your Google Drive account in the top header first.');
+  if (item.driveFileId) return item;
+
+  const blobRes = await fetch(getApiUrl(`/api/media-library/items/${encodeURIComponent(item.id)}/local-blob`));
+  if (!blobRes.ok) {
+    throw new Error(`Local binary not found in SQLite for "${item.fileName}". Re-upload the file to push it to Drive.`);
+  }
+  const blobData = await blobRes.json();
+  const b64: string = blobData?.blob?.dataBase64 || '';
+  if (!b64) throw new Error('Local file content is empty.');
+
+  const byteChars = atob(b64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([bytes], { type: blobData.blob.mimeType || item.mimeType || 'application/octet-stream' });
+
+  const { folderId } = await ensureDriveFolderPath(item.folderPath || '/', token, userEmail || item.userEmail);
+  const uploaded = await uploadBlobMultipartToDrive({
+    blob,
+    fileName: item.fileName,
+    mimeType: item.mimeType || blob.type || 'application/octet-stream',
+    folderId,
+    token,
+  });
+
+  const patched = await patchMediaItemInSqlite(item.id, {
+    driveFileId: uploaded.driveFileId,
+    driveFolderId: uploaded.driveFolderId,
+    driveWebViewLink: uploaded.driveWebViewLink,
+    driveDownloadUrl: uploaded.driveDownloadUrl,
+  });
+  return patched || { ...item, ...uploaded };
+}
+
+// 2-Way Sync:
+// 1. Push any local-only SQLite files (!driveFileId) UP to Google Drive ("Family Circle / Media Library Vault")
+// 2. Recursively pull Google Drive metadata DOWN into Local SQLite
 export async function syncDriveMediaLibraryToSqlite(
   googleAccessToken?: string | null,
   userEmail?: string,
   ownerName = 'Family'
-): Promise<{ syncedCount: number; folderCount: number; needsSignIn?: boolean }> {
+): Promise<{ pushedToDriveCount: number; syncedCount: number; folderCount: number; needsSignIn?: boolean }> {
   const token = getEffectiveGoogleToken(googleAccessToken);
-  if (!token) return { syncedCount: 0, folderCount: 0, needsSignIn: true };
+  if (!token) return { pushedToDriveCount: 0, syncedCount: 0, folderCount: 0, needsSignIn: true };
+
+  // Step 1: Push any locally stored files that are not yet on Google Drive!
+  let pushedToDriveCount = 0;
+  try {
+    const localList = await fetchMediaLibraryItems({
+      userEmail,
+      storedLocally: true,
+      limit: 100,
+      page: 1,
+    });
+    for (const item of localList.items) {
+      if (!item.driveFileId && !item.isDeleted) {
+        try {
+          await pushSingleLocalMediaItemToDrive(item, token, userEmail);
+          pushedToDriveCount++;
+        } catch (pushErr) {
+          console.warn(`[MediaLibrary] Failed to push "${item.fileName}" to Drive:`, pushErr);
+        }
+      }
+    }
+  } catch {}
 
   const familyRoot = await getOrCreateGoogleDriveFolder(token, 'Family Circle');
   const mediaRoot = await getOrCreateGoogleDriveFolder(token, DRIVE_MEDIA_ROOT_FOLDER, familyRoot.id);
@@ -401,7 +573,11 @@ export async function syncDriveMediaLibraryToSqlite(
   });
   if (!syncRes.ok) throw new Error('Failed to persist synced Drive metadata into SQLite.');
   const syncData = await syncRes.json();
-  return { syncedCount: syncData.syncedCount || collectedItems.length, folderCount: collectedFolders.length };
+  return {
+    pushedToDriveCount,
+    syncedCount: syncData.syncedCount || collectedItems.length,
+    folderCount: collectedFolders.length,
+  };
 }
 
 export async function fetchMediaLibraryItems(params: {
@@ -491,7 +667,73 @@ export async function patchMediaItemInSqlite(
 
 export async function permanentlyDeleteMediaItem(id: string): Promise<boolean> {
   const res = await fetch(getApiUrl(`/api/media-library/items/${encodeURIComponent(id)}`), { method: 'DELETE' });
+  try {
+    const cached = JSON.parse(localStorage.getItem(LOCAL_INDEX_CACHE_KEY) || '[]');
+    if (Array.isArray(cached)) {
+      localStorage.setItem(
+        LOCAL_INDEX_CACHE_KEY,
+        JSON.stringify(cached.filter((x: any) => x?.id !== id))
+      );
+    }
+  } catch {}
   return res.ok;
+}
+
+// Permanently delete a media file from BOTH Google Drive AND Local SQLite (metadata + local binary blob)
+export async function deleteMediaFileEverywhere(
+  item: Pick<MediaLibraryItem, 'id' | 'fileName' | 'driveFileId'>,
+  googleAccessToken?: string | null
+): Promise<{ deletedLocally: boolean; deletedFromDrive: boolean; driveMessage?: string }> {
+  let deletedFromDrive = false;
+  let driveMessage: string | undefined;
+
+  if (item.driveFileId) {
+    const token = getEffectiveGoogleToken(googleAccessToken);
+    if (!token) {
+      driveMessage = 'Google Drive not connected — deleted locally only.';
+    } else {
+      try {
+        const delRes = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(item.driveFileId)}?supportsAllDrives=true`,
+          {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+        if (delRes.ok || delRes.status === 204 || delRes.status === 404) {
+          deletedFromDrive = true;
+        } else if (delRes.status === 403) {
+          // Shared-drive fallback: move file to Drive Trash if hard-delete is restricted
+          const trashRes = await fetch(
+            `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(item.driveFileId)}?supportsAllDrives=true`,
+            {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ trashed: true }),
+            }
+          );
+          if (trashRes.ok) {
+            deletedFromDrive = true;
+            driveMessage = 'Moved to Google Drive Trash (shared permission policy).';
+          } else {
+            driveMessage = `Google Drive delete denied (HTTP ${delRes.status}).`;
+          }
+        } else if (delRes.status === 401) {
+          driveMessage = 'Google Drive session expired (401) — reconnect Google Drive to delete remote copy.';
+        } else {
+          driveMessage = `Google Drive delete returned HTTP ${delRes.status}.`;
+        }
+      } catch (err: any) {
+        driveMessage = `Google Drive delete failed: ${err?.message || 'network error'}.`;
+      }
+    }
+  }
+
+  const deletedLocally = await permanentlyDeleteMediaItem(item.id);
+  return { deletedLocally, deletedFromDrive, driveMessage };
 }
 
 // On-Demand Local SQLite Storage for Individual Media File

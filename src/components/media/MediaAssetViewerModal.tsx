@@ -33,6 +33,7 @@ import {
 import { MediaCollectionItem, MediaFolderItem, MediaLibraryItem } from '../../types/mediaLibrary';
 import {
   analyzeMediaItemWithAi,
+  deleteMediaFileEverywhere,
   findSimilarMediaItems,
   formatBytes,
   patchMediaItemInSqlite,
@@ -569,12 +570,36 @@ export const MediaAssetViewerModal: React.FC<MediaAssetViewerModalProps> = ({
                     }
                   }
                 }}
-                className="py-1.5 rounded-xl font-bold flex items-center justify-center gap-1 bg-rose-500/15 hover:bg-rose-500/30 text-rose-200 border border-rose-400/30 cursor-pointer"
+                className="py-1.5 rounded-xl font-bold flex items-center justify-center gap-1 bg-amber-500/15 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30 cursor-pointer"
               >
                 {item.isDeleted ? <RotateCcw className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />}
                 {item.isDeleted ? 'Restore' : 'Trash'}
               </button>
             </div>
+
+            <button
+              onClick={async () => {
+                if (
+                  !window.confirm(
+                    `Permanently delete "${item.fileName}" from BOTH Local SQLite and Google Drive? This cannot be undone.`
+                  )
+                ) {
+                  return;
+                }
+                const res = await deleteMediaFileEverywhere(item, googleAccessToken);
+                onItemDeleted(item.id);
+                onNotify(
+                  res.driveMessage ? 'warning' : 'success',
+                  'File Permanently Deleted',
+                  res.deletedFromDrive
+                    ? `"${item.fileName}" deleted from Local SQLite AND Google Drive.`
+                    : res.driveMessage || `"${item.fileName}" deleted from Local SQLite.`
+                );
+              }}
+              className="w-full py-1.5 px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 border border-rose-400/40 text-rose-200 text-[11px] font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete Permanently (Local SQLite + Google Drive)
+            </button>
           </div>
 
           {/* Inspector Sub-Tabs */}

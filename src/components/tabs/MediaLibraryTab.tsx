@@ -51,7 +51,9 @@ import {
   computeFileSha256,
   createMediaCollection,
   createMediaFolder,
+  deleteMediaFileEverywhere,
   detectDeviceSource,
+  ensureDriveFolderPath,
   fetchMediaAnalytics,
   fetchMediaCollections,
   fetchMediaFolders,
@@ -60,6 +62,7 @@ import {
   generateClientThumbnail,
   patchMediaItemInSqlite,
   permanentlyDeleteMediaItem,
+  pushSingleLocalMediaItemToDrive,
   removeMediaItemFromLocalSqlite,
   resolvePlayableMediaUrl,
   saveMediaMetadataToSqlite,
@@ -111,6 +114,7 @@ export const MediaLibraryTab: React.FC = () => {
   const [autoAiOnUpload, setAutoAiOnUpload] = useState(true);
   const abortFlagsRef = useRef<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync, Modals, Notifications & Audio Player
   const [isSyncingDrive, setIsSyncingDrive] = useState(false);
@@ -122,6 +126,13 @@ export const MediaLibraryTab: React.FC = () => {
   const [newCollectionName, setNewCollectionName] = useState('');
   const [newCollectionKind, setNewCollectionKind] = useState<'album' | 'collection' | 'playlist'>('album');
   const [creatingCollection, setCreatingCollection] = useState(false);
+
+  // Admin Cleanup & Bulk Delete State
+  const [adminFiles, setAdminFiles] = useState<MediaLibraryItem[]>([]);
+  const [adminFilter, setAdminFilter] = useState<'all' | 'largest' | 'duplicates' | 'local' | 'trashed' | 'flagged'>('all');
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminSelectedIds, setAdminSelectedIds] = useState<string[]>([]);
+  const [isDeletingBulk, setIsDeletingBulk] = useState(false);
 
   // Background Audio Player + Playlist
   const [audioPlaylist, setAudioPlaylist] = useState<MediaLibraryItem[]>([]);
@@ -211,13 +222,113 @@ export const MediaLibraryTab: React.FC = () => {
     ]
   );
 
+  const loadAdminFiles = useCallback(async () => {
+    const [activeRes, trashRes] = await Promise.all([
+      fetchMediaLibraryItems({ userEmail, limit: 100, page: 1, sortBy: 'size' }),
+      fetchMediaLibraryItems({ userEmail, trash: true, limit: 100, page: 1, sortBy: 'newest' }),
+    ]);
+    const combined = [...activeRes.items, ...trashRes.items.filter((t) => !activeRes.items.some((a) => a.id === t.id))];
+    setAdminFiles(combined);
+  }, [userEmail]);
+
   useEffect(() => {
     void loadMetadata();
   }, [loadMetadata]);
 
   useEffect(() => {
-    void loadItems(1, false);
-  }, [loadItems]);
+    if (navScope === 'admin') {
+      void loadAdminFiles();
+    } else {
+      void loadItems(1, false);
+    }
+  }, [loadItems, loadAdminFiles, navScope]);
+
+  const handlePermanentDeleteSingle = async (target: MediaLibraryItem) => {
+    if (
+      !window.confirm(
+        `Permanently delete "${target.fileName}" from BOTH Local SQLite and Google Drive? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    const res = await deleteMediaFileEverywhere(target, googleAccessToken);
+    setItems((prev) => prev.filter((x) => x.id !== target.id));
+    setAdminFiles((prev) => prev.filter((x) => x.id !== target.id));
+    setAdminSelectedIds((prev) => prev.filter((id) => id !== target.id));
+    setTotalItems((n) => Math.max(0, n - 1));
+    if (selectedItem?.id === target.id) setSelectedItem(null);
+    pushNotification(
+      res.driveMessage ? 'warning' : 'success',
+      'File Permanently Deleted',
+      res.deletedFromDrive
+        ? `"${target.fileName}" removed from Local SQLite AND Google Drive.`
+        : res.driveMessage || `"${target.fileName}" removed from Local SQLite.`
+    );
+    void loadMetadata();
+  };
+
+  const handleBulkDeleteAdminSelected = async () => {
+    const targets = adminFiles.filter((f) => adminSelectedIds.includes(f.id));
+    if (targets.length === 0 || isDeletingBulk) return;
+    if (
+      !window.confirm(
+        `Permanently delete ${targets.length} selected file(s) from BOTH Local SQLite and Google Drive? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    setIsDeletingBulk(true);
+    let driveCount = 0;
+    let localCount = 0;
+    try {
+      for (const t of targets) {
+        const res = await deleteMediaFileEverywhere(t, googleAccessToken);
+        if (res.deletedLocally) localCount++;
+        if (res.deletedFromDrive) driveCount++;
+      }
+      const deletedSet = new Set(targets.map((t) => t.id));
+      setItems((prev) => prev.filter((x) => !deletedSet.has(x.id)));
+      setAdminFiles((prev) => prev.filter((x) => !deletedSet.has(x.id)));
+      setAdminSelectedIds([]);
+      pushNotification(
+        'success',
+        'Bulk Permanent Delete Complete',
+        `Deleted ${localCount} file(s) locally and ${driveCount} file(s) from Google Drive.`
+      );
+      void loadMetadata();
+    } finally {
+      setIsDeletingBulk(false);
+    }
+  };
+
+  const filteredAdminFiles = useMemo(() => {
+    const hashFreq = new Map<string, number>();
+    for (const f of adminFiles) {
+      if (f.sha256Hash && !f.isDeleted) {
+        hashFreq.set(f.sha256Hash, (hashFreq.get(f.sha256Hash) || 0) + 1);
+      }
+    }
+    let list = adminFiles.filter((f) => {
+      if (adminFilter === 'duplicates') return Boolean(f.sha256Hash && (hashFreq.get(f.sha256Hash) || 0) > 1);
+      if (adminFilter === 'local') return f.isStoredLocally;
+      if (adminFilter === 'trashed') return f.isDeleted;
+      if (adminFilter === 'flagged') return f.aiMetadata?.moderationStatus === 'flagged';
+      return true;
+    });
+    const q = adminSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (f) =>
+          f.fileName.toLowerCase().includes(q) ||
+          f.folderPath.toLowerCase().includes(q) ||
+          f.mediaType.toLowerCase().includes(q)
+      );
+    }
+    if (adminFilter === 'largest') {
+      list = [...list].sort((a, b) => b.fileSize - a.fileSize);
+    }
+    return list;
+  }, [adminFiles, adminFilter, adminSearch]);
 
   // Listen for deep-links from Global Universal Search (Ctrl+K) & Auro Voice Assistant
   useEffect(() => {
@@ -304,19 +415,25 @@ export const MediaLibraryTab: React.FC = () => {
     rec.start();
   };
 
-  // Sync metadata from Google Drive -> Local SQLite
+  // Sync metadata from Google Drive -> Local SQLite AND push any local-only SQLite files UP to Drive
   const handleSyncFromDrive = async () => {
     if (isSyncingDrive) return;
     setIsSyncingDrive(true);
     try {
       const res = await syncDriveMediaLibraryToSqlite(googleAccessToken, userEmail, ownerName);
       if (res.needsSignIn) {
-        pushNotification('warning', 'Google Drive Sign-In Needed', 'Sign in with Google in the header to sync your 1 TB Family Circle Media Vault.');
+        pushNotification(
+          'warning',
+          'Google Drive Sign-In Needed',
+          'Sign in with Google in the top header to upload local files & sync your 1 TB Family Circle Media Vault.'
+        );
       } else {
         pushNotification(
           'success',
-          'Google Drive Sync Complete',
-          `Synced ${res.syncedCount} media file(s) and ${res.folderCount} folder(s) metadata into local SQLite.`
+          '2-Way Google Drive Sync Complete',
+          `${
+            res.pushedToDriveCount > 0 ? `Pushed ${res.pushedToDriveCount} local file(s) UP to Google Drive + ` : ''
+          }Synced ${res.syncedCount} media file(s) & ${res.folderCount} folder(s) metadata into SQLite.`
         );
         await Promise.all([loadItems(1, false), loadMetadata()]);
       }
@@ -421,11 +538,19 @@ export const MediaLibraryTab: React.FC = () => {
       updateTask({ status: 'completed', progress: 100, createdItem: finalItem });
       setItems((prev) => [finalItem, ...prev.filter((x) => x.id !== finalItem.id)]);
       setTotalItems((n) => n + 1);
-      pushNotification(
-        'success',
-        'Upload Completed',
-        `"${task.fileName}" uploaded to ${token ? 'Google Drive' : 'Local SQLite'} (${task.folderPath}).`
-      );
+      if (driveMeta.driveFileId) {
+        pushNotification(
+          'success',
+          'Uploaded to Google Drive',
+          `"${task.fileName}" stored in Google Drive (Family Circle / Media Library Vault${task.folderPath === '/' ? '' : task.folderPath}) & indexed in SQLite.`
+        );
+      } else {
+        pushNotification(
+          'warning',
+          'Stored Locally Only (Drive Not Connected)',
+          `"${task.fileName}" saved in local SQLite. Connect Google Drive in the header and click "Sync with Drive" to push it to your 1 TB Drive vault.`
+        );
+      }
       void loadMetadata();
     } catch (err: any) {
       if (err?.message === 'PAUSED') {
@@ -446,37 +571,156 @@ export const MediaLibraryTab: React.FC = () => {
     }
   };
 
-  const enqueueFiles = (fileList: FileList | File[]) => {
-    const files = Array.from(fileList || []);
-    if (files.length === 0) return;
+  // Recursively traverse dropped folders via FileSystemEntry API (preserves nested subfolder paths)
+  const extractDroppedEntries = async (
+    dataTransfer: DataTransfer
+  ): Promise<Array<{ file: File; relativeFolder: string }>> => {
+    const out: Array<{ file: File; relativeFolder: string }> = [];
+    const itemsList = Array.from(dataTransfer.items || []);
+    const hasEntryApi = itemsList.some((it: any) => typeof it.webkitGetAsEntry === 'function');
+
+    if (hasEntryApi && itemsList.length > 0) {
+      const readAllDirectoryEntries = (dirReader: any): Promise<any[]> =>
+        new Promise((resolve) => {
+          const collected: any[] = [];
+          const readBatch = () => {
+            dirReader.readEntries(
+              (batch: any[]) => {
+                if (!batch || batch.length === 0) {
+                  resolve(collected);
+                } else {
+                  collected.push(...batch);
+                  readBatch();
+                }
+              },
+              () => resolve(collected)
+            );
+          };
+          readBatch();
+        });
+
+      const walkEntry = async (entry: any, currentSubPath: string): Promise<void> => {
+        if (!entry) return;
+        if (entry.isFile) {
+          const file: File | null = await new Promise((resolve) => entry.file(resolve, () => resolve(null)));
+          if (file) {
+            out.push({ file, relativeFolder: currentSubPath });
+          }
+        } else if (entry.isDirectory) {
+          const nextSub = currentSubPath ? `${currentSubPath}/${entry.name}` : entry.name;
+          const children = await readAllDirectoryEntries(entry.createReader());
+          for (const child of children) {
+            await walkEntry(child, nextSub);
+          }
+        }
+      };
+
+      for (const it of itemsList) {
+        const entry = (it as any).webkitGetAsEntry?.();
+        if (entry) await walkEntry(entry, '');
+      }
+      if (out.length > 0) return out;
+    }
+
+    // Fallback to standard FileList (handles webkitRelativePath too)
+    for (const f of Array.from(dataTransfer.files || [])) {
+      const rel = ((f as any).webkitRelativePath || '') as string;
+      const parts = rel.split('/').filter(Boolean);
+      const relativeFolder = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+      out.push({ file: f, relativeFolder });
+    }
+    return out;
+  };
+
+  const enqueueFileEntries = async (entries: Array<{ file: File; relativeFolder?: string }>) => {
+    if (!entries || entries.length === 0) return;
     setUploadDrawerOpen(true);
 
+    const baseFolder = uploadFolder && uploadFolder !== '/' ? `/${uploadFolder.replace(/^\/+|\/+$/g, '')}` : '';
     const newTasks: MediaUploadTask[] = [];
-    for (const f of files) {
+    const uniqueFolderPaths = new Set<string>();
+
+    for (const entry of entries) {
+      const f = entry.file;
+      // Skip OS junk files automatically when uploading folders
+      if (/^(\.ds_store|thumbs\.db|desktop\.ini|\._.*)$/i.test(f.name)) continue;
+
       const check = validateMediaFile(f);
       if (!check.valid) {
         pushNotification('error', 'File Rejected', `${f.name}: ${check.reason}`);
         continue;
       }
-      const task: MediaUploadTask = {
+
+      let subFolder = (entry.relativeFolder || '').trim().replace(/^\/+|\/+$/g, '');
+      if (!subFolder) {
+        const rel = ((f as any).webkitRelativePath || '') as string;
+        const parts = rel.split('/').filter(Boolean);
+        if (parts.length > 1) subFolder = parts.slice(0, -1).join('/');
+      }
+
+      const targetFolderPath = subFolder
+        ? `${baseFolder}/${subFolder}`.replace(/\/+/g, '/')
+        : baseFolder || '/';
+
+      uniqueFolderPaths.add(targetFolderPath);
+
+      newTasks.push({
         id: `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
         file: f,
         fileName: f.name,
         fileSize: f.size,
         mimeType: f.type || 'application/octet-stream',
         mediaType: classifyMediaAssetType(f.type, f.name),
-        folderPath: uploadFolder || '/',
+        folderPath: targetFolderPath,
         storeLocally: uploadStoreLocal,
         progress: 0,
         status: 'queued',
         uploadedBytes: 0,
-      };
-      newTasks.push(task);
+      });
     }
 
+    if (newTasks.length === 0) return;
+
     setUploadQueue((prev) => [...newTasks, ...prev]);
-    // Run uploads in background (2 concurrent)
-    newTasks.forEach((t) => void runUploadTask(t));
+
+    // Pre-create unique nested folders sequentially first so concurrent uploads never duplicate Drive folders!
+    const token = getEffectiveGoogleToken(googleAccessToken);
+    const sortedPaths = Array.from(uniqueFolderPaths).sort((a, b) => a.length - b.length);
+    for (const fp of sortedPaths) {
+      if (fp === '/') continue;
+      if (token) {
+        try {
+          await ensureDriveFolderPath(fp, token, userEmail);
+        } catch {}
+      } else {
+        const segs = fp.split('/').filter(Boolean);
+        let run = '';
+        for (const s of segs) {
+          const parent = run || '/';
+          run = `${run}/${s}`;
+          await createMediaFolder({ userEmail, parentPath: parent, name: s, googleAccessToken: null }).catch(() => {});
+        }
+      }
+    }
+    void loadMetadata();
+
+    // Process uploads with a clean 3-worker concurrency pool (safe for large folders with hundreds of files)
+    let cursor = 0;
+    const concurrency = Math.min(3, newTasks.length);
+    const worker = async () => {
+      while (cursor < newTasks.length) {
+        const currentTask = newTasks[cursor++];
+        if (currentTask) {
+          await runUploadTask(currentTask);
+        }
+      }
+    };
+    void Promise.all(Array.from({ length: concurrency }, () => worker()));
+  };
+
+  const enqueueFiles = (fileList: FileList | File[]) => {
+    const arr = Array.from(fileList || []).map((file) => ({ file }));
+    void enqueueFileEntries(arr);
   };
 
   // Client-side AI Semantic re-ranking when semanticMode is enabled
@@ -499,6 +743,8 @@ export const MediaLibraryTab: React.FC = () => {
 
   const unreadNotifs = notifications.filter((n) => !n.read).length;
   const quotaPct = analytics ? Math.min(100, (analytics.totalDriveBytes / analytics.driveQuotaBytes) * 100) : 0;
+  const isDriveConnected = Boolean(getEffectiveGoogleToken(googleAccessToken));
+  const localOnlyUnsyncedCount = items.filter((it) => !it.driveFileId && !it.isDeleted).length;
 
   return (
     <div
@@ -508,18 +754,21 @@ export const MediaLibraryTab: React.FC = () => {
         setIsDragging(true);
       }}
       onDragLeave={() => setIsDragging(false)}
-      onDrop={(e) => {
+      onDrop={async (e) => {
         e.preventDefault();
         setIsDragging(false);
-        if (e.dataTransfer?.files?.length) enqueueFiles(e.dataTransfer.files);
+        if (e.dataTransfer) {
+          const dropped = await extractDroppedEntries(e.dataTransfer);
+          if (dropped.length > 0) void enqueueFileEntries(dropped);
+        }
       }}
     >
       {/* Drag-and-Drop Overlay */}
       {isDragging && (
         <div className="fixed inset-0 z-[90] bg-cyan-950/85 backdrop-blur-md border-4 border-dashed border-cyan-400 flex flex-col items-center justify-center gap-3 pointer-events-none">
           <Upload className="w-16 h-16 text-cyan-300 animate-bounce" />
-          <div className="text-2xl font-black text-white">Drop Files to Upload to Family Circle Media Vault</div>
-          <p className="text-sm text-cyan-200">Resumable Google Drive upload + lightweight SQLite indexing</p>
+          <div className="text-2xl font-black text-white">Drop Files or Entire Folders Here</div>
+          <p className="text-sm text-cyan-200">Preserves nested subfolder structure in Google Drive + lightweight SQLite index</p>
         </div>
       )}
 
@@ -531,9 +780,20 @@ export const MediaLibraryTab: React.FC = () => {
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-cyan-500/20 text-cyan-200 border border-cyan-400/35">
                 ☁️ 1 TB Google Drive · Family Circle / Media Library Vault
               </span>
-              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/20 text-emerald-200 border border-emerald-400/35">
-                💾 SQLite Index + On-Demand Local Offline Cache
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border ${
+                  isDriveConnected
+                    ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/40'
+                    : 'bg-amber-500/20 text-amber-200 border-amber-400/40'
+                }`}
+              >
+                {isDriveConnected ? '✅ Google Drive Connected' : '⚠️ Drive Not Connected (Local Only)'}
               </span>
+              {localOnlyUnsyncedCount > 0 && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-500/20 text-rose-200 border border-rose-400/40">
+                  {localOnlyUnsyncedCount} Pending Drive Upload
+                </span>
+              )}
             </div>
             <h2 className="text-xl sm:text-2xl font-black text-white mt-1.5">
               Centralized Family Media Library
@@ -547,7 +807,11 @@ export const MediaLibraryTab: React.FC = () => {
               className="px-3 py-2 rounded-2xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-emerald-200 text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDrive ? 'animate-spin' : ''}`} />
-              {isSyncingDrive ? 'Syncing Drive...' : 'Sync from Drive'}
+              {isSyncingDrive
+                ? 'Syncing Drive...'
+                : localOnlyUnsyncedCount > 0
+                ? `Sync & Push ${localOnlyUnsyncedCount} to Drive`
+                : 'Sync with Drive'}
             </button>
 
             <button
@@ -697,20 +961,46 @@ export const MediaLibraryTab: React.FC = () => {
             </label>
           </div>
 
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded-2xl border-2 border-dashed border-cyan-400/45 hover:border-cyan-300 bg-slate-950/70 p-6 text-center cursor-pointer transition-all"
-          >
-            <Upload className="w-8 h-8 mx-auto text-cyan-400 mb-2" />
-            <div className="text-sm font-extrabold text-white">Click or Drag & Drop Multiple Files Here</div>
-            <p className="text-xs text-slate-400 mt-1">
-              Images, Videos, Audio, PDFs, Word/Excel Docs & AI Creations · Chunked Resumable Upload to Google Drive
-            </p>
+          <div className="rounded-2xl border-2 border-dashed border-cyan-400/45 hover:border-cyan-300 bg-slate-950/70 p-5 text-center transition-all space-y-3">
+            <Upload className="w-8 h-8 mx-auto text-cyan-400" />
+            <div>
+              <div className="text-sm font-extrabold text-white">Drag & Drop Files or Entire Media Folders Here</div>
+              <p className="text-xs text-slate-400 mt-1">
+                Preserves nested subfolders in Google Drive (&quot;Family Circle / Media Library Vault&quot;) · Auto-skips OS junk files
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <Upload className="w-3.5 h-3.5" /> Select Files
+              </button>
+              <button
+                type="button"
+                onClick={() => folderInputRef.current?.click()}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow"
+              >
+                <Folder className="w-3.5 h-3.5" /> Upload Entire Folder
+              </button>
+            </div>
             <input
               ref={fileInputRef}
               type="file"
               multiple
               accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.json,.ppt,.pptx"
+              onChange={(e) => {
+                if (e.target.files?.length) enqueueFiles(e.target.files);
+                e.target.value = '';
+              }}
+              className="hidden"
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              {...({ webkitdirectory: '', directory: '' } as any)}
               onChange={(e) => {
                 if (e.target.files?.length) enqueueFiles(e.target.files);
                 e.target.value = '';
@@ -1038,6 +1328,128 @@ export const MediaLibraryTab: React.FC = () => {
                 ))}
               </div>
 
+              {/* Admin File Cleanup & Permanent Deletion (Local SQLite + Google Drive) */}
+              <div className="rounded-3xl bg-slate-950/80 border border-rose-400/30 p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h4 className="text-sm font-black text-white flex items-center gap-1.5">
+                      <Trash2 className="w-4 h-4 text-rose-400" /> Admin File Manager — Permanent Delete (Local SQLite + Google Drive)
+                    </h4>
+                    <p className="text-[11px] text-slate-400">
+                      Delete unwanted, duplicate, or oversized files permanently from both local storage and Google Drive.
+                    </p>
+                  </div>
+                  {adminSelectedIds.length > 0 && (
+                    <button
+                      onClick={() => void handleBulkDeleteAdminSelected()}
+                      disabled={isDeletingBulk}
+                      className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-lg disabled:opacity-60"
+                    >
+                      {isDeletingBulk ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                      Delete Selected ({adminSelectedIds.length}) Local + Drive
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      value={adminSearch}
+                      onChange={(e) => setAdminSearch(e.target.value)}
+                      placeholder="Filter files by name, folder, or type..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-white"
+                    />
+                  </div>
+                  {(
+                    [
+                      { id: 'all', label: `All (${adminFiles.length})` },
+                      { id: 'largest', label: 'Largest First' },
+                      { id: 'duplicates', label: 'Duplicates' },
+                      { id: 'local', label: 'Local SQLite' },
+                      { id: 'trashed', label: 'Trashed' },
+                      { id: 'flagged', label: 'Flagged' },
+                    ] as const
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setAdminFilter(f.id)}
+                      className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold cursor-pointer ${
+                        adminFilter === f.id
+                          ? 'bg-rose-500/25 text-rose-200 border border-rose-400/50'
+                          : 'bg-slate-900 text-slate-300 border border-white/10'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                  {filteredAdminFiles.length > 0 && (
+                    <button
+                      onClick={() => {
+                        if (adminSelectedIds.length === filteredAdminFiles.length) {
+                          setAdminSelectedIds([]);
+                        } else {
+                          setAdminSelectedIds(filteredAdminFiles.map((x) => x.id));
+                        }
+                      }}
+                      className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold cursor-pointer"
+                    >
+                      {adminSelectedIds.length === filteredAdminFiles.length ? 'Unselect All' : 'Select All'}
+                    </button>
+                  )}
+                </div>
+
+                <div className="max-h-80 overflow-y-auto space-y-1.5 text-xs">
+                  {filteredAdminFiles.length === 0 ? (
+                    <p className="text-slate-500 py-4 text-center">No files match this filter.</p>
+                  ) : (
+                    filteredAdminFiles.map((f) => {
+                      const checked = adminSelectedIds.includes(f.id);
+                      return (
+                        <div
+                          key={f.id}
+                          className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
+                            checked ? 'bg-rose-950/35 border-rose-400/45' : 'bg-slate-900/90 border-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setAdminSelectedIds((prev) =>
+                                  checked ? prev.filter((id) => id !== f.id) : [...prev, f.id]
+                                )
+                              }
+                              className="w-4 h-4 accent-rose-500 shrink-0 cursor-pointer"
+                            />
+                            <div className="min-w-0">
+                              <div className="font-extrabold text-white truncate max-w-[220px] sm:max-w-sm">
+                                {f.fileName}
+                              </div>
+                              <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-1.5">
+                                <span>{f.folderPath}</span>
+                                <span>·</span>
+                                <span className="text-slate-200 font-bold">{formatBytes(f.fileSize)}</span>
+                                {f.driveFileId && <span className="text-cyan-300 font-bold">☁️ Drive</span>}
+                                {f.isStoredLocally && <span className="text-emerald-300 font-bold">💾 Local</span>}
+                                {f.isDeleted && <span className="text-amber-300 font-bold">🗑️ In Trash</span>}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => void handlePermanentDeleteSingle(f)}
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/35 border border-rose-400/40 text-rose-200 text-[11px] font-extrabold inline-flex items-center gap-1 cursor-pointer shrink-0"
+                          >
+                            <Trash2 className="w-3 h-3" /> Delete Local + Drive
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
               {/* Audit Logs */}
               <div className="space-y-2">
                 <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Recent Audit Logs</h4>
@@ -1220,28 +1632,48 @@ export const MediaLibraryTab: React.FC = () => {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[10px]">
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                const u = it.isStoredLocally
-                                  ? await removeMediaItemFromLocalSqlite(it.id)
-                                  : await storeMediaItemLocallyInSqlite(it, { googleAccessToken, userEmail });
-                                if (u) setItems((prev) => prev.map((x) => (x.id === u.id ? u : x)));
-                                void loadMetadata();
-                              } catch (err: any) {
-                                pushNotification('error', 'Local Cache Failed', err?.message || 'Error');
-                              }
-                            }}
-                            className={`px-2 py-0.5 rounded-lg font-bold cursor-pointer ${
-                              it.isStoredLocally
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : 'bg-white/10 hover:bg-cyan-500/25 text-cyan-200'
-                            }`}
-                          >
-                            {it.isStoredLocally ? '✓ Offline' : 'Store Local'}
-                          </button>
+                        <div className="flex items-center justify-between gap-1 pt-1 border-t border-white/5 text-[10px]">
+                          <div className="flex items-center gap-1">
+                            {!it.driveFileId && !it.isDeleted && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    const pushed = await pushSingleLocalMediaItemToDrive(it, googleAccessToken, userEmail);
+                                    setItems((prev) => prev.map((x) => (x.id === pushed.id ? pushed : x)));
+                                    pushNotification('success', 'Uploaded to Google Drive', `"${it.fileName}" is now stored in Google Drive!`);
+                                    void loadMetadata();
+                                  } catch (err: any) {
+                                    pushNotification('error', 'Drive Upload Failed', err?.message || 'Reconnect Google Drive and retry.');
+                                  }
+                                }}
+                                className="px-2 py-0.5 rounded-lg bg-amber-500/25 hover:bg-amber-500/40 text-amber-200 font-bold cursor-pointer"
+                              >
+                                ↑ Push Drive
+                              </button>
+                            )}
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const u = it.isStoredLocally
+                                    ? await removeMediaItemFromLocalSqlite(it.id)
+                                    : await storeMediaItemLocallyInSqlite(it, { googleAccessToken, userEmail });
+                                  if (u) setItems((prev) => prev.map((x) => (x.id === u.id ? u : x)));
+                                  void loadMetadata();
+                                } catch (err: any) {
+                                  pushNotification('error', 'Local Cache Failed', err?.message || 'Error');
+                                }
+                              }}
+                              className={`px-2 py-0.5 rounded-lg font-bold cursor-pointer ${
+                                it.isStoredLocally
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : 'bg-white/10 hover:bg-cyan-500/25 text-cyan-200'
+                              }`}
+                            >
+                              {it.isStoredLocally ? '✓ Offline' : 'Store Local'}
+                            </button>
+                          </div>
 
                           {it.isDeleted ? (
                             <div className="flex gap-1">
@@ -1258,16 +1690,24 @@ export const MediaLibraryTab: React.FC = () => {
                               <button
                                 onClick={async (e) => {
                                   e.stopPropagation();
-                                  await permanentlyDeleteMediaItem(it.id);
-                                  setItems((prev) => prev.filter((x) => x.id !== it.id));
+                                  await handlePermanentDeleteSingle(it);
                                 }}
                                 className="px-2 py-0.5 rounded-lg bg-rose-500/25 text-rose-200 font-bold cursor-pointer"
                               >
-                                Purge
+                                Delete All
                               </button>
                             </div>
                           ) : (
-                            <span className="text-slate-500">{(it.createdAt || '').slice(0, 10)}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handlePermanentDeleteSingle(it);
+                              }}
+                              title="Delete permanently from Local SQLite & Google Drive"
+                              className="p-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/35 text-rose-300 cursor-pointer"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           )}
                         </div>
                       </div>
@@ -1301,6 +1741,16 @@ export const MediaLibraryTab: React.FC = () => {
                           </span>
                         )}
                         <span className="text-slate-500">{(it.updatedAt || '').slice(0, 10)}</span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handlePermanentDeleteSingle(it);
+                          }}
+                          title="Delete permanently from Local SQLite & Google Drive"
+                          className="p-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/35 text-rose-300 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   ))}
