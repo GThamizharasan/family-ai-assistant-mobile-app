@@ -82,6 +82,12 @@ export const GlobalUniversalSearchModal: React.FC<GlobalUniversalSearchModalProp
       } catch {}
     }
 
+    if (item.targetTab === 'media-library' && item.deepLink) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('aura-open-media-library', { detail: item.deepLink }));
+      }, 220);
+    }
+
     onNavigateTab(item.targetTab, item.deepLink?.subTab);
   };
 

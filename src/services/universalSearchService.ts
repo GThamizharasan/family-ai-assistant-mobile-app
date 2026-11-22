@@ -14,6 +14,7 @@ export interface UniversalSearchResultItem {
     | 'smart_document'
     | 'reminder'
     | 'drive_file'
+    | 'media_library'
     | 'task'
     | 'finance'
     | 'family'
@@ -33,6 +34,14 @@ const APP_SHORTCUTS: UniversalSearchResultItem[] = [
     subtitle: 'Overview, Quick Launch & Family Pulse',
     iconEmoji: '🏠',
     targetTab: 'home',
+  },
+  {
+    id: 'app-media-library',
+    category: 'media_library',
+    title: 'Centralized Family Media Library (1 TB Drive + Local SQLite)',
+    subtitle: 'Photos, Videos, Audio, PDFs, Docs & AI Content · Resumable Drive Upload + Offline SQLite',
+    iconEmoji: '🗂️',
+    targetTab: 'media-library',
   },
   {
     id: 'app-lang-tutor',
@@ -257,6 +266,7 @@ export async function runGlobalUniversalSearch(params: {
           smart_document: '🧾',
           reminder: '⏰',
           drive_file: '☁️',
+          media_library: '🗂️',
           voice_memo: '🎙️',
           memory_note: '🔐',
         };

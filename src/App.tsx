@@ -58,6 +58,7 @@ const NavigationTab = lazyNamed(() => import('./components/tabs/NavigationTab'),
 const WeatherForecastTab = lazyNamed(() => import('./components/tabs/WeatherForecastTab'), 'WeatherForecastTab');
 const AdaptiveLearningTab = lazyNamed(() => import('./components/tabs/AdaptiveLearningTab'), 'AdaptiveLearningTab');
 const LanguageTutorTab = lazyNamed(() => import('./components/tabs/LanguageTutorTab'), 'LanguageTutorTab');
+const MediaLibraryTab = lazyNamed(() => import('./components/tabs/MediaLibraryTab'), 'MediaLibraryTab');
 
 // Lazy-loaded Heavy Modals (loaded only when opened)
 const VoiceAssistantModal = lazyNamed(() => import('./components/VoiceAssistantModal'), 'VoiceAssistantModal');
@@ -295,6 +296,8 @@ const AppContent: React.FC = () => {
         return <AdaptiveLearningTab />;
       case 'language-tutor':
         return <LanguageTutorTab />;
+      case 'media-library':
+        return <MediaLibraryTab />;
       case 'weather':
         return (
           <WeatherForecastTab

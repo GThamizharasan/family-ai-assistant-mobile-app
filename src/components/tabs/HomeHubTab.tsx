@@ -2520,6 +2520,16 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               iconBg: 'bg-cyan-500/20 text-cyan-400',
             },
             {
+              key: 'media-library' as TabKey,
+              title: 'Centralized Media Library (1 TB Vault)',
+              category: 'Core',
+              desc: '1 TB Google Drive Media Vault + lightweight SQLite index + on-demand local SQLite offline cache & AI tagging.',
+              badge: '1 TB DRIVE + LOCAL',
+              icon: HardDrive,
+              accent: 'border-cyan-500/40 hover:border-cyan-300',
+              iconBg: 'bg-cyan-500/20 text-cyan-300',
+            },
+            {
               key: 'language-tutor' as TabKey,
               title: 'Live Language Tutor (EN & தமிழ்)',
               category: 'Intelligence',

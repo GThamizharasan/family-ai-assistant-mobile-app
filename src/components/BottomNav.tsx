@@ -43,6 +43,7 @@ import { useApp } from '../context/AppContext';
 
 export type TabKey =
   | 'home'
+  | 'media-library'
   | 'adaptive-learning'
   | 'language-tutor'
   | 'weather'
@@ -109,6 +110,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // All Features categorized
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
+    { key: 'media-library', label: 'Media Vault', category: 'Core', icon: Layers, offlineReady: true },
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
     { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },
@@ -140,6 +142,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   // Left wing scrollable features (between fixed Home Hub on left and center Mic)
   const leftTabs: TabItem[] = [
+    { key: 'media-library', label: 'Media Vault', category: 'Core', icon: Layers, offlineReady: true },
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
     { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },

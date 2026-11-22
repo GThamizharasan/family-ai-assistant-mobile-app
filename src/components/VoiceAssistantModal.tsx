@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { getApiUrl } from '../services/api';
 import {
   Mic,
   MicOff,
@@ -2041,6 +2042,66 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
         `Opening your Live Human ${detectedLang === 'tamil' ? 'Tamil' : 'English'} Tutor Studio right now!`,
         `உங்கள் நேரலை ${detectedLang === 'tamil' ? 'தமிழ்' : 'ஆங்கில'} மொழி ஆசிரியர் வகுப்பறையை இப்போது திறக்கிறேன்!`
       );
+      return;
+    }
+
+    // 25a-2. Centralized Family Media Library (1 TB Google Drive + Local SQLite Offline Vault)
+    if (
+      lower.includes('media library') ||
+      lower.includes('media vault') ||
+      lower.includes('open media') ||
+      lower.includes('my photos') ||
+      lower.includes('family photos') ||
+      lower.includes('my videos') ||
+      lower.includes('find media') ||
+      lower.includes('search media') ||
+      lower.includes('மீடியா') ||
+      lower.includes('புகைப்படங்கள்')
+    ) {
+      const cleanedQuery = lower
+        .replace(
+          /\b(open|show|find|search|in|my|the|for|please|auro|media library|media vault|library|vault|files?)\b/gi,
+          ' '
+        )
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      let matchSummaryEn = 'Opening your Centralized Family Media Library (1 TB Google Drive + Local SQLite Vault) right now!';
+      let matchSummaryTa = 'உங்கள் குடும்ப மீடியா நூலகத்தை (Google Drive + Local SQLite) இப்போது திறக்கிறேன்!';
+      let firstMediaId: string | undefined;
+
+      if (cleanedQuery.length >= 2) {
+        try {
+          const mRes = await fetch(
+            getApiUrl(`/api/media-library/items?q=${encodeURIComponent(cleanedQuery)}&limit=5`)
+          );
+          if (mRes.ok) {
+            const mData = await mRes.json();
+            const found = Array.isArray(mData.items) ? mData.items : [];
+            if (found.length > 0) {
+              firstMediaId = found[0].id;
+              const names = found
+                .slice(0, 3)
+                .map((x: any) => `${x.fileName} (${x.isStoredLocally ? 'Local SQLite' : 'Drive'})`)
+                .join(', ');
+              matchSummaryEn = `Found ${mData.total || found.length} media file(s) matching "${cleanedQuery}": ${names}. Opening your Media Library now!`;
+              matchSummaryTa = `"${cleanedQuery}" தேடலில் ${mData.total || found.length} மீடியா கோப்புகள் கிடைத்தன. இப்போது திறக்கிறேன்!`;
+            } else {
+              matchSummaryEn = `Opening your Media Library filtered for "${cleanedQuery}". You can also click Sync from Drive to pull new files.`;
+            }
+          }
+        } catch {}
+      }
+
+      setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent('aura-open-media-library', {
+            detail: { query: cleanedQuery || undefined, mediaId: firstMediaId },
+          })
+        );
+      }, 260);
+
+      executeVoiceNavigation('media-library', undefined, matchSummaryEn, matchSummaryTa);
       return;
     }
 

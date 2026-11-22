@@ -488,6 +488,93 @@ export async function initSqliteDb(): Promise<Database> {
     CREATE INDEX IF NOT EXISTS idx_smart_docs_user_type
       ON smart_family_documents(user_email, doc_type, updated_at);
 
+    CREATE TABLE IF NOT EXISTS media_library_items (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      drive_file_id TEXT,
+      drive_folder_id TEXT,
+      drive_web_view_link TEXT,
+      drive_download_url TEXT,
+      folder_path TEXT NOT NULL DEFAULT '/',
+      media_type TEXT NOT NULL DEFAULT 'document',
+      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+      file_size INTEGER NOT NULL DEFAULT 0,
+      sha256_hash TEXT,
+      thumbnail_data_url TEXT,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      category TEXT NOT NULL DEFAULT 'General',
+      collection_ids_json TEXT NOT NULL DEFAULT '[]',
+      owner_name TEXT NOT NULL DEFAULT 'Family',
+      device_source TEXT NOT NULL DEFAULT 'Web',
+      location TEXT,
+      custom_metadata_json TEXT NOT NULL DEFAULT '{}',
+      ai_metadata_json TEXT NOT NULL DEFAULT '{}',
+      share_config_json TEXT NOT NULL DEFAULT '{}',
+      is_favorite INTEGER NOT NULL DEFAULT 0,
+      is_archived INTEGER NOT NULL DEFAULT 0,
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
+      is_stored_locally INTEGER NOT NULL DEFAULT 0,
+      local_cached_at TEXT,
+      last_viewed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_lib_user_folder
+      ON media_library_items(user_email, folder_path, is_deleted, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_type
+      ON media_library_items(user_email, media_type, is_deleted);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_hash
+      ON media_library_items(sha256_hash);
+    CREATE INDEX IF NOT EXISTS idx_media_lib_drive_id
+      ON media_library_items(drive_file_id);
+
+    CREATE TABLE IF NOT EXISTS media_library_local_blobs (
+      media_id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      data_base64 TEXT NOT NULL,
+      checksum TEXT,
+      cached_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS media_library_folders (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      path TEXT NOT NULL,
+      name TEXT NOT NULL,
+      parent_path TEXT NOT NULL DEFAULT '/',
+      drive_folder_id TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_folders_user_path
+      ON media_library_folders(user_email, path);
+
+    CREATE TABLE IF NOT EXISTS media_library_collections (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      kind TEXT NOT NULL DEFAULT 'album',
+      cover_thumbnail TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS media_library_audit_logs (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      action TEXT NOT NULL,
+      media_id TEXT,
+      file_name TEXT,
+      details TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_audit_user_time
+      ON media_library_audit_logs(user_email, created_at);
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2760,6 +2847,7 @@ export interface UniversalSearchHit {
     | 'smart_document'
     | 'reminder'
     | 'drive_file'
+    | 'media_library'
     | 'voice_memo'
     | 'memory_note';
   title: string;
@@ -2894,7 +2982,28 @@ export function searchUniversalSqlite(rawQuery: string, userEmail?: string): Uni
     })
   );
 
-  return hits.slice(0, 28);
+  // 7. Centralized Family Media Library (Drive-indexed + Local SQLite cached)
+  runSafe(
+    `SELECT id, file_name, media_type, folder_path, category, is_stored_locally, updated_at
+     FROM media_library_items
+     WHERE is_deleted = 0
+       AND (file_name LIKE ? OR tags_json LIKE ? OR ai_metadata_json LIKE ? OR folder_path LIKE ? OR category LIKE ?)${
+         email ? ' AND user_email = ?' : ''
+       }
+     ORDER BY updated_at DESC LIMIT 10`,
+    email ? [like, like, like, like, like, email] : [like, like, like, like, like],
+    (r) => ({
+      id: `ml-${r[0]}`,
+      category: 'media_library',
+      title: String(r[1] || 'Media File'),
+      subtitle: `Media Library (${String(r[2]).toUpperCase()}) · ${r[3] || '/'}${r[5] ? ' · Stored Locally' : ' · Google Drive'}`,
+      targetTab: 'media-library',
+      deepLink: { mediaId: String(r[0]), fileName: String(r[1] || '') },
+      updatedAt: String(r[6] || ''),
+    })
+  );
+
+  return hits.slice(0, 32);
 }
 
 // -------------------------------------------------------------
@@ -7116,6 +7225,696 @@ export function updateWalkingStepLogDriveSyncInSqlite(id: string, driveFileId: s
   } catch {
     return false;
   }
+}
+
+// =========================================================================
+// CENTRALIZED FAMILY MEDIA LIBRARY (1 TB Drive Metadata Index + On-Demand Local SQLite Blobs)
+// =========================================================================
+
+export interface MediaLibraryRow {
+  id: string;
+  userEmail: string;
+  fileName: string;
+  driveFileId?: string;
+  driveFolderId?: string;
+  driveWebViewLink?: string;
+  driveDownloadUrl?: string;
+  folderPath: string;
+  mediaType: string;
+  mimeType: string;
+  fileSize: number;
+  sha256Hash?: string;
+  thumbnailDataUrl?: string;
+  tags: string[];
+  category: string;
+  collectionIds: string[];
+  ownerName: string;
+  deviceSource: string;
+  location?: string;
+  customMetadata: Record<string, string>;
+  aiMetadata: Record<string, any>;
+  shareConfig: Record<string, any>;
+  isFavorite: boolean;
+  isArchived: boolean;
+  isDeleted: boolean;
+  deletedAt?: string | null;
+  isStoredLocally: boolean;
+  localCachedAt?: string | null;
+  lastViewedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function parseJsonSafe<T>(raw: any, fallback: T): T {
+  try {
+    return raw ? JSON.parse(String(raw)) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function mapMediaLibraryRow(r: any[]): MediaLibraryRow {
+  return {
+    id: String(r[0]),
+    userEmail: String(r[1]),
+    fileName: String(r[2]),
+    driveFileId: r[3] ? String(r[3]) : undefined,
+    driveFolderId: r[4] ? String(r[4]) : undefined,
+    driveWebViewLink: r[5] ? String(r[5]) : undefined,
+    driveDownloadUrl: r[6] ? String(r[6]) : undefined,
+    folderPath: String(r[7] || '/'),
+    mediaType: String(r[8] || 'document'),
+    mimeType: String(r[9] || 'application/octet-stream'),
+    fileSize: Number(r[10]) || 0,
+    sha256Hash: r[11] ? String(r[11]) : undefined,
+    thumbnailDataUrl: r[12] ? String(r[12]) : undefined,
+    tags: parseJsonSafe<string[]>(r[13], []),
+    category: String(r[14] || 'General'),
+    collectionIds: parseJsonSafe<string[]>(r[15], []),
+    ownerName: String(r[16] || 'Family'),
+    deviceSource: String(r[17] || 'Web'),
+    location: r[18] ? String(r[18]) : undefined,
+    customMetadata: parseJsonSafe<Record<string, string>>(r[19], {}),
+    aiMetadata: parseJsonSafe<Record<string, any>>(r[20], {}),
+    shareConfig: parseJsonSafe<Record<string, any>>(r[21], {
+      isPublic: false,
+      permissionRole: 'view',
+      allowDownload: true,
+      sharedWithEmails: [],
+    }),
+    isFavorite: Boolean(r[22]),
+    isArchived: Boolean(r[23]),
+    isDeleted: Boolean(r[24]),
+    deletedAt: r[25] ? String(r[25]) : null,
+    isStoredLocally: Boolean(r[26]),
+    localCachedAt: r[27] ? String(r[27]) : null,
+    lastViewedAt: r[28] ? String(r[28]) : null,
+    createdAt: String(r[29] || ''),
+    updatedAt: String(r[30] || ''),
+  };
+}
+
+export function addMediaAuditLogToSqlite(entry: {
+  userEmail?: string;
+  action: string;
+  mediaId?: string;
+  fileName?: string;
+  details: string;
+}): void {
+  if (!db) return;
+  try {
+    const id = `mal-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const email = (entry.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+    db.run(
+      `INSERT INTO media_library_audit_logs (id, user_email, action, media_id, file_name, details, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, email, entry.action, entry.mediaId || null, entry.fileName || null, entry.details, new Date().toISOString()]
+    );
+    scheduleSave();
+  } catch {}
+}
+
+export function queryMediaLibraryFromSqlite(opts: {
+  userEmail?: string;
+  q?: string;
+  mediaType?: string;
+  folderPath?: string;
+  collectionId?: string;
+  tag?: string;
+  favorite?: boolean;
+  archived?: boolean;
+  trash?: boolean;
+  storedLocally?: boolean;
+  recentlyViewed?: boolean;
+  minSize?: number;
+  maxSize?: number;
+  dateFrom?: string;
+  dateTo?: string;
+  sortBy?: 'newest' | 'oldest' | 'name' | 'size' | 'recent';
+  page?: number;
+  limit?: number;
+}): { items: MediaLibraryRow[]; total: number; page: number; limit: number; hasMore: boolean } {
+  if (!db) return { items: [], total: 0, page: 1, limit: 36, hasMore: false };
+  const page = Math.max(1, Number(opts.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(opts.limit) || 36));
+  const offset = (page - 1) * limit;
+
+  const where: string[] = [];
+  const params: any[] = [];
+
+  if (opts.userEmail) {
+    where.push('user_email = ?');
+    params.push(opts.userEmail.toLowerCase().trim());
+  }
+  if (opts.trash) {
+    where.push('is_deleted = 1');
+  } else {
+    where.push('is_deleted = 0');
+    if (opts.archived) {
+      where.push('is_archived = 1');
+    } else if (opts.archived === false) {
+      where.push('is_archived = 0');
+    }
+  }
+  if (opts.favorite) where.push('is_favorite = 1');
+  if (opts.storedLocally) where.push('is_stored_locally = 1');
+  if (opts.recentlyViewed) where.push('last_viewed_at IS NOT NULL');
+  if (opts.mediaType && opts.mediaType !== 'all') {
+    where.push('media_type = ?');
+    params.push(opts.mediaType);
+  }
+  if (opts.folderPath && opts.folderPath !== 'ALL') {
+    where.push('(folder_path = ? OR folder_path LIKE ?)');
+    const cleanFolder = opts.folderPath === '/' ? '/' : opts.folderPath.replace(/\/+$/, '');
+    params.push(cleanFolder, cleanFolder === '/' ? '/%' : `${cleanFolder}/%`);
+  }
+  if (opts.collectionId) {
+    where.push('collection_ids_json LIKE ?');
+    params.push(`%"${opts.collectionId}"%`);
+  }
+  if (opts.tag) {
+    where.push('tags_json LIKE ?');
+    params.push(`%${opts.tag}%`);
+  }
+  if (typeof opts.minSize === 'number' && opts.minSize > 0) {
+    where.push('file_size >= ?');
+    params.push(opts.minSize);
+  }
+  if (typeof opts.maxSize === 'number' && opts.maxSize > 0) {
+    where.push('file_size <= ?');
+    params.push(opts.maxSize);
+  }
+  if (opts.dateFrom) {
+    where.push('created_at >= ?');
+    params.push(opts.dateFrom);
+  }
+  if (opts.dateTo) {
+    where.push('created_at <= ?');
+    params.push(`${opts.dateTo}T23:59:59.999Z`);
+  }
+  if (opts.q && opts.q.trim()) {
+    const like = `%${opts.q.trim()}%`;
+    where.push(
+      '(file_name LIKE ? OR tags_json LIKE ? OR ai_metadata_json LIKE ? OR custom_metadata_json LIKE ? OR category LIKE ? OR folder_path LIKE ? OR owner_name LIKE ? OR location LIKE ?)'
+    );
+    params.push(like, like, like, like, like, like, like, like);
+  }
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const orderSql =
+    opts.sortBy === 'name'
+      ? 'ORDER BY LOWER(file_name) ASC'
+      : opts.sortBy === 'size'
+      ? 'ORDER BY file_size DESC'
+      : opts.sortBy === 'oldest'
+      ? 'ORDER BY created_at ASC'
+      : opts.sortBy === 'recent' || opts.recentlyViewed
+      ? 'ORDER BY COALESCE(last_viewed_at, updated_at) DESC'
+      : 'ORDER BY updated_at DESC';
+
+  let total = 0;
+  try {
+    const countStmt = db.prepare(`SELECT COUNT(*) FROM media_library_items ${whereSql}`);
+    if (params.length > 0) countStmt.bind(params);
+    if (countStmt.step()) total = Number(countStmt.get()[0]) || 0;
+    countStmt.free();
+  } catch {}
+
+  const items: MediaLibraryRow[] = [];
+  try {
+    const stmt = db.prepare(
+      `SELECT id, user_email, file_name, drive_file_id, drive_folder_id, drive_web_view_link, drive_download_url,
+              folder_path, media_type, mime_type, file_size, sha256_hash, thumbnail_data_url, tags_json, category,
+              collection_ids_json, owner_name, device_source, location, custom_metadata_json, ai_metadata_json,
+              share_config_json, is_favorite, is_archived, is_deleted, deleted_at, is_stored_locally, local_cached_at,
+              last_viewed_at, created_at, updated_at
+       FROM media_library_items ${whereSql} ${orderSql} LIMIT ? OFFSET ?`
+    );
+    stmt.bind([...params, limit, offset]);
+    while (stmt.step()) {
+      items.push(mapMediaLibraryRow(stmt.get()));
+    }
+    stmt.free();
+  } catch (err) {
+    console.warn('[SQLite] queryMediaLibraryFromSqlite error:', err);
+  }
+
+  return { items, total, page, limit, hasMore: offset + items.length < total };
+}
+
+export function getMediaLibraryItemByIdFromSqlite(id: string): MediaLibraryRow | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare(
+      `SELECT id, user_email, file_name, drive_file_id, drive_folder_id, drive_web_view_link, drive_download_url,
+              folder_path, media_type, mime_type, file_size, sha256_hash, thumbnail_data_url, tags_json, category,
+              collection_ids_json, owner_name, device_source, location, custom_metadata_json, ai_metadata_json,
+              share_config_json, is_favorite, is_archived, is_deleted, deleted_at, is_stored_locally, local_cached_at,
+              last_viewed_at, created_at, updated_at
+       FROM media_library_items WHERE id = ? OR drive_file_id = ? LIMIT 1`
+    );
+    stmt.bind([id, id]);
+    let item: MediaLibraryRow | null = null;
+    if (stmt.step()) item = mapMediaLibraryRow(stmt.get());
+    stmt.free();
+    return item;
+  } catch {
+    return null;
+  }
+}
+
+export function findMediaDuplicateByHashInSqlite(sha256Hash: string, userEmail?: string): MediaLibraryRow | null {
+  if (!db || !sha256Hash) return null;
+  try {
+    const sql = userEmail
+      ? `SELECT id, user_email, file_name, drive_file_id, drive_folder_id, drive_web_view_link, drive_download_url,
+                folder_path, media_type, mime_type, file_size, sha256_hash, thumbnail_data_url, tags_json, category,
+                collection_ids_json, owner_name, device_source, location, custom_metadata_json, ai_metadata_json,
+                share_config_json, is_favorite, is_archived, is_deleted, deleted_at, is_stored_locally, local_cached_at,
+                last_viewed_at, created_at, updated_at
+         FROM media_library_items WHERE sha256_hash = ? AND user_email = ? AND is_deleted = 0 LIMIT 1`
+      : `SELECT id, user_email, file_name, drive_file_id, drive_folder_id, drive_web_view_link, drive_download_url,
+                folder_path, media_type, mime_type, file_size, sha256_hash, thumbnail_data_url, tags_json, category,
+                collection_ids_json, owner_name, device_source, location, custom_metadata_json, ai_metadata_json,
+                share_config_json, is_favorite, is_archived, is_deleted, deleted_at, is_stored_locally, local_cached_at,
+                last_viewed_at, created_at, updated_at
+         FROM media_library_items WHERE sha256_hash = ? AND is_deleted = 0 LIMIT 1`;
+    const stmt = db.prepare(sql);
+    stmt.bind(userEmail ? [sha256Hash, userEmail.toLowerCase().trim()] : [sha256Hash]);
+    let item: MediaLibraryRow | null = null;
+    if (stmt.step()) item = mapMediaLibraryRow(stmt.get());
+    stmt.free();
+    return item;
+  } catch {
+    return null;
+  }
+}
+
+export function upsertMediaLibraryItemToSqlite(item: Partial<MediaLibraryRow> & { fileName: string }): MediaLibraryRow {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const existing = item.id
+    ? getMediaLibraryItemByIdFromSqlite(item.id)
+    : item.driveFileId
+    ? getMediaLibraryItemByIdFromSqlite(item.driveFileId)
+    : null;
+
+  const id = existing?.id || item.id || `ml-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const merged: MediaLibraryRow = {
+    id,
+    userEmail: (item.userEmail || existing?.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim(),
+    fileName: item.fileName || existing?.fileName || 'Untitled',
+    driveFileId: item.driveFileId ?? existing?.driveFileId,
+    driveFolderId: item.driveFolderId ?? existing?.driveFolderId,
+    driveWebViewLink: item.driveWebViewLink ?? existing?.driveWebViewLink,
+    driveDownloadUrl: item.driveDownloadUrl ?? existing?.driveDownloadUrl,
+    folderPath: item.folderPath ?? existing?.folderPath ?? '/',
+    mediaType: item.mediaType ?? existing?.mediaType ?? 'document',
+    mimeType: item.mimeType ?? existing?.mimeType ?? 'application/octet-stream',
+    fileSize: typeof item.fileSize === 'number' ? item.fileSize : existing?.fileSize ?? 0,
+    sha256Hash: item.sha256Hash ?? existing?.sha256Hash,
+    thumbnailDataUrl: item.thumbnailDataUrl ?? existing?.thumbnailDataUrl,
+    tags: item.tags ?? existing?.tags ?? [],
+    category: item.category ?? existing?.category ?? 'General',
+    collectionIds: item.collectionIds ?? existing?.collectionIds ?? [],
+    ownerName: item.ownerName ?? existing?.ownerName ?? 'Family',
+    deviceSource: item.deviceSource ?? existing?.deviceSource ?? 'Web',
+    location: item.location ?? existing?.location,
+    customMetadata: item.customMetadata ?? existing?.customMetadata ?? {},
+    aiMetadata: item.aiMetadata ?? existing?.aiMetadata ?? {},
+    shareConfig: item.shareConfig ?? existing?.shareConfig ?? {
+      isPublic: false,
+      permissionRole: 'view',
+      allowDownload: true,
+      sharedWithEmails: [],
+    },
+    isFavorite: typeof item.isFavorite === 'boolean' ? item.isFavorite : existing?.isFavorite ?? false,
+    isArchived: typeof item.isArchived === 'boolean' ? item.isArchived : existing?.isArchived ?? false,
+    isDeleted: typeof item.isDeleted === 'boolean' ? item.isDeleted : existing?.isDeleted ?? false,
+    deletedAt: item.deletedAt !== undefined ? item.deletedAt : existing?.deletedAt ?? null,
+    isStoredLocally: typeof item.isStoredLocally === 'boolean' ? item.isStoredLocally : existing?.isStoredLocally ?? false,
+    localCachedAt: item.localCachedAt !== undefined ? item.localCachedAt : existing?.localCachedAt ?? null,
+    lastViewedAt: item.lastViewedAt !== undefined ? item.lastViewedAt : existing?.lastViewedAt ?? null,
+    createdAt: existing?.createdAt || item.createdAt || now,
+    updatedAt: item.updatedAt || now,
+  };
+
+  db.run(
+    `INSERT OR REPLACE INTO media_library_items (
+      id, user_email, file_name, drive_file_id, drive_folder_id, drive_web_view_link, drive_download_url,
+      folder_path, media_type, mime_type, file_size, sha256_hash, thumbnail_data_url, tags_json, category,
+      collection_ids_json, owner_name, device_source, location, custom_metadata_json, ai_metadata_json,
+      share_config_json, is_favorite, is_archived, is_deleted, deleted_at, is_stored_locally, local_cached_at,
+      last_viewed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      merged.id,
+      merged.userEmail,
+      merged.fileName,
+      merged.driveFileId || null,
+      merged.driveFolderId || null,
+      merged.driveWebViewLink || null,
+      merged.driveDownloadUrl || null,
+      merged.folderPath,
+      merged.mediaType,
+      merged.mimeType,
+      merged.fileSize,
+      merged.sha256Hash || null,
+      merged.thumbnailDataUrl || null,
+      JSON.stringify(merged.tags),
+      merged.category,
+      JSON.stringify(merged.collectionIds),
+      merged.ownerName,
+      merged.deviceSource,
+      merged.location || null,
+      JSON.stringify(merged.customMetadata),
+      JSON.stringify(merged.aiMetadata),
+      JSON.stringify(merged.shareConfig),
+      merged.isFavorite ? 1 : 0,
+      merged.isArchived ? 1 : 0,
+      merged.isDeleted ? 1 : 0,
+      merged.deletedAt || null,
+      merged.isStoredLocally ? 1 : 0,
+      merged.localCachedAt || null,
+      merged.lastViewedAt || null,
+      merged.createdAt,
+      merged.updatedAt,
+    ]
+  );
+  scheduleSave();
+  return merged;
+}
+
+export function deleteMediaLibraryItemPermanentlyFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run('DELETE FROM media_library_local_blobs WHERE media_id = ?', [id]);
+    db.run('DELETE FROM media_library_items WHERE id = ?', [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function saveMediaLocalBlobToSqlite(params: {
+  mediaId: string;
+  userEmail?: string;
+  mimeType: string;
+  fileSize: number;
+  dataBase64: string;
+  checksum?: string;
+}): boolean {
+  if (!db) return false;
+  const now = new Date().toISOString();
+  const email = (params.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  db.run(
+    `INSERT OR REPLACE INTO media_library_local_blobs (media_id, user_email, mime_type, file_size, data_base64, checksum, cached_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [params.mediaId, email, params.mimeType, params.fileSize, params.dataBase64, params.checksum || null, now]
+  );
+  db.run(
+    `UPDATE media_library_items SET is_stored_locally = 1, local_cached_at = ?, updated_at = ? WHERE id = ?`,
+    [now, now, params.mediaId]
+  );
+  scheduleSave();
+  return true;
+}
+
+export function getMediaLocalBlobFromSqlite(mediaId: string): {
+  mediaId: string;
+  mimeType: string;
+  fileSize: number;
+  dataBase64: string;
+  cachedAt: string;
+} | null {
+  if (!db) return null;
+  try {
+    const stmt = db.prepare(
+      `SELECT media_id, mime_type, file_size, data_base64, cached_at FROM media_library_local_blobs WHERE media_id = ? LIMIT 1`
+    );
+    stmt.bind([mediaId]);
+    let res: any = null;
+    if (stmt.step()) {
+      const r = stmt.get();
+      res = {
+        mediaId: String(r[0]),
+        mimeType: String(r[1]),
+        fileSize: Number(r[2]) || 0,
+        dataBase64: String(r[3] || ''),
+        cachedAt: String(r[4] || ''),
+      };
+    }
+    stmt.free();
+    return res;
+  } catch {
+    return null;
+  }
+}
+
+export function deleteMediaLocalBlobFromSqlite(mediaId: string): boolean {
+  if (!db) return false;
+  try {
+    db.run('DELETE FROM media_library_local_blobs WHERE media_id = ?', [mediaId]);
+    db.run('UPDATE media_library_items SET is_stored_locally = 0, local_cached_at = NULL WHERE id = ?', [mediaId]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getMediaFoldersFromSqlite(userEmail?: string): any[] {
+  if (!db) return [];
+  try {
+    const sql = userEmail
+      ? `SELECT id, user_email, path, name, parent_path, drive_folder_id, created_at FROM media_library_folders WHERE user_email = ? ORDER BY path ASC`
+      : `SELECT id, user_email, path, name, parent_path, drive_folder_id, created_at FROM media_library_folders ORDER BY path ASC`;
+    const stmt = db.prepare(sql);
+    if (userEmail) stmt.bind([userEmail.toLowerCase().trim()]);
+    const rows: any[] = [];
+    while (stmt.step()) {
+      const r = stmt.get();
+      rows.push({
+        id: String(r[0]),
+        userEmail: String(r[1]),
+        path: String(r[2]),
+        name: String(r[3]),
+        parentPath: String(r[4]),
+        driveFolderId: r[5] ? String(r[5]) : undefined,
+        createdAt: String(r[6]),
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export function upsertMediaFolderToSqlite(folder: {
+  userEmail?: string;
+  path: string;
+  name: string;
+  parentPath?: string;
+  driveFolderId?: string;
+}): any {
+  if (!db) throw new Error('Database not ready');
+  const email = (folder.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const cleanPath = folder.path.startsWith('/') ? folder.path.replace(/\/+$/, '') || '/' : `/${folder.path}`;
+  const id = `mfold-${Buffer.from(`${email}:${cleanPath}`).toString('base64url').slice(0, 24)}`;
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT OR REPLACE INTO media_library_folders (id, user_email, path, name, parent_path, drive_folder_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, email, cleanPath, folder.name, folder.parentPath || '/', folder.driveFolderId || null, now]
+  );
+  scheduleSave();
+  return { id, userEmail: email, path: cleanPath, name: folder.name, parentPath: folder.parentPath || '/', driveFolderId: folder.driveFolderId, createdAt: now };
+}
+
+export function getMediaCollectionsFromSqlite(userEmail?: string): any[] {
+  if (!db) return [];
+  try {
+    const sql = userEmail
+      ? `SELECT id, user_email, name, description, kind, cover_thumbnail, created_at, updated_at FROM media_library_collections WHERE user_email = ? ORDER BY updated_at DESC`
+      : `SELECT id, user_email, name, description, kind, cover_thumbnail, created_at, updated_at FROM media_library_collections ORDER BY updated_at DESC`;
+    const stmt = db.prepare(sql);
+    if (userEmail) stmt.bind([userEmail.toLowerCase().trim()]);
+    const rows: any[] = [];
+    while (stmt.step()) {
+      const r = stmt.get();
+      rows.push({
+        id: String(r[0]),
+        userEmail: String(r[1]),
+        name: String(r[2]),
+        description: r[3] ? String(r[3]) : undefined,
+        kind: String(r[4] || 'album'),
+        coverThumbnail: r[5] ? String(r[5]) : undefined,
+        createdAt: String(r[6]),
+        updatedAt: String(r[7]),
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export function upsertMediaCollectionToSqlite(col: {
+  id?: string;
+  userEmail?: string;
+  name: string;
+  description?: string;
+  kind?: string;
+  coverThumbnail?: string;
+}): any {
+  if (!db) throw new Error('Database not ready');
+  const email = (col.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const id = col.id || `mcol-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT OR REPLACE INTO media_library_collections (id, user_email, name, description, kind, cover_thumbnail, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, email, col.name, col.description || null, col.kind || 'album', col.coverThumbnail || null, now, now]
+  );
+  scheduleSave();
+  return { id, userEmail: email, name: col.name, description: col.description, kind: col.kind || 'album', coverThumbnail: col.coverThumbnail, createdAt: now, updatedAt: now };
+}
+
+export function getMediaLibraryAnalyticsFromSqlite(userEmail?: string): any {
+  const emptyByType = {
+    image: { count: 0, bytes: 0 },
+    video: { count: 0, bytes: 0 },
+    audio: { count: 0, bytes: 0 },
+    pdf: { count: 0, bytes: 0 },
+    document: { count: 0, bytes: 0 },
+    ai_generated: { count: 0, bytes: 0 },
+  };
+  if (!db) {
+    return {
+      totalItems: 0,
+      activeItems: 0,
+      trashItems: 0,
+      archivedItems: 0,
+      favoriteItems: 0,
+      totalDriveBytes: 0,
+      driveQuotaBytes: 1099511627776, // 1 TB
+      localStoredCount: 0,
+      localStoredBytes: 0,
+      duplicateGroupsCount: 0,
+      flaggedCount: 0,
+      byType: emptyByType,
+      recentAuditLogs: [],
+    };
+  }
+
+  const email = userEmail ? userEmail.toLowerCase().trim() : '';
+  const whereUser = email ? 'WHERE user_email = ?' : '';
+  const bindUser = email ? [email] : [];
+
+  let totalItems = 0;
+  let activeItems = 0;
+  let trashItems = 0;
+  let archivedItems = 0;
+  let favoriteItems = 0;
+  let totalDriveBytes = 0;
+  let flaggedCount = 0;
+  const hashCounts = new Map<string, number>();
+
+  try {
+    const stmt = db.prepare(
+      `SELECT media_type, file_size, is_deleted, is_archived, is_favorite, sha256_hash, ai_metadata_json
+       FROM media_library_items ${whereUser}`
+    );
+    if (bindUser.length) stmt.bind(bindUser);
+    while (stmt.step()) {
+      const r = stmt.get();
+      const mType = String(r[0] || 'document') as keyof typeof emptyByType;
+      const sz = Number(r[1]) || 0;
+      const isDel = Boolean(r[2]);
+      const isArch = Boolean(r[3]);
+      const isFav = Boolean(r[4]);
+      const hash = r[5] ? String(r[5]) : '';
+      const aiMeta = parseJsonSafe<any>(r[6], {});
+
+      totalItems++;
+      if (isDel) {
+        trashItems++;
+      } else {
+        activeItems++;
+        totalDriveBytes += sz;
+        if (isArch) archivedItems++;
+        if (isFav) favoriteItems++;
+        if (hash) hashCounts.set(hash, (hashCounts.get(hash) || 0) + 1);
+        if (aiMeta?.moderationStatus === 'flagged') flaggedCount++;
+        if (emptyByType[mType]) {
+          emptyByType[mType].count++;
+          emptyByType[mType].bytes += sz;
+        }
+      }
+    }
+    stmt.free();
+  } catch {}
+
+  let localStoredCount = 0;
+  let localStoredBytes = 0;
+  try {
+    const stmt = db.prepare(
+      `SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM media_library_local_blobs ${whereUser}`
+    );
+    if (bindUser.length) stmt.bind(bindUser);
+    if (stmt.step()) {
+      const r = stmt.get();
+      localStoredCount = Number(r[0]) || 0;
+      localStoredBytes = Number(r[1]) || 0;
+    }
+    stmt.free();
+  } catch {}
+
+  const recentAuditLogs: any[] = [];
+  try {
+    const stmt = db.prepare(
+      `SELECT id, user_email, action, media_id, file_name, details, created_at
+       FROM media_library_audit_logs ${whereUser} ORDER BY created_at DESC LIMIT 30`
+    );
+    if (bindUser.length) stmt.bind(bindUser);
+    while (stmt.step()) {
+      const r = stmt.get();
+      recentAuditLogs.push({
+        id: String(r[0]),
+        userEmail: String(r[1]),
+        action: String(r[2]),
+        mediaId: r[3] ? String(r[3]) : undefined,
+        fileName: r[4] ? String(r[4]) : undefined,
+        details: String(r[5] || ''),
+        createdAt: String(r[6] || ''),
+      });
+    }
+    stmt.free();
+  } catch {}
+
+  let duplicateGroupsCount = 0;
+  for (const count of hashCounts.values()) {
+    if (count > 1) duplicateGroupsCount++;
+  }
+
+  return {
+    totalItems,
+    activeItems,
+    trashItems,
+    archivedItems,
+    favoriteItems,
+    totalDriveBytes,
+    driveQuotaBytes: 1099511627776, // 1 TB
+    localStoredCount,
+    localStoredBytes,
+    duplicateGroupsCount,
+    flaggedCount,
+    byType: emptyByType,
+    recentAuditLogs,
+  };
 }
 
 

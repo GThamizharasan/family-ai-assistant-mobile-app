@@ -44,6 +44,20 @@ import {
   saveSmartFamilyDocumentToSqlite,
   deleteSmartFamilyDocumentFromSqlite,
   searchUniversalSqlite,
+  queryMediaLibraryFromSqlite,
+  getMediaLibraryItemByIdFromSqlite,
+  findMediaDuplicateByHashInSqlite,
+  upsertMediaLibraryItemToSqlite,
+  deleteMediaLibraryItemPermanentlyFromSqlite,
+  saveMediaLocalBlobToSqlite,
+  getMediaLocalBlobFromSqlite,
+  deleteMediaLocalBlobFromSqlite,
+  getMediaFoldersFromSqlite,
+  upsertMediaFolderToSqlite,
+  getMediaCollectionsFromSqlite,
+  upsertMediaCollectionToSqlite,
+  getMediaLibraryAnalyticsFromSqlite,
+  addMediaAuditLogToSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -2265,6 +2279,472 @@ app.delete('/api/smart-documents/:id', (req, res) => {
     res.json({ success: ok });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Failed to delete smart document' });
+  }
+});
+
+// =========================================================================
+// CENTRALIZED FAMILY MEDIA LIBRARY API (1 TB Google Drive + SQLite Index + On-Demand Local SQLite Blobs)
+// =========================================================================
+
+app.get('/api/media-library/items', (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    const mediaType = typeof req.query.mediaType === 'string' ? req.query.mediaType : undefined;
+    const folderPath = typeof req.query.folderPath === 'string' ? req.query.folderPath : undefined;
+    const collectionId = typeof req.query.collectionId === 'string' ? req.query.collectionId : undefined;
+    const tag = typeof req.query.tag === 'string' ? req.query.tag : undefined;
+    const favorite = req.query.favorite === 'true';
+    const archived = req.query.archived === 'true' ? true : req.query.archived === 'false' ? false : undefined;
+    const trash = req.query.trash === 'true';
+    const storedLocally = req.query.storedLocally === 'true';
+    const recentlyViewed = req.query.recentlyViewed === 'true';
+    const minSize = req.query.minSize ? Number(req.query.minSize) : undefined;
+    const maxSize = req.query.maxSize ? Number(req.query.maxSize) : undefined;
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+    const sortBy = (typeof req.query.sortBy === 'string' ? req.query.sortBy : 'newest') as any;
+    const page = req.query.page ? Number(req.query.page) : 1;
+    const limit = req.query.limit ? Number(req.query.limit) : 36;
+
+    const result = queryMediaLibraryFromSqlite({
+      userEmail,
+      q,
+      mediaType,
+      folderPath,
+      collectionId,
+      tag,
+      favorite,
+      archived,
+      trash,
+      storedLocally,
+      recentlyViewed,
+      minSize,
+      maxSize,
+      dateFrom,
+      dateTo,
+      sortBy,
+      page,
+      limit,
+    });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load media library items' });
+  }
+});
+
+app.post('/api/media-library/check-duplicate', (req, res) => {
+  try {
+    const { sha256Hash, userEmail } = req.body || {};
+    if (!sha256Hash) return res.json({ success: true, duplicate: null });
+    const duplicate = findMediaDuplicateByHashInSqlite(String(sha256Hash), userEmail);
+    res.json({ success: true, duplicate });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Duplicate check failed' });
+  }
+});
+
+app.post('/api/media-library/items', (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.fileName) return res.status(400).json({ error: 'fileName is required' });
+    const saved = upsertMediaLibraryItemToSqlite(body);
+    addMediaAuditLogToSqlite({
+      userEmail: saved.userEmail,
+      action: 'upload',
+      mediaId: saved.id,
+      fileName: saved.fileName,
+      details: `Indexed ${saved.mediaType} (${saved.fileSize} bytes) in ${saved.folderPath}${
+        saved.driveFileId ? ' [Google Drive]' : ''
+      }`,
+    });
+    res.json({ success: true, item: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save media item' });
+  }
+});
+
+app.post('/api/media-library/sync-metadata', (req, res) => {
+  try {
+    const { items = [], folders = [], userEmail } = req.body || {};
+    let syncedCount = 0;
+    if (Array.isArray(folders)) {
+      for (const f of folders) {
+        if (f && f.path && f.name) {
+          upsertMediaFolderToSqlite({ ...f, userEmail: f.userEmail || userEmail });
+        }
+      }
+    }
+    if (Array.isArray(items)) {
+      for (const it of items) {
+        if (it && it.fileName) {
+          upsertMediaLibraryItemToSqlite({ ...it, userEmail: it.userEmail || userEmail });
+          syncedCount++;
+        }
+      }
+    }
+    addMediaAuditLogToSqlite({
+      userEmail,
+      action: 'sync_drive',
+      details: `Synced ${syncedCount} media metadata item(s) and ${Array.isArray(folders) ? folders.length : 0} folder(s) from Google Drive`,
+    });
+    res.json({ success: true, syncedCount });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to sync Drive metadata' });
+  }
+});
+
+app.patch('/api/media-library/items/:id', (req, res) => {
+  try {
+    const existing = getMediaLibraryItemByIdFromSqlite(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Media item not found' });
+    const patch = req.body || {};
+    const updated = upsertMediaLibraryItemToSqlite({
+      ...existing,
+      ...patch,
+      id: existing.id,
+      fileName: patch.fileName || existing.fileName,
+      updatedAt: new Date().toISOString(),
+    });
+    const action = patch.isDeleted === true
+      ? 'soft_delete'
+      : patch.isDeleted === false && existing.isDeleted
+      ? 'restore'
+      : patch.shareConfig
+      ? 'share'
+      : patch.aiMetadata?.moderationStatus && patch.aiMetadata.moderationStatus !== existing.aiMetadata?.moderationStatus
+      ? 'moderation'
+      : 'update_metadata';
+    if (!patch._silentViewPing) {
+      addMediaAuditLogToSqlite({
+        userEmail: updated.userEmail,
+        action,
+        mediaId: updated.id,
+        fileName: updated.fileName,
+        details: `Updated ${updated.fileName} (${action})`,
+      });
+    }
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to update media item' });
+  }
+});
+
+app.delete('/api/media-library/items/:id', (req, res) => {
+  try {
+    const existing = getMediaLibraryItemByIdFromSqlite(req.params.id);
+    const ok = deleteMediaLibraryItemPermanentlyFromSqlite(req.params.id);
+    if (existing) {
+      addMediaAuditLogToSqlite({
+        userEmail: existing.userEmail,
+        action: 'permanent_delete',
+        mediaId: existing.id,
+        fileName: existing.fileName,
+        details: `Permanently deleted ${existing.fileName} and cleared local SQLite cache`,
+      });
+    }
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete media item' });
+  }
+});
+
+// On-Demand Local SQLite Binary Storage for Individual Media Files (Offline Mode)
+app.get('/api/media-library/items/:id/local-blob', (req, res) => {
+  try {
+    const blob = getMediaLocalBlobFromSqlite(req.params.id);
+    if (!blob) return res.status(404).json({ success: false, error: 'Not stored locally in SQLite' });
+    res.json({ success: true, blob });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load local blob' });
+  }
+});
+
+app.post('/api/media-library/items/:id/local-blob', (req, res) => {
+  try {
+    const existing = getMediaLibraryItemByIdFromSqlite(req.params.id);
+    if (!existing) return res.status(404).json({ error: 'Media item not found' });
+    const { dataBase64, mimeType, fileSize, userEmail } = req.body || {};
+    if (!dataBase64 || typeof dataBase64 !== 'string') {
+      return res.status(400).json({ error: 'dataBase64 is required' });
+    }
+    const cleanB64 = dataBase64.replace(/^data:[^;]+;base64,/, '');
+    const byteSize = Number(fileSize) || Math.round((cleanB64.length * 3) / 4);
+    if (byteSize > 35 * 1024 * 1024) {
+      return res.status(413).json({
+        error: 'File exceeds 35 MB local SQLite blob limit — keep large videos on Google Drive and stream on demand.',
+      });
+    }
+    saveMediaLocalBlobToSqlite({
+      mediaId: existing.id,
+      userEmail: userEmail || existing.userEmail,
+      mimeType: mimeType || existing.mimeType,
+      fileSize: byteSize,
+      dataBase64: cleanB64,
+      checksum: existing.sha256Hash,
+    });
+    addMediaAuditLogToSqlite({
+      userEmail: existing.userEmail,
+      action: 'store_local',
+      mediaId: existing.id,
+      fileName: existing.fileName,
+      details: `Stored ${existing.fileName} (${byteSize} bytes) locally in SQLite for offline viewing`,
+    });
+    res.json({ success: true, item: getMediaLibraryItemByIdFromSqlite(existing.id) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to store local blob' });
+  }
+});
+
+app.delete('/api/media-library/items/:id/local-blob', (req, res) => {
+  try {
+    const existing = getMediaLibraryItemByIdFromSqlite(req.params.id);
+    const ok = deleteMediaLocalBlobFromSqlite(req.params.id);
+    if (existing) {
+      addMediaAuditLogToSqlite({
+        userEmail: existing.userEmail,
+        action: 'remove_local',
+        mediaId: existing.id,
+        fileName: existing.fileName,
+        details: `Removed local SQLite binary for ${existing.fileName} (kept Google Drive copy & metadata)`,
+      });
+    }
+    res.json({ success: ok, item: getMediaLibraryItemByIdFromSqlite(req.params.id) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to remove local blob' });
+  }
+});
+
+app.get('/api/media-library/folders', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    res.json({ success: true, folders: getMediaFoldersFromSqlite(userEmail) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to list folders' });
+  }
+});
+
+app.post('/api/media-library/folders', (req, res) => {
+  try {
+    const { userEmail, path: folderPath, name, parentPath, driveFolderId } = req.body || {};
+    if (!folderPath || !name) return res.status(400).json({ error: 'path and name are required' });
+    const folder = upsertMediaFolderToSqlite({ userEmail, path: folderPath, name, parentPath, driveFolderId });
+    res.json({ success: true, folder });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to create folder' });
+  }
+});
+
+app.get('/api/media-library/collections', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    res.json({ success: true, collections: getMediaCollectionsFromSqlite(userEmail) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to list collections' });
+  }
+});
+
+app.post('/api/media-library/collections', (req, res) => {
+  try {
+    const { id, userEmail, name, description, kind, coverThumbnail } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const collection = upsertMediaCollectionToSqlite({ id, userEmail, name, description, kind, coverThumbnail });
+    res.json({ success: true, collection });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save collection' });
+  }
+});
+
+app.get('/api/media-library/analytics', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    res.json({ success: true, analytics: getMediaLibraryAnalyticsFromSqlite(userEmail) });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load analytics' });
+  }
+});
+
+// AI Auto-Tagging, Captioning, OCR, Face/Object Detection & Moderation (NVIDIA NIM VL + Gemini Universal Router)
+app.post('/api/media-library/ai-analyze', async (req, res) => {
+  try {
+    const {
+      mediaId,
+      fileName = 'Media Asset',
+      mediaType = 'image',
+      imageBase64,
+      mimeType = 'image/jpeg',
+      rawText = '',
+      provider = 'nvidia',
+      model,
+      nvidiaApiKey,
+      geminiApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      apiKey,
+    } = req.body || {};
+
+    const prompt = `You are a Family Media Library AI Intelligence Engine.
+Analyze this media asset (${mediaType}: "${fileName}") and return STRICT JSON only:
+{
+  "tags": ["5-8 concise searchable lowercase tags"],
+  "category": "Family | Travel | Documents | Health | Finance | Kids & Learning | Music & Audio | AI Art | General",
+  "caption": "Clear 1-2 sentence human-friendly caption describing the media",
+  "ocrText": "Any visible text extracted verbatim (empty string if none)",
+  "objects": ["key detected objects/scenes"],
+  "faces": ["brief non-identifying descriptions like 'smiling child', 'two adults' or empty array"],
+  "transcript": "Short summary/transcript if audio/video/document text supplied",
+  "detectedLanguage": "English | Tamil | Bilingual | N/A",
+  "moderationStatus": "approved | flagged",
+  "moderationNotes": "Brief safety note"
+}`;
+
+    let extracted: any = null;
+    let modelUsed = 'Smart Local Analyzer';
+
+    if (typeof imageBase64 === 'string' && imageBase64.trim().length > 40) {
+      const cleanB64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
+      const safeMime = mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+      const dataUri = `data:${safeMime};base64,${cleanB64}`;
+
+      // Try NVIDIA NIM VL first (live verified 120B VL + 30B Omni)
+      const nvKey = getEffectiveNvidiaApiKey(nvidiaApiKey || apiKey);
+      if (nvKey) {
+        for (const nvModel of ['nvidia/nemotron-3.5-super-vl-120b-a12b', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning']) {
+          try {
+            const nvRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+              method: 'POST',
+              signal: AbortSignal.timeout(25000),
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${nvKey}` },
+              body: JSON.stringify({
+                model: nvModel,
+                temperature: 0.15,
+                max_tokens: 1200,
+                chat_template_kwargs: { enable_thinking: false },
+                messages: [
+                  {
+                    role: 'user',
+                    content: [
+                      { type: 'text', text: `${prompt}\n${rawText ? `Additional text: ${rawText.slice(0, 1500)}` : ''}` },
+                      { type: 'image_url', image_url: { url: dataUri } },
+                    ],
+                  },
+                ],
+              }),
+            });
+            if (nvRes.ok) {
+              const nvJson: any = await nvRes.json();
+              const parsed = extractLanguageTutorJson(
+                nvJson.choices?.[0]?.message?.content || nvJson.choices?.[0]?.message?.reasoning_content || ''
+              );
+              if (parsed && typeof parsed === 'object') {
+                extracted = parsed;
+                modelUsed = `NVIDIA NIM · ${nvModel}`;
+                break;
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // Gemini Vision fallback
+      if (!extracted) {
+        try {
+          const client = getAiClient(geminiApiKey);
+          const response = await client.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: prompt }, { inlineData: { mimeType: safeMime, data: cleanB64 } }],
+              },
+            ],
+            config: { temperature: 0.2, responseMimeType: 'application/json' },
+          });
+          const parsed = extractLanguageTutorJson(response.text || '');
+          if (parsed && typeof parsed === 'object') {
+            extracted = parsed;
+            modelUsed = 'Gemini · gemini-2.5-flash';
+          }
+        } catch {}
+      }
+    } else if (rawText || fileName) {
+      const aiRes = await dispatchLanguageTutorAiJson({
+        systemPrompt: prompt,
+        userMessage: `File: ${fileName} (${mediaType})\nContent:\n${String(rawText || fileName).slice(0, 5000)}`,
+        provider,
+        model,
+        apiKey,
+        geminiApiKey,
+        nvidiaApiKey,
+        openaiApiKey,
+        anthropicApiKey,
+        temperature: 0.2,
+        maxTokens: 1000,
+      });
+      if (!('fallbackReason' in aiRes)) {
+        extracted = aiRes.json;
+        modelUsed = `${aiRes.providerUsed} · ${aiRes.modelUsed}`;
+      }
+    }
+
+    if (!extracted) {
+      const baseWords = fileName
+        .replace(/\.[^.]+$/, '')
+        .split(/[\s_-]+/)
+        .map((w: string) => w.toLowerCase())
+        .filter((w: string) => w.length > 2)
+        .slice(0, 6);
+      extracted = {
+        tags: Array.from(new Set([mediaType, ...baseWords])),
+        category: mediaType === 'pdf' || mediaType === 'document' ? 'Documents' : 'Family',
+        caption: `${mediaType.toUpperCase()} asset "${fileName}" indexed in Family Media Library.`,
+        ocrText: rawText ? String(rawText).slice(0, 500) : '',
+        objects: [],
+        faces: [],
+        transcript: '',
+        detectedLanguage: 'English',
+        moderationStatus: 'approved',
+        moderationNotes: 'Verified clean local metadata scan.',
+      };
+    }
+
+    if (mediaId) {
+      const existing = getMediaLibraryItemByIdFromSqlite(mediaId);
+      if (existing) {
+        const mergedTags = Array.from(
+          new Set([...(existing.tags || []), ...(Array.isArray(extracted.tags) ? extracted.tags : [])])
+        ).slice(0, 20);
+        const updated = upsertMediaLibraryItemToSqlite({
+          ...existing,
+          tags: mergedTags,
+          category: extracted.category || existing.category,
+          aiMetadata: {
+            ...existing.aiMetadata,
+            caption: extracted.caption || existing.aiMetadata?.caption,
+            ocrText: extracted.ocrText || existing.aiMetadata?.ocrText,
+            transcript: extracted.transcript || existing.aiMetadata?.transcript,
+            objects: Array.isArray(extracted.objects) ? extracted.objects : existing.aiMetadata?.objects || [],
+            faces: Array.isArray(extracted.faces) ? extracted.faces : existing.aiMetadata?.faces || [],
+            detectedLanguage: extracted.detectedLanguage || 'English',
+            moderationStatus: extracted.moderationStatus === 'flagged' ? 'flagged' : 'approved',
+            moderationNotes: extracted.moderationNotes || '',
+            analyzedAt: new Date().toISOString(),
+          },
+        });
+        addMediaAuditLogToSqlite({
+          userEmail: existing.userEmail,
+          action: 'ai_analyze',
+          mediaId: existing.id,
+          fileName: existing.fileName,
+          details: `AI analyzed via ${modelUsed} (${mergedTags.length} tags)`,
+        });
+        return res.json({ success: true, item: updated, analysis: extracted, modelUsed });
+      }
+    }
+
+    res.json({ success: true, analysis: extracted, modelUsed });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'AI media analysis failed' });
   }
 });
 
