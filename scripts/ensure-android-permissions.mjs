@@ -48,7 +48,8 @@ if (existsSync(manifestPath)) {
   );
 
   if (applicationNode) {
-    applicationNode.setAttributeNS(androidNamespace, 'android:usesCleartextTraffic', 'true');
+    const allowCleartext = process.env.ALLOW_CLEARTEXT_TRAFFIC === 'true' ? 'true' : 'false';
+    applicationNode.setAttributeNS(androidNamespace, 'android:usesCleartextTraffic', allowCleartext);
     applicationNode.setAttributeNS(androidNamespace, 'android:hardwareAccelerated', 'true');
   }
 
@@ -168,5 +169,36 @@ public class MainActivity extends BridgeActivity {
 `;
   await writeFile(mainActivityPath, mainActivityContent);
   console.log('Ensured MainActivity.java configured for multi-window OAuth popups and clean user-agent.');
+}
+
+// Ensure android/app/build.gradle has release signingConfigs wired to environment variables (for signed Release APKs)
+const appBuildGradlePath = 'android/app/build.gradle';
+if (existsSync(appBuildGradlePath)) {
+  let gradle = await readFile(appBuildGradlePath, 'utf8');
+  if (!gradle.includes('signingConfigs')) {
+    const releaseSigningBlock = `    signingConfigs {
+        release {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH") ?: "release-keystore.jks"
+            def ksFile = file(ksPath)
+            if (ksFile.exists()) {
+                storeFile ksFile
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: ""
+                keyAlias System.getenv("ANDROID_KEY_ALIAS") ?: "aurafamily"
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD") ?: (System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            def ksPath = System.getenv("ANDROID_KEYSTORE_PATH") ?: "release-keystore.jks"
+            if (file(ksPath).exists()) {
+                signingConfig signingConfigs.release
+            }`;
+    gradle = gradle.replace(/buildTypes\s*\{\s*release\s*\{/, releaseSigningBlock);
+    await writeFile(appBuildGradlePath, gradle);
+    console.log('Injected release signingConfigs into android/app/build.gradle.');
+  } else {
+    console.log('Verified release signingConfigs already present in android/app/build.gradle.');
+  }
 }
 

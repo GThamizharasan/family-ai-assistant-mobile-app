@@ -60,14 +60,48 @@ jobs:
           npx cap sync
           node scripts/ensure-android-permissions.mjs
 
-      - name: Build Debug APK with Gradle
+      - name: Configure Release Signing Keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_FILE="$GITHUB_WORKSPACE/android/app/release-keystore.jks"
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+            echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=${ANDROID_KEY_ALIAS:-aurafamily}" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+            echo "Using permanent release keystore from GitHub Secrets."
+          else
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret not set — generating a temporary release keystore for this build. Add ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD in GitHub Secrets for consistent app updates."
+            TEMP_PASS="AuraFamilyRelease2026"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -alias aurafamily \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "$TEMP_PASS" \
+              -keypass "$TEMP_PASS" \
+              -dname "CN=AuraFamily, OU=FamilyAI, O=AuraFamily, L=London, ST=UK, C=GB"
+            echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=$TEMP_PASS" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=aurafamily" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=$TEMP_PASS" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Signed Release APK with Gradle
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleRelease
 
-      - name: Upload APK Artifact
+      - name: Upload Signed Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: app-release-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
