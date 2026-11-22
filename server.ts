@@ -40,6 +40,10 @@ import {
   getLanguageTutorRecordsFromSqlite,
   saveLanguageTutorRecordToSqlite,
   deleteLanguageTutorRecordFromSqlite,
+  getSmartFamilyDocumentsFromSqlite,
+  saveSmartFamilyDocumentToSqlite,
+  deleteSmartFamilyDocumentFromSqlite,
+  searchUniversalSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -2186,6 +2190,504 @@ Return STRICT JSON only:
     });
   } catch (err: any) {
     console.error('Error in /api/language-tutor/essay-clinic:', err);
+    return res.status(200).json({ success: false, fallback: true, reason: err?.message });
+  }
+});
+
+// -------------------------------------------------------------
+// Global Universal Search across SQLite Tables
+// -------------------------------------------------------------
+app.get('/api/universal-search', (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    if (!q) return res.json({ success: true, hits: [] });
+    const hits = searchUniversalSqlite(q, userEmail);
+    res.json({ success: true, hits, count: hits.length });
+  } catch (err: any) {
+    console.error('Error in /api/universal-search:', err);
+    res.status(500).json({ error: err?.message || 'Universal search failed' });
+  }
+});
+
+// -------------------------------------------------------------
+// Smart AI Family Documents (Receipt/Warranty + Prescription/Lab)
+// -------------------------------------------------------------
+app.get('/api/smart-documents', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    const docType = typeof req.query.docType === 'string' ? req.query.docType : undefined;
+    const records = getSmartFamilyDocumentsFromSqlite(userEmail, docType);
+    res.json({ success: true, records, count: records.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load smart documents' });
+  }
+});
+
+app.post('/api/smart-documents', (req, res) => {
+  try {
+    const {
+      id,
+      userEmail,
+      docType,
+      title,
+      vendorOrDoctor,
+      amount,
+      currency,
+      expiryOrDueDate,
+      payload,
+      driveWebViewLink,
+    } = req.body || {};
+    if (!docType || !title) {
+      return res.status(400).json({ error: 'docType and title are required' });
+    }
+    const saved = saveSmartFamilyDocumentToSqlite({
+      id,
+      userEmail,
+      docType,
+      title,
+      vendorOrDoctor,
+      amount: typeof amount === 'number' ? amount : undefined,
+      currency,
+      expiryOrDueDate,
+      payload: payload ?? {},
+      driveWebViewLink,
+    });
+    res.json({ success: true, record: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save smart document' });
+  }
+});
+
+app.delete('/api/smart-documents/:id', (req, res) => {
+  try {
+    const ok = deleteSmartFamilyDocumentFromSqlite(req.params.id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete smart document' });
+  }
+});
+
+// Multimodal AI Analyzer for Receipts/Warranties AND Prescriptions/Lab Reports
+app.post('/api/ai/analyze-family-document', async (req, res) => {
+  try {
+    const {
+      docType = 'receipt_warranty',
+      imageBase64,
+      pdfBase64,
+      mimeType = 'image/jpeg',
+      rawText = '',
+      geminiApiKey,
+      provider = 'gemini',
+      model,
+      customConfig,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      apiKey,
+    } = req.body || {};
+
+    const isMedical = docType === 'prescription_lab';
+    const systemPrompt = isMedical
+      ? `You are an empathetic bilingual (English & Tamil) Family Health Document Assistant.
+Analyze the uploaded doctor's prescription or medical lab report (image or text) and extract actionable medication schedules and lab marker explanations.
+IMPORTANT: Always include a gentle disclaimer that this is an AI summary for organization and the family should confirm dosages with their doctor/pharmacist.
+Return STRICT JSON only:
+{
+  "title": "Concise document title (e.g. Dr. Kumar Prescription or Blood Panel Report)",
+  "doctorOrLab": "Doctor or Lab name",
+  "patientName": "Patient name if visible or Family Member",
+  "visitDate": "YYYY-MM-DD",
+  "diagnosisSummary": "1-sentence summary",
+  "simpleEnglishSummary": "Clear, reassuring 2-3 sentence explanation in plain English",
+  "simpleTamilSummary": "தெளிவான எளிய தமிழ் விளக்கம் (2-3 sentences)",
+  "medications": [
+    {
+      "name": "Medicine name & strength",
+      "dosage": "e.g. 1 tablet / 5 ml",
+      "frequency": "e.g. Twice daily",
+      "timings": ["Morning 08:30", "Night 20:30"],
+      "mealRule": "After Food | Before Food | Any Time",
+      "durationDays": 5
+    }
+  ],
+  "labMarkers": [
+    {
+      "testName": "e.g. Hemoglobin",
+      "value": "e.g. 13.5 g/dL",
+      "normalRange": "12.0 - 15.5 g/dL",
+      "status": "normal | high | low",
+      "note": "Brief plain-language note"
+    }
+  ]
+}`
+      : `You are a precision Family Finance, Receipt, Bill & Warranty Extractor.
+Analyze the uploaded receipt, utility bill, or appliance invoice (image or text) and extract clean structured finance and warranty metadata.
+Return STRICT JSON only:
+{
+  "title": "Concise title (e.g. LG Washing Machine Invoice or Electricity Bill)",
+  "vendor": "Store, brand, or utility provider",
+  "totalAmount": 1499,
+  "currency": "₹",
+  "purchaseDate": "YYYY-MM-DD",
+  "category": "Living & Housing | Family & Kids | Wellness | Business Ops | Investments",
+  "warrantyMonths": 12,
+  "warrantyExpiryDate": "YYYY-MM-DD or null",
+  "billDueDate": "YYYY-MM-DD or null",
+  "lineItems": [{ "name": "Item description", "price": 1499 }],
+  "summary": "1-2 sentence summary with warranty/due date highlight"
+}`;
+
+    const attemptErrors: string[] = [];
+
+    // 1. If imageBase64 is supplied, run Universal Multimodal Vision respecting the user's selected provider first!
+    if (typeof imageBase64 === 'string' && imageBase64.trim().length > 40) {
+      const cleanB64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
+      const safeMime = mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+      const dataUri = `data:${safeMime};base64,${cleanB64}`;
+      const promptText = `${systemPrompt}\n${rawText ? `Additional context: ${rawText}` : 'Analyze this image and return STRICT JSON only.'}`;
+      const selectedProvider = String(provider || 'gemini').toLowerCase().trim();
+
+      const tryNvidiaVision = async (): Promise<{ extracted: any; modelUsed: string } | null> => {
+        const nvKey = getEffectiveNvidiaApiKey(nvidiaApiKey || apiKey);
+        if (!nvKey) {
+          attemptErrors.push('NVIDIA: no API key');
+          return null;
+        }
+        const selectedVisionModel =
+          selectedProvider === 'nvidia' &&
+          model &&
+          /vl|vision|omni/i.test(String(model)) &&
+          !/llama-3\.2-.*vision|phi-3\.5-vision/i.test(String(model))
+            ? String(model)
+            : '';
+        const nvModels = Array.from(
+          new Set(
+            [
+              selectedVisionModel,
+              'nvidia/nemotron-3.5-super-vl-120b-a12b',
+              'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+            ].filter(Boolean)
+          )
+        );
+        for (const nvModel of nvModels) {
+          try {
+            const nvRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+              method: 'POST',
+              signal: AbortSignal.timeout(28000),
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${nvKey}`,
+              },
+              body: JSON.stringify({
+                model: nvModel,
+                temperature: 0.1,
+                max_tokens: 2000,
+                chat_template_kwargs: { enable_thinking: false },
+                messages: [
+                  {
+                    role: 'user',
+                    content: [
+                      { type: 'text', text: promptText },
+                      { type: 'image_url', image_url: { url: dataUri } },
+                    ],
+                  },
+                ],
+              }),
+            });
+            if (!nvRes.ok) {
+              const errSnippet = (await nvRes.text().catch(() => '')).slice(0, 140);
+              console.warn(`[analyze-family-document] NVIDIA vision ${nvModel} HTTP ${nvRes.status}:`, errSnippet);
+              attemptErrors.push(`NVIDIA(${nvModel}): HTTP ${nvRes.status}`);
+              continue;
+            }
+            const nvJson: any = await nvRes.json();
+            const txt = (
+              nvJson.choices?.[0]?.message?.content ||
+              nvJson.choices?.[0]?.message?.reasoning_content ||
+              ''
+            ).trim();
+            const parsed = extractLanguageTutorJson(txt);
+            if (parsed && typeof parsed === 'object') {
+              return { extracted: parsed, modelUsed: `NVIDIA NIM · ${nvModel}` };
+            }
+            attemptErrors.push(`NVIDIA(${nvModel}): non-JSON response`);
+          } catch (err: any) {
+            console.warn(`[analyze-family-document] NVIDIA vision ${nvModel} failed:`, err?.message);
+            attemptErrors.push(`NVIDIA(${nvModel}): ${err?.message || 'error'}`);
+          }
+        }
+        return null;
+      };
+
+      const tryOpenAiVision = async (): Promise<{ extracted: any; modelUsed: string } | null> => {
+        const key = (openaiApiKey || apiKey || process.env.OPENAI_API_KEY || '').trim();
+        if (!key) return null;
+        const oaModel = selectedProvider === 'openai' && model ? String(model) : 'gpt-4o-mini';
+        try {
+          const oaRes = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            signal: AbortSignal.timeout(28000),
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${key}`,
+            },
+            body: JSON.stringify({
+              model: oaModel,
+              temperature: 0.2,
+              max_tokens: 2000,
+              response_format: { type: 'json_object' },
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: promptText },
+                    { type: 'image_url', image_url: { url: dataUri } },
+                  ],
+                },
+              ],
+            }),
+          });
+          if (!oaRes.ok) {
+            attemptErrors.push(`OpenAI(${oaModel}): HTTP ${oaRes.status}`);
+            return null;
+          }
+          const oaJson: any = await oaRes.json();
+          const parsed = extractLanguageTutorJson(oaJson.choices?.[0]?.message?.content || '');
+          if (parsed && typeof parsed === 'object') {
+            return { extracted: parsed, modelUsed: `OpenAI · ${oaModel}` };
+          }
+        } catch (err: any) {
+          console.warn('[analyze-family-document] OpenAI vision failed:', err?.message);
+          attemptErrors.push(`OpenAI: ${err?.message || 'error'}`);
+        }
+        return null;
+      };
+
+      const tryAnthropicVision = async (): Promise<{ extracted: any; modelUsed: string } | null> => {
+        const key = (anthropicApiKey || apiKey || process.env.ANTHROPIC_API_KEY || '').trim();
+        if (!key) return null;
+        const claudeModel =
+          selectedProvider === 'anthropic' && model ? String(model) : 'claude-3-5-haiku-20241022';
+        try {
+          const anRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            signal: AbortSignal.timeout(28000),
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': key,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify({
+              model: claudeModel,
+              max_tokens: 2000,
+              temperature: 0.2,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'image',
+                      source: { type: 'base64', media_type: safeMime, data: cleanB64 },
+                    },
+                    { type: 'text', text: promptText },
+                  ],
+                },
+              ],
+            }),
+          });
+          if (!anRes.ok) {
+            attemptErrors.push(`Claude(${claudeModel}): HTTP ${anRes.status}`);
+            return null;
+          }
+          const anJson: any = await anRes.json();
+          const parsed = extractLanguageTutorJson(anJson.content?.[0]?.text || '');
+          if (parsed && typeof parsed === 'object') {
+            return { extracted: parsed, modelUsed: `Claude · ${claudeModel}` };
+          }
+        } catch (err: any) {
+          console.warn('[analyze-family-document] Anthropic vision failed:', err?.message);
+          attemptErrors.push(`Claude: ${err?.message || 'error'}`);
+        }
+        return null;
+      };
+
+      const tryCustomVision = async (): Promise<{ extracted: any; modelUsed: string } | null> => {
+        if (!customConfig?.endpointUrl) return null;
+        const endpoint = String(customConfig.endpointUrl).replace(/\/+$/, '');
+        const url = endpoint.endsWith('/chat/completions') ? endpoint : `${endpoint}/chat/completions`;
+        const customModel = customConfig.modelId || model || 'llama3.2-vision';
+        try {
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+          if (customConfig.apiKey) headers['Authorization'] = `Bearer ${customConfig.apiKey}`;
+          const cRes = await fetch(url, {
+            method: 'POST',
+            signal: AbortSignal.timeout(28000),
+            headers,
+            body: JSON.stringify({
+              model: customModel,
+              temperature: 0.2,
+              max_tokens: 2000,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    { type: 'text', text: promptText },
+                    { type: 'image_url', image_url: { url: dataUri } },
+                  ],
+                },
+              ],
+            }),
+          });
+          if (!cRes.ok) {
+            attemptErrors.push(`Custom(${customModel}): HTTP ${cRes.status}`);
+            return null;
+          }
+          const cJson: any = await cRes.json();
+          const parsed = extractLanguageTutorJson(cJson.choices?.[0]?.message?.content || '');
+          if (parsed && typeof parsed === 'object') {
+            return { extracted: parsed, modelUsed: `Custom · ${customModel}` };
+          }
+        } catch (err: any) {
+          console.warn('[analyze-family-document] Custom vision failed:', err?.message);
+          attemptErrors.push(`Custom: ${err?.message || 'error'}`);
+        }
+        return null;
+      };
+
+      const tryGeminiVision = async (): Promise<{ extracted: any; modelUsed: string } | null> => {
+        let client: GoogleGenAI | null = null;
+        try {
+          client = getAiClient(geminiApiKey);
+        } catch (err: any) {
+          attemptErrors.push(`Gemini: ${err?.message || 'no API key'}`);
+          return null;
+        }
+        const candidateModels = Array.from(
+          new Set(
+            [
+              selectedProvider === 'gemini' && model ? String(model) : '',
+              'gemini-2.5-flash',
+              'gemini-2.0-flash',
+            ].filter(Boolean)
+          )
+        );
+        for (const m of candidateModels) {
+          try {
+            const response = await client.models.generateContent({
+              model: m,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { text: promptText },
+                    { inlineData: { mimeType: safeMime, data: cleanB64 } },
+                  ],
+                },
+              ],
+              config: {
+                temperature: 0.2,
+                responseMimeType: 'application/json',
+              },
+            });
+            const parsed = extractLanguageTutorJson(response.text || '');
+            if (parsed && typeof parsed === 'object') {
+              return { extracted: parsed, modelUsed: `Gemini · ${m}` };
+            }
+          } catch (err: any) {
+            console.warn(`[analyze-family-document] Gemini vision ${m} failed:`, err?.message);
+            attemptErrors.push(`Gemini(${m}): ${err?.message || 'error'}`);
+          }
+        }
+        return null;
+      };
+
+      // Build ordered execution chain starting with the user's selected provider!
+      const visionRunners: Array<() => Promise<{ extracted: any; modelUsed: string } | null>> = [];
+      if (selectedProvider === 'nvidia') {
+        visionRunners.push(tryNvidiaVision, tryGeminiVision);
+      } else if (selectedProvider === 'openai') {
+        visionRunners.push(tryOpenAiVision, tryNvidiaVision, tryGeminiVision);
+      } else if (selectedProvider === 'anthropic') {
+        visionRunners.push(tryAnthropicVision, tryNvidiaVision, tryGeminiVision);
+      } else if (selectedProvider === 'custom') {
+        visionRunners.push(tryCustomVision, tryNvidiaVision, tryGeminiVision);
+      } else {
+        visionRunners.push(tryGeminiVision, tryNvidiaVision);
+      }
+
+      for (const runner of visionRunners) {
+        const outcome = await runner();
+        if (outcome) {
+          return res.json({ success: true, extracted: outcome.extracted, modelUsed: outcome.modelUsed });
+        }
+      }
+    }
+
+    // 2. Text-based universal AI extraction (handles pasted text + extracted PDF/HTML report text across ALL providers including NVIDIA!)
+    if (typeof rawText === 'string' && rawText.trim().length > 3) {
+      const aiRes = await dispatchLanguageTutorAiJson({
+        systemPrompt,
+        userMessage: `Extract structured JSON from this document:\n"""\n${rawText.trim().slice(0, 8000)}\n"""`,
+        provider,
+        model,
+        customConfig,
+        apiKey,
+        geminiApiKey,
+        nvidiaApiKey,
+        openaiApiKey,
+        anthropicApiKey,
+        temperature: 0.2,
+        maxTokens: 2000,
+      });
+      if (!('fallbackReason' in aiRes)) {
+        return res.json({
+          success: true,
+          extracted: aiRes.json,
+          modelUsed: `${aiRes.providerUsed} · ${aiRes.modelUsed}`,
+        });
+      }
+    }
+
+    // 3. Native PDF Vision fallback via Gemini for scanned/image-only PDFs where text layer was empty
+    if (typeof pdfBase64 === 'string' && pdfBase64.trim().length > 40) {
+      try {
+        const client = getAiClient(geminiApiKey);
+        const cleanPdf = pdfBase64.replace(/^data:[^;]+;base64,/, '').trim();
+        for (const m of ['gemini-2.5-flash', 'gemini-2.0-flash']) {
+          try {
+            const response = await client.models.generateContent({
+              model: m,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { text: `${systemPrompt}\nAnalyze this PDF document and return STRICT JSON only.` },
+                    { inlineData: { mimeType: 'application/pdf', data: cleanPdf } },
+                  ],
+                },
+              ],
+              config: { temperature: 0.2, responseMimeType: 'application/json' },
+            });
+            const parsed = extractLanguageTutorJson(response.text || '');
+            if (parsed && typeof parsed === 'object') {
+              return res.json({ success: true, extracted: parsed, modelUsed: `Gemini PDF · ${m}` });
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
+    return res.status(200).json({
+      success: false,
+      fallback: true,
+      reason:
+        attemptErrors.length > 0
+          ? `Vision/AI fallback (${attemptErrors.slice(0, 3).join(' · ')})`
+          : 'Vision/AI model unavailable — using smart local extractor.',
+    });
+  } catch (err: any) {
+    console.error('Error in /api/ai/analyze-family-document:', err);
     return res.status(200).json({ success: false, fallback: true, reason: err?.message });
   }
 });

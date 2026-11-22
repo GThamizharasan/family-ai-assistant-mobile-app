@@ -18,6 +18,8 @@ import {
   Zap,
   Terminal,
   CloudSun,
+  Search,
+  Receipt,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -42,6 +44,8 @@ interface MobileFrameProps {
   onOpenInstallerHub: () => void;
   onOpenWindowsInstaller?: () => void;
   onOpenOfflineSyncCenter?: () => void;
+  onOpenUniversalSearch?: () => void;
+  onOpenSmartDocs?: (docType?: 'receipt_warranty' | 'prescription_lab') => void;
   onOpenWalkingSteps?: () => void;
   onOpenWeather?: () => void;
   onGoHome: () => void;
@@ -55,6 +59,8 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
   onOpenInstallerHub,
   onOpenWindowsInstaller,
   onOpenOfflineSyncCenter,
+  onOpenUniversalSearch,
+  onOpenSmartDocs,
   onOpenWalkingSteps,
   onOpenWeather,
   onGoHome,
@@ -171,6 +177,35 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({
             <Home className="w-3.5 h-3.5 text-indigo-400" />
             <span className="text-[11px] font-semibold">Home</span>
           </button>
+
+          {/* Global Universal Search Pill (Ctrl+K on Web & 1-Tap on Android) */}
+          {onOpenUniversalSearch && (
+            <button
+              onClick={onOpenUniversalSearch}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-cyan-200 hover:text-white border border-cyan-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
+              title="Global Universal Search across all tabs, SQLite & Google Drive (Ctrl+K)"
+              aria-label="Global Universal Search"
+            >
+              <Search className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden sm:inline">Search</span>
+              <span className="hidden md:inline text-[9px] font-mono px-1 rounded bg-slate-950/70 text-slate-400">
+                ⌘K
+              </span>
+            </button>
+          )}
+
+          {/* Smart AI Document Hub (Receipts/Warranties + Prescriptions/Lab Reports) */}
+          {onOpenSmartDocs && (
+            <button
+              onClick={() => onOpenSmartDocs('receipt_warranty')}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 hover:text-white border border-emerald-500/40 transition-all cursor-pointer shadow-sm active:scale-95 font-semibold text-[11px] shrink-0"
+              title="AI Receipt/Warranty Scanner & Prescription/Lab Analyzer"
+              aria-label="Open Smart AI Document Hub"
+            >
+              <Receipt className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">AI Scan</span>
+            </button>
+          )}
 
           {/* Main Top Bar AI Model Switcher / Indicator Pill */}
           <button

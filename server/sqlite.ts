@@ -471,6 +471,23 @@ export async function initSqliteDb(): Promise<Database> {
     CREATE INDEX IF NOT EXISTS idx_language_tutor_user_lang
       ON language_tutor_records(user_email, language, updated_at);
 
+    CREATE TABLE IF NOT EXISTS smart_family_documents (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      doc_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      vendor_or_doctor TEXT,
+      amount REAL,
+      currency TEXT,
+      expiry_or_due_date TEXT,
+      payload_json TEXT NOT NULL,
+      drive_web_view_link TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_smart_docs_user_type
+      ON smart_family_documents(user_email, doc_type, updated_at);
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2591,6 +2608,293 @@ export function deleteLanguageTutorRecordFromSqlite(id: string): boolean {
   db.run('DELETE FROM language_tutor_records WHERE id = ?', [id]);
   scheduleSave();
   return true;
+}
+
+// -------------------------------------------------------------
+// Smart AI Family Documents (Receipts/Warranties + Prescriptions/Labs)
+// -------------------------------------------------------------
+export interface SmartFamilyDocumentRow {
+  id: string;
+  userEmail: string;
+  docType: 'receipt_warranty' | 'prescription_lab';
+  title: string;
+  vendorOrDoctor?: string;
+  amount?: number;
+  currency?: string;
+  expiryOrDueDate?: string;
+  payload: any;
+  driveWebViewLink?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getSmartFamilyDocumentsFromSqlite(
+  userEmail?: string,
+  docType?: string
+): SmartFamilyDocumentRow[] {
+  if (!db) return [];
+  try {
+    let query = `
+      SELECT id, user_email, doc_type, title, vendor_or_doctor, amount, currency, expiry_or_due_date, payload_json, drive_web_view_link, created_at, updated_at
+      FROM smart_family_documents
+    `;
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (userEmail) {
+      conditions.push('user_email = ?');
+      params.push(userEmail.toLowerCase().trim());
+    }
+    if (docType) {
+      conditions.push('doc_type = ?');
+      params.push(docType);
+    }
+    if (conditions.length > 0) query += ' WHERE ' + conditions.join(' AND ');
+    query += ' ORDER BY updated_at DESC LIMIT 120';
+
+    const stmt = db.prepare(query);
+    if (params.length > 0) stmt.bind(params);
+    const rows: SmartFamilyDocumentRow[] = [];
+    while (stmt.step()) {
+      const r = stmt.get();
+      let payload: any = {};
+      try {
+        payload = JSON.parse((r[8] as string) || '{}');
+      } catch {}
+      rows.push({
+        id: r[0] as string,
+        userEmail: r[1] as string,
+        docType: (r[2] as 'receipt_warranty' | 'prescription_lab') || 'receipt_warranty',
+        title: r[3] as string,
+        vendorOrDoctor: (r[4] as string) || undefined,
+        amount: typeof r[5] === 'number' ? r[5] : undefined,
+        currency: (r[6] as string) || undefined,
+        expiryOrDueDate: (r[7] as string) || undefined,
+        payload,
+        driveWebViewLink: (r[9] as string) || undefined,
+        createdAt: r[10] as string,
+        updatedAt: r[11] as string,
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch (err) {
+    console.warn('[SQLite] getSmartFamilyDocumentsFromSqlite error:', err);
+    return [];
+  }
+}
+
+export function saveSmartFamilyDocumentToSqlite(
+  doc: Partial<SmartFamilyDocumentRow> & {
+    docType: 'receipt_warranty' | 'prescription_lab';
+    title: string;
+    payload: any;
+  }
+): SmartFamilyDocumentRow {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const userEmail = (doc.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const id = doc.id || `sdoc-${doc.docType}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const payloadJson = typeof doc.payload === 'string' ? doc.payload : JSON.stringify(doc.payload ?? {});
+
+  db.run(
+    `INSERT INTO smart_family_documents
+      (id, user_email, doc_type, title, vendor_or_doctor, amount, currency, expiry_or_due_date, payload_json, drive_web_view_link, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title,
+       vendor_or_doctor = COALESCE(excluded.vendor_or_doctor, smart_family_documents.vendor_or_doctor),
+       amount = COALESCE(excluded.amount, smart_family_documents.amount),
+       currency = COALESCE(excluded.currency, smart_family_documents.currency),
+       expiry_or_due_date = COALESCE(excluded.expiry_or_due_date, smart_family_documents.expiry_or_due_date),
+       payload_json = excluded.payload_json,
+       drive_web_view_link = COALESCE(excluded.drive_web_view_link, smart_family_documents.drive_web_view_link),
+       updated_at = excluded.updated_at`,
+    [
+      id,
+      userEmail,
+      doc.docType,
+      doc.title,
+      doc.vendorOrDoctor || null,
+      typeof doc.amount === 'number' ? doc.amount : null,
+      doc.currency || null,
+      doc.expiryOrDueDate || null,
+      payloadJson,
+      doc.driveWebViewLink || null,
+      doc.createdAt || now,
+      now,
+    ]
+  );
+  scheduleSave();
+
+  return {
+    id,
+    userEmail,
+    docType: doc.docType,
+    title: doc.title,
+    vendorOrDoctor: doc.vendorOrDoctor,
+    amount: doc.amount,
+    currency: doc.currency,
+    expiryOrDueDate: doc.expiryOrDueDate,
+    payload: doc.payload,
+    driveWebViewLink: doc.driveWebViewLink,
+    createdAt: doc.createdAt || now,
+    updatedAt: now,
+  };
+}
+
+export function deleteSmartFamilyDocumentFromSqlite(id: string): boolean {
+  if (!db) return false;
+  db.run('DELETE FROM smart_family_documents WHERE id = ?', [id]);
+  scheduleSave();
+  return true;
+}
+
+// -------------------------------------------------------------
+// Global Universal Search across all SQLite tables
+// -------------------------------------------------------------
+export interface UniversalSearchHit {
+  id: string;
+  category:
+    | 'language_tutor'
+    | 'adaptive_learning'
+    | 'smart_document'
+    | 'reminder'
+    | 'drive_file'
+    | 'voice_memo'
+    | 'memory_note';
+  title: string;
+  subtitle: string;
+  targetTab: string;
+  deepLink?: Record<string, any>;
+  updatedAt?: string;
+}
+
+export function searchUniversalSqlite(rawQuery: string, userEmail?: string): UniversalSearchHit[] {
+  if (!db) return [];
+  const q = (rawQuery || '').trim();
+  if (!q) return [];
+  const like = `%${q}%`;
+  const email = userEmail ? userEmail.toLowerCase().trim() : '';
+  const hits: UniversalSearchHit[] = [];
+
+  const runSafe = (
+    sql: string,
+    params: any[],
+    mapper: (row: any[]) => UniversalSearchHit | null
+  ) => {
+    try {
+      const stmt = db!.prepare(sql);
+      stmt.bind(params);
+      while (stmt.step()) {
+        const mapped = mapper(stmt.get());
+        if (mapped) hits.push(mapped);
+      }
+      stmt.free();
+    } catch {}
+  };
+
+  // 1. Language Tutor courses, sessions, clinics & certificates
+  runSafe(
+    `SELECT id, language, record_type, title, updated_at FROM language_tutor_records
+     WHERE record_type NOT IN ('progress_snapshot','family_suite_state')
+       AND (title LIKE ? OR payload_json LIKE ?)${email ? ' AND user_email = ?' : ''}
+     ORDER BY updated_at DESC LIMIT 8`,
+    email ? [like, like, email] : [like, like],
+    (r) => ({
+      id: `lt-${r[0]}`,
+      category: 'language_tutor',
+      title: String(r[3] || 'Language Tutor Item'),
+      subtitle: `${r[1] === 'tamil' ? 'தமிழ்' : 'English'} · ${String(r[2]).replace('_', ' ')}`,
+      targetTab: 'language-tutor',
+      deepLink: { language: r[1], view: r[2] === 'course_lesson' ? 'vault' : 'vault' },
+      updatedAt: String(r[4] || ''),
+    })
+  );
+
+  // 2. Adaptive Learning & Saved Whiteboard Visual Topics
+  runSafe(
+    `SELECT id, subject_id, record_type, title, updated_at FROM adaptive_learning_records
+     WHERE (title LIKE ? OR subject_id LIKE ?)${email ? ' AND user_email = ?' : ''}
+     ORDER BY updated_at DESC LIMIT 8`,
+    email ? [like, like, email] : [like, like],
+    (r) => ({
+      id: `al-${r[0]}`,
+      category: 'adaptive_learning',
+      title: String(r[3] || 'Adaptive Learning Record'),
+      subtitle: `AI Classroom · ${String(r[1]).toUpperCase()} (${String(r[2])})`,
+      targetTab: 'adaptive-learning',
+      deepLink: { subject: r[1], pillar: r[2] === 'visual_topic' ? 'blackboard' : 'adaptive' },
+      updatedAt: String(r[4] || ''),
+    })
+  );
+
+  // 3. Smart Family Documents (Receipts/Warranties + Prescriptions/Lab Reports)
+  runSafe(
+    `SELECT id, doc_type, title, vendor_or_doctor, amount, currency, updated_at FROM smart_family_documents
+     WHERE (title LIKE ? OR vendor_or_doctor LIKE ? OR payload_json LIKE ?)${email ? ' AND user_email = ?' : ''}
+     ORDER BY updated_at DESC LIMIT 8`,
+    email ? [like, like, like, email] : [like, like, like],
+    (r) => ({
+      id: `sd-${r[0]}`,
+      category: 'smart_document',
+      title: String(r[2] || 'Smart Document'),
+      subtitle:
+        r[1] === 'receipt_warranty'
+          ? `Receipt/Warranty · ${r[3] || ''} ${r[4] ? `${r[5] || '₹'}${r[4]}` : ''}`.trim()
+          : `Prescription/Lab · ${r[3] || 'Health Analyzer'}`,
+      targetTab: 'smart-doc-modal',
+      deepLink: { docType: r[1] },
+      updatedAt: String(r[6] || ''),
+    })
+  );
+
+  // 4. Family Reminders
+  runSafe(
+    `SELECT id, title, due_date, due_time, category FROM family_reminders
+     WHERE (title LIKE ? OR notes LIKE ?) ORDER BY updated_at DESC LIMIT 6`,
+    [like, like],
+    (r) => ({
+      id: `rem-${r[0]}`,
+      category: 'reminder',
+      title: String(r[1] || 'Reminder'),
+      subtitle: `Reminder (${r[4] || 'family'}) · ${r[2] || ''} ${r[3] || ''}`.trim(),
+      targetTab: 'clock',
+      updatedAt: String(r[2] || ''),
+    })
+  );
+
+  // 5. Google Drive Files Mirror
+  runSafe(
+    `SELECT id, name, folder_path, updated_at FROM google_drive_files
+     WHERE (name LIKE ? OR folder_path LIKE ?) ORDER BY updated_at DESC LIMIT 8`,
+    [like, like],
+    (r) => ({
+      id: `gd-${r[0]}`,
+      category: 'drive_file',
+      title: String(r[1] || 'Drive File'),
+      subtitle: `Google Drive · ${r[2] || 'Family Circle'}`,
+      targetTab: 'google',
+      deepLink: { subTab: 'drive' },
+      updatedAt: String(r[3] || ''),
+    })
+  );
+
+  // 6. Voice Memos & Assistant Memory
+  runSafe(
+    `SELECT id, topic, memory_content, timestamp FROM assistant_memory_store
+     WHERE (topic LIKE ? OR memory_content LIKE ?) ORDER BY timestamp DESC LIMIT 5`,
+    [like, like],
+    (r) => ({
+      id: `mem-${r[0]}`,
+      category: 'memory_note',
+      title: String(r[1] || String(r[2] || '').slice(0, 48)),
+      subtitle: `Memory Vault · ${String(r[2] || '').slice(0, 70)}`,
+      targetTab: 'vault',
+      updatedAt: String(r[3] || ''),
+    })
+  );
+
+  return hits.slice(0, 28);
 }
 
 // -------------------------------------------------------------
@@ -5009,6 +5313,7 @@ export function getSqliteDbStats() {
     'dynamic_ai_models',
     'adaptive_learning_records',
     'language_tutor_records',
+    'smart_family_documents',
     'assistant_memory_store',
     'voice_assistant_conversations',
     'google_keep_notes',

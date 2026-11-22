@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
@@ -6,47 +6,13 @@ import { AppProvider, useApp } from './context/AppContext';
 import { MobileFrame } from './components/MobileFrame';
 import { BottomNav, TabKey } from './components/BottomNav';
 import { BiometricLock } from './components/BiometricLock';
-import { VoiceAssistantModal } from './components/VoiceAssistantModal';
-import { AndroidInstallerModal } from './components/AndroidInstallerModal';
-import { WindowsSystemInstallerModal } from './components/WindowsSystemInstallerModal';
 import { GoogleSSOScreen } from './components/GoogleSSOScreen';
-
-// Tabs
 import { HomeHubTab } from './components/tabs/HomeHubTab';
-import { FamilyTrackerTab } from './components/tabs/FamilyTrackerTab';
-import { BillionaireBlueprintTab } from './components/tabs/BillionaireBlueprintTab';
-import { FinanceHubTab } from './components/tabs/FinanceHubTab';
-import { ProductivityTab } from './components/tabs/ProductivityTab';
-import { HealthWellnessTab } from './components/tabs/HealthWellnessTab';
-import { MoodJournalTab } from './components/tabs/MoodJournalTab';
-import { WritingCoachTab } from './components/tabs/WritingCoachTab';
-import { MemoryVaultTab } from './components/tabs/MemoryVaultTab';
-import { GoogleOneTab, ActiveServiceTab } from './components/tabs/GoogleOneTab';
-import { SmartDevicesTab } from './components/tabs/SmartDevicesTab';
-import { DocsAndDemoTab } from './components/tabs/DocsAndDemoTab';
-import { WhatsAppTab } from './components/tabs/WhatsAppTab';
-import { PhoneDialerTab } from './components/tabs/PhoneDialerTab';
-import { GcpBillingDashboard } from './components/tabs/GcpBillingDashboard';
-import { AiStudioTab } from './components/tabs/AiStudioTab';
-import { IBooksLibraryTab } from './components/tabs/IBooksLibraryTab';
-import { MusicLibraryTab } from './components/tabs/MusicLibraryTab';
-import { VoiceMemosTab } from './components/tabs/VoiceMemosTab';
-import { TextToSpeechTab } from './components/tabs/TextToSpeechTab';
-import { RealtimeSttTab } from './components/tabs/RealtimeSttTab';
-import { RealtimeTranslatorTab } from './components/tabs/RealtimeTranslatorTab';
-import { AdobeScannerTab } from './components/tabs/AdobeScannerTab';
-import { ClockTab } from './components/tabs/ClockTab';
-import { NavigationTab } from './components/tabs/NavigationTab';
-import { WeatherForecastTab } from './components/tabs/WeatherForecastTab';
-import { AdaptiveLearningTab } from './components/tabs/AdaptiveLearningTab';
-import { LanguageTutorTab } from './components/tabs/LanguageTutorTab';
 import { MusicPlayerBar } from './components/music/MusicPlayerBar';
-import { AppleMusicPlayerModal } from './components/music/AppleMusicPlayerModal';
 import { ActiveCallModal } from './components/ActiveCallModal';
-import { AuroVisionModal } from './components/vision/AuroVisionModal';
 import { ActiveAlarmModal } from './components/clock/ActiveAlarmModal';
 import { ActiveReminderModal } from './components/clock/ActiveReminderModal';
-import { OfflineSyncCenterModal } from './components/OfflineSyncCenterModal';
+import type { ActiveServiceTab } from './components/tabs/GoogleOneTab';
 import { Alarm, ClockReminder } from './types/clock';
 import {
   checkDueReminders,
@@ -54,9 +20,63 @@ import {
   completeReminder,
   snoozeReminder,
 } from './services/reminderDriveSync';
-import { CustomGoogleMapModal } from './components/maps/CustomGoogleMapModal';
-import { FeverTemperatureModal } from './components/health/FeverTemperatureModal';
 import { TransportMode } from './types/mapNavigation';
+
+// Helper for clean code-split React.lazy named exports (drastically shrinks Android & Web startup bundle)
+function lazyNamed<T extends React.ComponentType<any>>(
+  loader: () => Promise<Record<string, any>>,
+  exportName: string
+) {
+  return React.lazy(() => loader().then((mod) => ({ default: mod[exportName] as T })));
+}
+
+// Lazy-loaded Tabs (on-demand async chunks)
+const FamilyTrackerTab = lazyNamed(() => import('./components/tabs/FamilyTrackerTab'), 'FamilyTrackerTab');
+const BillionaireBlueprintTab = lazyNamed(() => import('./components/tabs/BillionaireBlueprintTab'), 'BillionaireBlueprintTab');
+const FinanceHubTab = lazyNamed(() => import('./components/tabs/FinanceHubTab'), 'FinanceHubTab');
+const ProductivityTab = lazyNamed(() => import('./components/tabs/ProductivityTab'), 'ProductivityTab');
+const HealthWellnessTab = lazyNamed(() => import('./components/tabs/HealthWellnessTab'), 'HealthWellnessTab');
+const MoodJournalTab = lazyNamed(() => import('./components/tabs/MoodJournalTab'), 'MoodJournalTab');
+const WritingCoachTab = lazyNamed(() => import('./components/tabs/WritingCoachTab'), 'WritingCoachTab');
+const MemoryVaultTab = lazyNamed(() => import('./components/tabs/MemoryVaultTab'), 'MemoryVaultTab');
+const GoogleOneTab = lazyNamed(() => import('./components/tabs/GoogleOneTab'), 'GoogleOneTab');
+const SmartDevicesTab = lazyNamed(() => import('./components/tabs/SmartDevicesTab'), 'SmartDevicesTab');
+const DocsAndDemoTab = lazyNamed(() => import('./components/tabs/DocsAndDemoTab'), 'DocsAndDemoTab');
+const WhatsAppTab = lazyNamed(() => import('./components/tabs/WhatsAppTab'), 'WhatsAppTab');
+const PhoneDialerTab = lazyNamed(() => import('./components/tabs/PhoneDialerTab'), 'PhoneDialerTab');
+const GcpBillingDashboard = lazyNamed(() => import('./components/tabs/GcpBillingDashboard'), 'GcpBillingDashboard');
+const AiStudioTab = lazyNamed(() => import('./components/tabs/AiStudioTab'), 'AiStudioTab');
+const IBooksLibraryTab = lazyNamed(() => import('./components/tabs/IBooksLibraryTab'), 'IBooksLibraryTab');
+const MusicLibraryTab = lazyNamed(() => import('./components/tabs/MusicLibraryTab'), 'MusicLibraryTab');
+const VoiceMemosTab = lazyNamed(() => import('./components/tabs/VoiceMemosTab'), 'VoiceMemosTab');
+const TextToSpeechTab = lazyNamed(() => import('./components/tabs/TextToSpeechTab'), 'TextToSpeechTab');
+const RealtimeSttTab = lazyNamed(() => import('./components/tabs/RealtimeSttTab'), 'RealtimeSttTab');
+const RealtimeTranslatorTab = lazyNamed(() => import('./components/tabs/RealtimeTranslatorTab'), 'RealtimeTranslatorTab');
+const AdobeScannerTab = lazyNamed(() => import('./components/tabs/AdobeScannerTab'), 'AdobeScannerTab');
+const ClockTab = lazyNamed(() => import('./components/tabs/ClockTab'), 'ClockTab');
+const NavigationTab = lazyNamed(() => import('./components/tabs/NavigationTab'), 'NavigationTab');
+const WeatherForecastTab = lazyNamed(() => import('./components/tabs/WeatherForecastTab'), 'WeatherForecastTab');
+const AdaptiveLearningTab = lazyNamed(() => import('./components/tabs/AdaptiveLearningTab'), 'AdaptiveLearningTab');
+const LanguageTutorTab = lazyNamed(() => import('./components/tabs/LanguageTutorTab'), 'LanguageTutorTab');
+
+// Lazy-loaded Heavy Modals (loaded only when opened)
+const VoiceAssistantModal = lazyNamed(() => import('./components/VoiceAssistantModal'), 'VoiceAssistantModal');
+const AndroidInstallerModal = lazyNamed(() => import('./components/AndroidInstallerModal'), 'AndroidInstallerModal');
+const WindowsSystemInstallerModal = lazyNamed(() => import('./components/WindowsSystemInstallerModal'), 'WindowsSystemInstallerModal');
+const AppleMusicPlayerModal = lazyNamed(() => import('./components/music/AppleMusicPlayerModal'), 'AppleMusicPlayerModal');
+const AuroVisionModal = lazyNamed(() => import('./components/vision/AuroVisionModal'), 'AuroVisionModal');
+const OfflineSyncCenterModal = lazyNamed(() => import('./components/OfflineSyncCenterModal'), 'OfflineSyncCenterModal');
+const CustomGoogleMapModal = lazyNamed(() => import('./components/maps/CustomGoogleMapModal'), 'CustomGoogleMapModal');
+const FeverTemperatureModal = lazyNamed(() => import('./components/health/FeverTemperatureModal'), 'FeverTemperatureModal');
+const GlobalUniversalSearchModal = lazyNamed(() => import('./components/GlobalUniversalSearchModal'), 'GlobalUniversalSearchModal');
+const SmartAiDocumentHubModal = lazyNamed(() => import('./components/SmartAiDocumentHubModal'), 'SmartAiDocumentHubModal');
+
+const TabLoadingFallback: React.FC = () => (
+  <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-300">
+    <div className="w-9 h-9 rounded-full border-2 border-cyan-400/30 border-t-cyan-400 animate-spin" />
+    <span className="text-xs font-mono text-slate-400">Loading studio module...</span>
+  </div>
+);
 
 const AppContent: React.FC = () => {
   const { isAuthenticated } = useApp();
@@ -69,7 +89,39 @@ const AppContent: React.FC = () => {
   const [isWindowsInstallerOpen, setIsWindowsInstallerOpen] = useState(false);
   const [isMusicPlayerOpen, setIsMusicPlayerOpen] = useState(false);
   const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
+  const [isUniversalSearchOpen, setIsUniversalSearchOpen] = useState(false);
+  const [isSmartDocHubOpen, setIsSmartDocHubOpen] = useState(false);
+  const [smartDocInitialType, setSmartDocInitialType] = useState<
+    'receipt_warranty' | 'prescription_lab'
+  >('receipt_warranty');
   const [ringingAlarm, setRingingAlarm] = useState<Alarm | null>(null);
+
+  // Global Ctrl+K / Cmd+K shortcut + custom event hooks for Search & Smart AI Document Hub
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsUniversalSearchOpen((prev) => !prev);
+      }
+    };
+    const onOpenSmartDocEvent = (ev: Event) => {
+      const docType = (ev as CustomEvent)?.detail?.docType;
+      if (docType === 'prescription_lab' || docType === 'receipt_warranty') {
+        setSmartDocInitialType(docType);
+      }
+      setIsSmartDocHubOpen(true);
+    };
+    const onOpenSearchEvent = () => setIsUniversalSearchOpen(true);
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('aura_open_smart_doc_hub', onOpenSmartDocEvent);
+    window.addEventListener('aura_open_universal_search', onOpenSearchEvent);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('aura_open_smart_doc_hub', onOpenSmartDocEvent);
+      window.removeEventListener('aura_open_universal_search', onOpenSearchEvent);
+    };
+  }, []);
   const [activeDueReminder, setActiveDueReminder] = useState<ClockReminder | null>(null);
 
   // Custom Google Maps & Offline Navigation Modal State
@@ -300,7 +352,7 @@ const AppContent: React.FC = () => {
         return (
           <GoogleOneTab
             initialSubTab={googleSubTab}
-            onSelectSubTab={(st) => setGoogleSubTab(st)}
+            onSelectSubTab={(st: ActiveServiceTab) => setGoogleSubTab(st)}
           />
         );
       case 'devices':
@@ -329,11 +381,16 @@ const AppContent: React.FC = () => {
       onOpenInstallerHub={() => setIsInstallerOpen(true)}
       onOpenWindowsInstaller={() => setIsWindowsInstallerOpen(true)}
       onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
+      onOpenUniversalSearch={() => setIsUniversalSearchOpen(true)}
+      onOpenSmartDocs={(docType) => {
+        setSmartDocInitialType(docType || 'receipt_warranty');
+        setIsSmartDocHubOpen(true);
+      }}
       onOpenWalkingSteps={() => setCurrentTab('wellness')}
       onOpenWeather={() => setCurrentTab('weather')}
       onGoHome={() => setCurrentTab('home')}
     >
-      {renderActiveTab()}
+      <Suspense fallback={<TabLoadingFallback />}>{renderActiveTab()}</Suspense>
 
       {/* Floating Mini Player Bar across all tabs */}
       <MusicPlayerBar onOpenFullPlayer={() => setIsMusicPlayerOpen(true)} />
@@ -346,77 +403,137 @@ const AppContent: React.FC = () => {
         onOpenOfflineSyncCenter={() => setIsOfflineSyncCenterOpen(true)}
       />
 
-      {/* Apple Music Full Screen Modal */}
-      <AppleMusicPlayerModal
-        isOpen={isMusicPlayerOpen}
-        onClose={() => setIsMusicPlayerOpen(false)}
-      />
+      {/* Lazy-Loaded Modals — chunks are fetched ONLY when opened! */}
+      <Suspense fallback={null}>
+        {isMusicPlayerOpen && (
+          <AppleMusicPlayerModal
+            isOpen={isMusicPlayerOpen}
+            onClose={() => setIsMusicPlayerOpen(false)}
+          />
+        )}
 
-      {/* Auro Voice Assistant Modal */}
-      <VoiceAssistantModal
-        isOpen={isVoiceOpen}
-        onClose={() => setIsVoiceOpen(false)}
-        onOpenVision={() => {
-          setIsVoiceOpen(false);
-          setIsVisionOpen(true);
-        }}
-        onGoHome={() => {
-          setIsVoiceOpen(false);
-          setCurrentTab('home');
-        }}
-        onNavigateTab={(tab, subTab) => {
-          setIsVoiceOpen(false);
-          handleNavigate(tab, subTab as any);
-        }}
-        onOpenMusicPlayer={() => {
-          setIsVoiceOpen(false);
-          setIsMusicPlayerOpen(true);
-        }}
-        onOpenOfflineSync={() => {
-          setIsVoiceOpen(false);
-          setIsOfflineSyncCenterOpen(true);
-        }}
-        onOpenCustomMap={(opts) => {
-          setIsVoiceOpen(false);
-          setCustomMapOptions({
-            destination: opts?.destination ? { name: opts.destination, lat: 13.0823, lng: 80.2755 } : undefined,
-            origin: opts?.origin ? { name: opts.origin, lat: 13.0827, lng: 80.2707 } : undefined,
-            mode: opts?.mode,
-            autoStart: opts?.autoStart,
-          });
-          setIsCustomMapOpen(true);
-        }}
-        onOpenFeverTracker={(opts) => {
-          setIsVoiceOpen(false);
-          setFeverModalOptions({
-            memberId: opts?.memberId,
-            temperatureF: opts?.temperatureF,
-            autoLogOpen: opts?.autoLog,
-            autoPrint: opts?.autoPrint,
-          });
-          setIsFeverModalOpen(true);
-        }}
-      />
+        {isVoiceOpen && (
+          <VoiceAssistantModal
+            isOpen={isVoiceOpen}
+            onClose={() => setIsVoiceOpen(false)}
+            onOpenVision={() => {
+              setIsVoiceOpen(false);
+              setIsVisionOpen(true);
+            }}
+            onGoHome={() => {
+              setIsVoiceOpen(false);
+              setCurrentTab('home');
+            }}
+            onNavigateTab={(tab: TabKey, subTab?: string) => {
+              setIsVoiceOpen(false);
+              handleNavigate(tab, subTab as any);
+            }}
+            onOpenMusicPlayer={() => {
+              setIsVoiceOpen(false);
+              setIsMusicPlayerOpen(true);
+            }}
+            onOpenOfflineSync={() => {
+              setIsVoiceOpen(false);
+              setIsOfflineSyncCenterOpen(true);
+            }}
+            onOpenCustomMap={(opts?: any) => {
+              setIsVoiceOpen(false);
+              setCustomMapOptions({
+                destination: opts?.destination ? { name: opts.destination, lat: 13.0823, lng: 80.2755 } : undefined,
+                origin: opts?.origin ? { name: opts.origin, lat: 13.0827, lng: 80.2707 } : undefined,
+                mode: opts?.mode,
+                autoStart: opts?.autoStart,
+              });
+              setIsCustomMapOpen(true);
+            }}
+            onOpenFeverTracker={(opts?: any) => {
+              setIsVoiceOpen(false);
+              setFeverModalOptions({
+                memberId: opts?.memberId,
+                temperatureF: opts?.temperatureF,
+                autoLogOpen: opts?.autoLog,
+                autoPrint: opts?.autoPrint,
+              });
+              setIsFeverModalOpen(true);
+            }}
+          />
+        )}
 
-      {/* Clinical Fever Temperature & Doctor Report Modal */}
-      <FeverTemperatureModal
-        isOpen={isFeverModalOpen}
-        onClose={() => setIsFeverModalOpen(false)}
-        selectedMemberId={feverModalOptions.memberId}
-        initialTempF={feverModalOptions.temperatureF}
-        autoLogOpen={feverModalOptions.autoLogOpen}
-        autoPrint={feverModalOptions.autoPrint}
-      />
+        {isFeverModalOpen && (
+          <FeverTemperatureModal
+            isOpen={isFeverModalOpen}
+            onClose={() => setIsFeverModalOpen(false)}
+            selectedMemberId={feverModalOptions.memberId}
+            initialTempF={feverModalOptions.temperatureF}
+            autoLogOpen={feverModalOptions.autoLogOpen}
+            autoPrint={feverModalOptions.autoPrint}
+          />
+        )}
 
-      {/* Custom Google Maps & Multi-Modal Offline Navigation Modal */}
-      <CustomGoogleMapModal
-        isOpen={isCustomMapOpen}
-        onClose={() => setIsCustomMapOpen(false)}
-        initialOrigin={customMapOptions.origin}
-        initialDestination={customMapOptions.destination}
-        initialMode={customMapOptions.mode}
-        autoStartNavigation={customMapOptions.autoStart}
-      />
+        {isCustomMapOpen && (
+          <CustomGoogleMapModal
+            isOpen={isCustomMapOpen}
+            onClose={() => setIsCustomMapOpen(false)}
+            initialOrigin={customMapOptions.origin}
+            initialDestination={customMapOptions.destination}
+            initialMode={customMapOptions.mode}
+            autoStartNavigation={customMapOptions.autoStart}
+          />
+        )}
+
+        {isVisionOpen && (
+          <AuroVisionModal
+            isOpen={isVisionOpen}
+            onClose={() => setIsVisionOpen(false)}
+          />
+        )}
+
+        {isInstallerOpen && (
+          <AndroidInstallerModal
+            isOpen={isInstallerOpen}
+            onClose={() => setIsInstallerOpen(false)}
+            onGoHome={() => {
+              setIsInstallerOpen(false);
+              setCurrentTab('home');
+            }}
+          />
+        )}
+
+        {isWindowsInstallerOpen && (
+          <WindowsSystemInstallerModal
+            isOpen={isWindowsInstallerOpen}
+            onClose={() => setIsWindowsInstallerOpen(false)}
+          />
+        )}
+
+        {isOfflineSyncCenterOpen && (
+          <OfflineSyncCenterModal
+            isOpen={isOfflineSyncCenterOpen}
+            onClose={() => setIsOfflineSyncCenterOpen(false)}
+            onNavigateTab={handleNavigate}
+          />
+        )}
+
+        {isUniversalSearchOpen && (
+          <GlobalUniversalSearchModal
+            isOpen={isUniversalSearchOpen}
+            onClose={() => setIsUniversalSearchOpen(false)}
+            onNavigateTab={(tab: TabKey, subTab?: any) => handleNavigate(tab, subTab)}
+            onOpenSmartDocModal={(docType: 'receipt_warranty' | 'prescription_lab') => {
+              setSmartDocInitialType(docType);
+              setIsSmartDocHubOpen(true);
+            }}
+          />
+        )}
+
+        {isSmartDocHubOpen && (
+          <SmartAiDocumentHubModal
+            isOpen={isSmartDocHubOpen}
+            initialDocType={smartDocInitialType}
+            onClose={() => setIsSmartDocHubOpen(false)}
+          />
+        )}
+      </Suspense>
 
       {/* Google Maps Platform Quota Notice Banner */}
       {gmpQuotaNotice && (
@@ -434,12 +551,6 @@ const AppContent: React.FC = () => {
         </div>
       )}
 
-      {/* Auro Computer Vision Modal for Blind & Low-Vision Users */}
-      <AuroVisionModal
-        isOpen={isVisionOpen}
-        onClose={() => setIsVisionOpen(false)}
-      />
-
       {/* Global Ringing Active Alarm Modal */}
       <ActiveAlarmModal
         ringingAlarm={ringingAlarm}
@@ -453,28 +564,6 @@ const AppContent: React.FC = () => {
         onComplete={handleCompleteReminder}
         onSnooze={handleSnoozeReminder}
         onDismiss={handleDismissReminder}
-      />
-
-      <AndroidInstallerModal
-        isOpen={isInstallerOpen}
-        onClose={() => setIsInstallerOpen(false)}
-        onGoHome={() => {
-          setIsInstallerOpen(false);
-          setCurrentTab('home');
-        }}
-      />
-
-      {/* Auro Windows Host System & Software Installer Modal */}
-      <WindowsSystemInstallerModal
-        isOpen={isWindowsInstallerOpen}
-        onClose={() => setIsWindowsInstallerOpen(false)}
-      />
-
-      {/* 3GB SQLite Offline Store & Unified Sync Center */}
-      <OfflineSyncCenterModal
-        isOpen={isOfflineSyncCenterOpen}
-        onClose={() => setIsOfflineSyncCenterOpen(false)}
-        onNavigateTab={handleNavigate}
       />
 
       <ActiveCallModal />
