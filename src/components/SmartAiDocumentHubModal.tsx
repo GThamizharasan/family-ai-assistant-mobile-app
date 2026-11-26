@@ -36,6 +36,7 @@ import {
   SmartFamilyDocType,
   syncAllSmartDocumentsWithDrive,
 } from '../services/smartDocumentAiService';
+import { reconcileReceiptWithGroceryList } from '../services/familyLifeSuiteService';
 import { speechEngine } from '../services/speech';
 import {
   AI_MODEL_CHANGED_EVENT,
@@ -298,11 +299,19 @@ export const SmartAiDocumentHubModal: React.FC<SmartAiDocumentHubModalProps> = (
         { userEmail: user?.email, googleAccessToken }
       );
 
+      // 4. Auto-reconcile supermarket/grocery line items with Shared Family Grocery List + log price history!
+      const groceryMatched = await reconcileReceiptWithGroceryList(extractedReceipt, {
+        userEmail: user?.email,
+        googleAccessToken,
+      });
+
       setSavedDocs((prev) => [saved, ...prev.filter((d) => d.id !== saved.id)]);
       setStatusMessage(
         `✅ Logged ${extractedReceipt.currency}${extractedReceipt.totalAmount} in Finance Hub${
-          reminderCreated ? ' + set Warranty/Bill Reminder' : ''
-        } + saved to SQLite${saved.syncedToDrive ? ' & Google Drive!' : '!'}`
+          reminderCreated ? ' + Warranty/Bill Reminder' : ''
+        }${groceryMatched > 0 ? ` + checked off ${groceryMatched} Grocery item(s)` : ''} + saved to SQLite${
+          saved.syncedToDrive ? ' & Google Drive!' : '!'
+        }`
       );
     } finally {
       setIsApplying(false);

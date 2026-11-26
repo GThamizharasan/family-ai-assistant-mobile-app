@@ -44,6 +44,10 @@ import { useApp } from '../context/AppContext';
 export type TabKey =
   | 'home'
   | 'media-library'
+  | 'identity-travel'
+  | 'smart-kitchen'
+  | 'kids-school'
+  | 'health-records'
   | 'adaptive-learning'
   | 'language-tutor'
   | 'weather'
@@ -111,6 +115,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const allTabs: TabItem[] = [
     { key: 'home', label: 'Hub', category: 'Core', icon: Home },
     { key: 'media-library', label: 'Media Vault', category: 'Core', icon: Layers, offlineReady: true },
+    { key: 'identity-travel', label: 'ID & Travel', category: 'Family & Safety', icon: Shield, offlineReady: true },
+    { key: 'smart-kitchen', label: 'Smart Kitchen', category: 'Lifestyle', icon: Sparkles, offlineReady: true },
+    { key: 'kids-school', label: 'Kids & School', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
+    { key: 'health-records', label: 'Lab & Growth', category: 'Lifestyle', icon: HeartPulse, offlineReady: true },
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
     { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },
@@ -143,6 +151,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   // Left wing scrollable features (between fixed Home Hub on left and center Mic)
   const leftTabs: TabItem[] = [
     { key: 'media-library', label: 'Media Vault', category: 'Core', icon: Layers, offlineReady: true },
+    { key: 'identity-travel', label: 'ID & Travel', category: 'Family & Safety', icon: Shield, offlineReady: true },
+    { key: 'smart-kitchen', label: 'Smart Kitchen', category: 'Lifestyle', icon: Sparkles, offlineReady: true },
+    { key: 'kids-school', label: 'Kids & School', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
+    { key: 'health-records', label: 'Lab & Growth', category: 'Lifestyle', icon: HeartPulse, offlineReady: true },
     { key: 'adaptive-learning', label: 'AI Classroom', category: 'Intelligence', icon: GraduationCap, offlineReady: true },
     { key: 'language-tutor', label: 'Language Tutor', category: 'Intelligence', icon: Languages, offlineReady: true },
     { key: 'weather', label: 'Weather', category: 'Lifestyle', icon: CloudSun, offlineReady: true },

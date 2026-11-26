@@ -73,6 +73,7 @@ import {
 } from '../../services/mediaLibraryService';
 import { getEffectiveGoogleToken } from '../../services/visualTopicStorageService';
 import { MediaAssetViewerModal } from '../media/MediaAssetViewerModal';
+import { getLockedFolderPaths, MediaPowerToolsModal } from '../media/MediaPowerToolsModal';
 
 type NavScope = 'all' | 'favorites' | 'recent' | 'offline_local' | 'archive' | 'trash' | 'admin';
 
@@ -133,6 +134,12 @@ export const MediaLibraryTab: React.FC = () => {
   const [adminSearch, setAdminSearch] = useState('');
   const [adminSelectedIds, setAdminSelectedIds] = useState<string[]>([]);
   const [isDeletingBulk, setIsDeletingBulk] = useState(false);
+
+  // Media Power Tools & PIN Private Folder Lock State
+  const [powerToolsOpen, setPowerToolsOpen] = useState(false);
+  const [powerToolsTab, setPowerToolsTab] = useState<'redact' | 'pdf_merge' | 'memories' | 'pin_lock'>('redact');
+  const [isVaultUnlocked, setIsVaultUnlocked] = useState(false);
+  const [lockedFolders, setLockedFolders] = useState<string[]>(() => getLockedFolderPaths());
 
   // Background Audio Player + Playlist
   const [audioPlaylist, setAudioPlaylist] = useState<MediaLibraryItem[]>([]);
@@ -723,14 +730,19 @@ export const MediaLibraryTab: React.FC = () => {
     void enqueueFileEntries(arr);
   };
 
-  // Client-side AI Semantic re-ranking when semanticMode is enabled
+  // Filter out PIN-locked folders unless unlocked + AI Semantic re-ranking when semanticMode is enabled
   const displayedItems = useMemo(() => {
-    if (!semanticMode || !searchQuery.trim()) return items;
+    const visible = isVaultUnlocked
+      ? items
+      : items.filter(
+          (it) => !lockedFolders.some((lp) => it.folderPath === lp || it.folderPath.startsWith(`${lp}/`))
+        );
+    if (!semanticMode || !searchQuery.trim()) return visible;
     const terms = searchQuery
       .toLowerCase()
       .split(/\s+/)
       .filter((w) => w.length > 1);
-    return [...items].sort((a, b) => {
+    return [...visible].sort((a, b) => {
       const score = (it: MediaLibraryItem) => {
         const hay = `${it.fileName} ${it.category} ${(it.tags || []).join(' ')} ${it.aiMetadata?.caption || ''} ${
           it.aiMetadata?.ocrText || ''
@@ -739,7 +751,7 @@ export const MediaLibraryTab: React.FC = () => {
       };
       return score(b) - score(a);
     });
-  }, [items, semanticMode, searchQuery]);
+  }, [items, semanticMode, searchQuery, isVaultUnlocked, lockedFolders]);
 
   const unreadNotifs = notifications.filter((n) => !n.read).length;
   const quotaPct = analytics ? Math.min(100, (analytics.totalDriveBytes / analytics.driveQuotaBytes) * 100) : 0;
@@ -820,6 +832,16 @@ export const MediaLibraryTab: React.FC = () => {
             >
               <Upload className="w-3.5 h-3.5" />
               Upload Media {uploadQueue.filter((t) => t.status === 'uploading').length > 0 && `(${uploadQueue.filter((t) => t.status === 'uploading').length})`}
+            </button>
+
+            <button
+              onClick={() => {
+                setPowerToolsTab('redact');
+                setPowerToolsOpen(true);
+              }}
+              className="px-3 py-2 rounded-2xl bg-fuchsia-500/20 hover:bg-fuchsia-500/30 border border-fuchsia-400/40 text-fuchsia-200 text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Studio · PDF · Memories · {isVaultUnlocked ? '🔓' : '🔒'}
             </button>
 
             <button
@@ -1841,6 +1863,25 @@ export const MediaLibraryTab: React.FC = () => {
         }}
         onPlayAudioInBackground={handlePlayAudioInBackground}
         onNotify={pushNotification}
+      />
+
+      {/* Power Tools: Redact/Enhance, Multi-Image->PDF Merger, Memories Slideshow & PIN Private Folder Lock */}
+      <MediaPowerToolsModal
+        isOpen={powerToolsOpen}
+        initialTab={powerToolsTab}
+        items={items}
+        folders={folders}
+        googleAccessToken={googleAccessToken}
+        userEmail={userEmail}
+        ownerName={ownerName}
+        isVaultUnlocked={isVaultUnlocked}
+        onUnlockChange={setIsVaultUnlocked}
+        onLockedFoldersChange={setLockedFolders}
+        onCreatedMediaItem={(created) => {
+          setItems((prev) => [created, ...prev.filter((x) => x.id !== created.id)]);
+          void loadMetadata();
+        }}
+        onClose={() => setPowerToolsOpen(false)}
       />
     </div>
   );

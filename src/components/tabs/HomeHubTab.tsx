@@ -286,9 +286,8 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-bold text-white text-sm">{user.name}</span>
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                role === 'primary' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-              }`}>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${role === 'primary' ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}>
                 {role === 'primary' ? 'Primary Head' : 'Secondary Member'}
               </span>
             </div>
@@ -620,11 +619,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                         setHomeWaToast(`Voice Model set to ${modelOpt.name}!`);
                         setTimeout(() => setHomeWaToast(null), 3000);
                       }}
-                      className={`px-1.5 py-1.5 rounded-xl text-[10px] font-semibold flex flex-col items-center justify-center transition-all cursor-pointer ${
-                        isActive
+                      className={`px-1.5 py-1.5 rounded-xl text-[10px] font-semibold flex flex-col items-center justify-center transition-all cursor-pointer ${isActive
                           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400/60 font-bold'
                           : 'bg-slate-950/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-slate-800/60'
-                      }`}
+                        }`}
                       title={`${modelOpt.name} - ${modelOpt.tagline} (${modelOpt.speed})`}
                     >
                       <span className="truncate max-w-[70px] leading-tight">{modelOpt.name.replace('Gemini ', '')}</span>
@@ -667,11 +665,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                         speechEngine.setLanguage(lang.code as any);
                         setHubVoiceLang(lang.code);
                       }}
-                      className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center justify-center gap-1 transition-all ${
-                        isActive
+                      className={`px-2 py-1.5 rounded-xl text-[11px] font-semibold flex items-center justify-center gap-1 transition-all ${isActive
                           ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-600/30 ring-1 ring-purple-400/50'
                           : 'bg-slate-950/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                      }`}
+                        }`}
                       title={`Switch voice & recognition to ${lang.label}`}
                     >
                       <span className="text-xs">{lang.flag}</span>
@@ -837,7 +834,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
       </div>
 
       {/* Unmissable Executive GCP Billing & Live Guardrails Quick Banner */}
-      <div 
+      <div
         onClick={() => onNavigate('google', 'gcp-billing')}
         className="cursor-pointer p-4 rounded-3xl bg-gradient-to-r from-indigo-950/80 via-slate-900 to-blue-950/80 border border-indigo-500/40 hover:border-indigo-400 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl relative overflow-hidden group"
       >
@@ -1025,11 +1022,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
         <div className="flex gap-1.5 p-1 bg-slate-950/80 border border-slate-800/80 rounded-2xl overflow-x-auto no-scrollbar">
           <button
             onClick={() => setHomeGoogleSubTab('gmail')}
-            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${
-              homeGoogleSubTab === 'gmail'
+            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${homeGoogleSubTab === 'gmail'
                 ? 'bg-rose-600 text-white shadow-md shadow-rose-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
+              }`}
           >
             <Mail className="w-3.5 h-3.5 shrink-0" />
             <span>Gmail ({liveEmails.length})</span>
@@ -1037,11 +1033,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <button
             onClick={() => setHomeGoogleSubTab('calendar')}
-            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${
-              homeGoogleSubTab === 'calendar'
+            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${homeGoogleSubTab === 'calendar'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
+              }`}
           >
             <Calendar className="w-3.5 h-3.5 shrink-0" />
             <span>Calendar</span>
@@ -1049,11 +1044,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <button
             onClick={() => setHomeGoogleSubTab('drive')}
-            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${
-              homeGoogleSubTab === 'drive'
+            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${homeGoogleSubTab === 'drive'
                 ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
+              }`}
           >
             <HardDrive className="w-3.5 h-3.5 shrink-0" />
             <span>Drive ({liveDriveFiles.length})</span>
@@ -1061,11 +1055,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <button
             onClick={() => setHomeGoogleSubTab('googleone')}
-            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${
-              homeGoogleSubTab === 'googleone'
+            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${homeGoogleSubTab === 'googleone'
                 ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
+              }`}
           >
             <CloudCheck className="w-3.5 h-3.5 shrink-0" />
             <span>2 TB Quota</span>
@@ -1073,11 +1066,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <button
             onClick={() => setHomeGoogleSubTab('gcp-billing')}
-            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${
-              homeGoogleSubTab === 'gcp-billing'
+            className={`flex-1 min-w-[100px] flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-xl text-xs font-semibold transition-all ${homeGoogleSubTab === 'gcp-billing'
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
-            }`}
+              }`}
           >
             <DollarSign className="w-3.5 h-3.5 shrink-0" />
             <span>GCP Billing</span>
@@ -1346,11 +1338,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                     <button
                       key={amt}
                       onClick={() => updateGcpBudgetLimit(amt)}
-                      className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-colors ${
-                        gcpBillingConfig.monthlyBudgetLimit === amt
+                      className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-colors ${gcpBillingConfig.monthlyBudgetLimit === amt
                           ? 'bg-indigo-600 text-white'
                           : 'bg-slate-900 text-slate-300 hover:bg-slate-800'
-                      }`}
+                        }`}
                     >
                       ${amt}
                     </button>
@@ -1675,11 +1666,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
 
           <button
             onClick={speakMotivation}
-            className={`p-2 rounded-xl transition-all ${
-              dailyQuoteSpoken
+            className={`p-2 rounded-xl transition-all ${dailyQuoteSpoken
                 ? 'bg-purple-600 text-white animate-pulse'
                 : 'bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200'
-            }`}
+              }`}
             title="Read morning briefing aloud with empathetic voice"
           >
             <Volume2 className="w-4 h-4" />
@@ -1760,19 +1750,40 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                       detail: { subject: chip.id, pillar: chip.pillar },
                     })
                   );
-                } catch {}
+                } catch { }
                 onNavigate('adaptive-learning');
               }}
-              className={`px-2.5 py-1 rounded-xl border transition-colors flex items-center gap-1 cursor-pointer font-semibold ${
-                chip.pillar === 'blackboard'
+              className={`px-2.5 py-1 rounded-xl border transition-colors flex items-center gap-1 cursor-pointer font-semibold ${chip.pillar === 'blackboard'
                   ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-500/40'
                   : 'bg-slate-950/75 hover:bg-slate-900 text-cyan-200 border-cyan-500/25'
-              }`}
+                }`}
             >
               <span>{chip.label}</span>
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Featured: Auro Proactive Morning & Evening Family Briefing Banner */}
+      <div className="rounded-3xl p-4 sm:p-5 bg-gradient-to-r from-amber-950/85 via-slate-900 to-cyan-950/85 border border-amber-400/40 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-1">
+          <span className="px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-200 border border-amber-400/40">
+            ☀️ Proactive Chief-of-Staff · English + தமிழ் Spoken Digest
+          </span>
+          <h3 className="text-base sm:text-lg font-extrabold text-white">
+            Auro Daily Morning & Evening Family Briefing
+          </h3>
+          <p className="text-xs text-slate-300 max-w-xl">
+            1-tap spoken & visual digest combining today&apos;s tasks, medication & ID/warranty renewal alerts, and kids&apos; star streak.
+          </p>
+        </div>
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('aura_open_daily_briefing'))}
+          className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shrink-0 cursor-pointer"
+        >
+          <span>☀️ Open Daily Briefing</span>
+          <ArrowUpRight className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Featured: Live Human Language Tutor Studio (English & Tamil) */}
@@ -1828,7 +1839,7 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
                       detail: { language: chip.language, view: chip.view },
                     })
                   );
-                } catch {}
+                } catch { }
                 onNavigate('language-tutor');
               }}
               className="px-2.5 py-1 rounded-xl bg-slate-950/75 hover:bg-slate-900 text-amber-200 border border-amber-400/25 transition-colors flex items-center gap-1 cursor-pointer font-semibold"
@@ -2434,11 +2445,10 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               <button
                 key={cat}
                 onClick={() => setHubGridCategory(cat)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                  hubGridCategory === cat
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${hubGridCategory === cat
                     ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30'
                     : 'bg-slate-950 text-slate-400 hover:text-slate-200 border border-slate-800'
-                }`}
+                  }`}
               >
                 {cat}
               </button>
@@ -2523,11 +2533,51 @@ export const HomeHubTab: React.FC<HomeHubTabProps> = ({
               key: 'media-library' as TabKey,
               title: 'Centralized Media Library (1 TB Vault)',
               category: 'Core',
-              desc: '1 TB Google Drive Media Vault + lightweight SQLite index + on-demand local SQLite offline cache & AI tagging.',
-              badge: '1 TB DRIVE + LOCAL',
+              desc: '1 TB Google Drive Vault, SQLite offline cache, Redact/Enhance Studio, Image→PDF & PIN Lock.',
+              badge: '1 TB DRIVE + STUDIO',
               icon: HardDrive,
               accent: 'border-cyan-500/40 hover:border-cyan-300',
               iconBg: 'bg-cyan-500/20 text-cyan-300',
+            },
+            {
+              key: 'identity-travel' as TabKey,
+              title: 'Identity, Travel & Expiry Vault',
+              category: 'Family & Safety',
+              desc: 'Passport, Visa, NHS/Aadhaar & Insurance 90/30/7d renewal alerts, AI trip packing & offline tickets.',
+              badge: 'RENEWAL ALERTS',
+              icon: Shield,
+              accent: 'border-amber-500/40 hover:border-amber-300',
+              iconBg: 'bg-amber-500/20 text-amber-300',
+            },
+            {
+              key: 'smart-kitchen' as TabKey,
+              title: 'Smart Kitchen, Grocery & Meal Planner',
+              category: 'Lifestyle',
+              desc: 'Fridge photo → EN/தமிழ் recipes, step-by-step voice chef, shared grocery auto-restock & 7-day plan.',
+              badge: 'EN + தமிழ் CHEF',
+              icon: Sparkles,
+              accent: 'border-emerald-500/40 hover:border-emerald-300',
+              iconBg: 'bg-emerald-500/20 text-emerald-300',
+            },
+            {
+              key: 'kids-school' as TabKey,
+              title: 'Kids Homework, School & Star Bank',
+              category: 'Intelligence',
+              desc: 'Socratic photo homework coach (hints first!), circular scanner, exam countdowns & chore rewards.',
+              badge: 'SOCRATIC COACH',
+              icon: GraduationCap,
+              accent: 'border-fuchsia-500/40 hover:border-fuchsia-300',
+              iconBg: 'bg-fuchsia-500/20 text-fuchsia-300',
+            },
+            {
+              key: 'health-records' as TabKey,
+              title: 'Longitudinal Lab Trends & Child Growth',
+              category: 'Lifestyle',
+              desc: 'Biomarker trend charts over time, WHO child growth & NHS/IAP vaccines, printable Doctor Visit Pack.',
+              badge: 'LAB TRENDS + PDF',
+              icon: HeartPulse,
+              accent: 'border-rose-500/40 hover:border-rose-300',
+              iconBg: 'bg-rose-500/20 text-rose-300',
             },
             {
               key: 'language-tutor' as TabKey,

@@ -58,6 +58,9 @@ import {
   upsertMediaCollectionToSqlite,
   getMediaLibraryAnalyticsFromSqlite,
   addMediaAuditLogToSqlite,
+  getFamilyLifeRecordsFromSqlite,
+  upsertFamilyLifeRecordToSqlite,
+  deleteFamilyLifeRecordFromSqlite,
   saveAssistantMemoryToSqlite,
   getAssistantMemoriesFromSqlite,
   deleteAssistantMemoryFromSqlite,
@@ -2745,6 +2748,250 @@ Analyze this media asset (${mediaType}: "${fileName}") and return STRICT JSON on
     res.json({ success: true, analysis: extracted, modelUsed });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'AI media analysis failed' });
+  }
+});
+
+// =========================================================================
+// FAMILY LIFE SUITE API (Bundles 1–5: Identity/Travel, Smart Kitchen, Kids School, Health, Morning Briefing)
+// =========================================================================
+
+app.get('/api/family-life/records', (req, res) => {
+  try {
+    const userEmail = typeof req.query.userEmail === 'string' ? req.query.userEmail : undefined;
+    const domain = typeof req.query.domain === 'string' ? req.query.domain : undefined;
+    const memberName = typeof req.query.memberName === 'string' ? req.query.memberName : undefined;
+    const records = getFamilyLifeRecordsFromSqlite({ userEmail, domain, memberName });
+    res.json({ success: true, records });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to load family life records' });
+  }
+});
+
+app.post('/api/family-life/records', (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.domain || !body.title) {
+      return res.status(400).json({ error: 'domain and title are required' });
+    }
+    const saved = upsertFamilyLifeRecordToSqlite(body);
+    res.json({ success: true, record: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to save family life record' });
+  }
+});
+
+app.delete('/api/family-life/records/:id', (req, res) => {
+  try {
+    const ok = deleteFamilyLifeRecordFromSqlite(req.params.id);
+    res.json({ success: ok });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete family life record' });
+  }
+});
+
+app.post('/api/family-life/ai-assist', async (req, res) => {
+  try {
+    const {
+      mode,
+      imageBase64,
+      mimeType = 'image/jpeg',
+      promptContext = '',
+      provider = 'nvidia',
+      model,
+      nvidiaApiKey,
+      geminiApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      apiKey,
+    } = req.body || {};
+
+    const promptsByMode: Record<string, string> = {
+      extract_id_document: `You are a precision Family Identity & Policy Expiry Extractor.
+Analyze the uploaded ID card, passport, visa/BRP, NHS/Aadhaar card, driving licence, or insurance policy (image or text).
+Return STRICT JSON only:
+{
+  "docCategory": "Passport | Visa / BRP | NHS / Aadhaar | Driving Licence | Health Insurance | Motor / Home Insurance | Other Official ID",
+  "holderName": "Full holder name",
+  "documentNumber": "Document/Policy number",
+  "issuingAuthority": "Issuing government or insurer",
+  "country": "Country name (e.g. UK, India)",
+  "issueDate": "YYYY-MM-DD or empty",
+  "expiryDate": "YYYY-MM-DD",
+  "notes": "1-sentence renewal/coverage note"
+}`,
+      generate_trip_plan: `You are an expert Family Travel & Kid-Friendly Itinerary Architect.
+Create a practical family trip itinerary and packing list based on the user's destination, dates, and travelers.
+Return STRICT JSON only:
+{
+  "destination": "City, Country",
+  "estimatedBudget": 1800,
+  "currency": "£",
+  "itinerary": [
+    { "day": 1, "title": "Arrival & Gentle Exploration", "morning": "...", "afternoon": "...", "evening": "...", "kidsTip": "..." }
+  ],
+  "packingList": [
+    { "label": "Passports, Visas & Travel Insurance PDF", "category": "Documents" },
+    { "label": "Kids snacks, water bottle & travel games", "category": "Kids" }
+  ]
+}`,
+      fridge_to_recipe: `You are a warm bilingual (English & Tamil / தமிழ்) Family Chef & Nutritionist.
+Look at the fridge/pantry photo or ingredient list and create TWO healthy, delicious family recipes (one South Indian / Tamil style and one International / Kids favorite).
+Return STRICT JSON only:
+{
+  "detectedIngredients": ["ingredient 1", "ingredient 2"],
+  "recipes": [
+    {
+      "title": "English Recipe Name",
+      "titleTamil": "தமிழ் உணவுப் பெயர்",
+      "cuisine": "South Indian / Tamil | International | Kids Healthy Snack",
+      "prepMinutes": 25,
+      "servings": 4,
+      "caloriesPerServing": 320,
+      "healthTags": ["High Protein", "Iron-Rich", "Kid Friendly"],
+      "summaryEnglish": "Appetizing 1-2 sentence overview",
+      "summaryTamil": "சுவையான சத்தான குடும்ப உணவு விளக்கம்",
+      "ingredients": ["1 cup ...", "2 tbsp ..."],
+      "stepsEnglish": ["Step 1...", "Step 2...", "Step 3..."],
+      "stepsTamil": ["படி 1...", "படி 2...", "படி 3..."]
+    }
+  ]
+}`,
+      generate_meal_plan: `You are a Family & Pediatric Nutrition Planner (English & தமிழ்).
+Create a 7-day Monday-to-Sunday family meal grid (Breakfast, Kids Lunchbox, Dinner) tailored to the requested health goal, plus a smart grocery list.
+Return STRICT JSON only:
+{
+  "healthFocus": "Health goal summary",
+  "days": [
+    { "day": "Monday", "breakfast": "Idli + Sambar (இட்லி சாம்பார்)", "kidsLunchbox": "Paneer/Veg Wrap + Apple", "dinner": "Millet Pongal & Greens", "tamilHighlight": "இரும்புச்சத்து நிறைந்தது" }
+  ],
+  "suggestedGroceries": ["Ragi flour 1kg", "Spinach (கீரை)", "Toor Dal", "Paneer", "Bananas"]
+}`,
+      homework_coach: `You are a warm, Socratic Kids Homework Coach (Ages 6–14, English & தமிழ்).
+CRITICAL RULE: DO NOT SPOON-FEED THE FINAL ANSWER IMMEDIATELY! Guide the child step-by-step with progressive hints so they learn deeply.
+Analyze the worksheet photo or typed homework question and return STRICT JSON only:
+{
+  "subject": "Maths | Science | English | Tamil | General",
+  "problemExtracted": "Exact homework question clearly stated",
+  "conceptName": "Core topic name (e.g. Fractions Addition or Photosynthesis)",
+  "hint1": "Gentle first clue asking the child what they notice",
+  "hint2": "Second clue showing the formula or method to apply",
+  "stepByStepGuide": ["Step 1 thinking prompt...", "Step 2 working step...", "Step 3 final check..."],
+  "tamilExplanation": "குழந்தைகளுக்கு புரியும் எளிய தமிழ் விளக்கம் (2-3 sentences)",
+  "verificationCheckAnswer": "Final answer + 1-line check (unlocked ONLY when child clicks Check My Answer)"
+}`,
+      extract_school_circular: `You are a School Diary & Circular Assistant for busy parents.
+Extract actionable school events, exam dates, uniform/PE kit reminders, or library return dates from the uploaded circular/timetable.
+Return STRICT JSON only:
+{
+  "events": [
+    {
+      "eventType": "Exam | Circular / Event | Library Book Return | Uniform / PE Kit",
+      "subjectOrItem": "Title of exam, event, or kit",
+      "eventDate": "YYYY-MM-DD",
+      "dayOfWeek": "Monday",
+      "kitOrActionNote": "Clear parent action note"
+    }
+  ]
+}`,
+      morning_briefing: `You are Auro, the warm, proactive bilingual (English & தமிழ்) Family Chief-of-Staff.
+Given the live snapshot of weather, tasks, reminders, expiring IDs/warranties, health logs, and kids' stars, craft a motivating, crystal-clear Morning/Evening Family Briefing.
+Return STRICT JSON only:
+{
+  "headlineEnglish": "Good Morning, Family! Here is your smart day ahead",
+  "headlineTamil": "இனிய காலை வணக்கம்! இன்றைய முக்கிய குடும்ப சுருக்கம்",
+  "spokenEnglish": "Warm 3-4 sentence spoken briefing covering top priorities",
+  "spokenTamil": "அன்பான 3-4 வாக்கிய தமிழ் சுருக்கம்",
+  "topPriorities": ["Priority 1", "Priority 2", "Priority 3"],
+  "wellnessNudge": "1-sentence health/hydration/kids encouragement"
+}`,
+    };
+
+    const sysPrompt = promptsByMode[String(mode)] || promptsByMode.morning_briefing;
+
+    // 1. Multimodal Vision branch if imageBase64 is supplied
+    if (typeof imageBase64 === 'string' && imageBase64.trim().length > 40) {
+      const cleanB64 = imageBase64.replace(/^data:[^;]+;base64,/, '').trim();
+      const safeMime = mimeType && mimeType.startsWith('image/') ? mimeType : 'image/jpeg';
+      const dataUri = `data:${safeMime};base64,${cleanB64}`;
+      const fullPrompt = `${sysPrompt}\n${promptContext ? `Context: ${promptContext}` : ''}`;
+
+      const nvKey = getEffectiveNvidiaApiKey(nvidiaApiKey || apiKey);
+      if (nvKey) {
+        for (const nvModel of ['nvidia/nemotron-3.5-super-vl-120b-a12b', 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning']) {
+          try {
+            const nvRes = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+              method: 'POST',
+              signal: AbortSignal.timeout(28000),
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${nvKey}` },
+              body: JSON.stringify({
+                model: nvModel,
+                temperature: 0.2,
+                max_tokens: 1900,
+                chat_template_kwargs: { enable_thinking: false },
+                messages: [
+                  {
+                    role: 'user',
+                    content: [
+                      { type: 'text', text: fullPrompt },
+                      { type: 'image_url', image_url: { url: dataUri } },
+                    ],
+                  },
+                ],
+              }),
+            });
+            if (nvRes.ok) {
+              const nvJson: any = await nvRes.json();
+              const parsed = extractLanguageTutorJson(
+                nvJson.choices?.[0]?.message?.content || nvJson.choices?.[0]?.message?.reasoning_content || ''
+              );
+              if (parsed && typeof parsed === 'object') {
+                return res.json({ success: true, result: parsed, modelUsed: `NVIDIA NIM · ${nvModel}` });
+              }
+            }
+          } catch {}
+        }
+      }
+
+      try {
+        const client = getAiClient(geminiApiKey);
+        const gRes = await client.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [{ role: 'user', parts: [{ text: fullPrompt }, { inlineData: { mimeType: safeMime, data: cleanB64 } }] }],
+          config: { temperature: 0.2, responseMimeType: 'application/json' },
+        });
+        const parsed = extractLanguageTutorJson(gRes.text || '');
+        if (parsed && typeof parsed === 'object') {
+          return res.json({ success: true, result: parsed, modelUsed: 'Gemini · gemini-2.5-flash' });
+        }
+      } catch {}
+    }
+
+    // 2. Text AI branch across all configured providers
+    const textRes = await dispatchLanguageTutorAiJson({
+      systemPrompt: sysPrompt,
+      userMessage: promptContext || `Generate structured JSON for mode: ${mode}`,
+      provider,
+      model,
+      apiKey,
+      geminiApiKey,
+      nvidiaApiKey,
+      openaiApiKey,
+      anthropicApiKey,
+      temperature: 0.25,
+      maxTokens: 2000,
+    });
+
+    if (!('fallbackReason' in textRes)) {
+      return res.json({
+        success: true,
+        result: textRes.json,
+        modelUsed: `${textRes.providerUsed} · ${textRes.modelUsed}`,
+      });
+    }
+
+    return res.json({ success: false, fallback: true, reason: textRes.fallbackReason });
+  } catch (err: any) {
+    res.status(200).json({ success: false, fallback: true, reason: err?.message });
   }
 });
 

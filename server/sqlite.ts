@@ -575,6 +575,22 @@ export async function initSqliteDb(): Promise<Database> {
     CREATE INDEX IF NOT EXISTS idx_media_audit_user_time
       ON media_library_audit_logs(user_email, created_at);
 
+    CREATE TABLE IF NOT EXISTS family_life_records (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      title TEXT NOT NULL,
+      subtitle TEXT,
+      member_name TEXT,
+      due_or_expiry_date TEXT,
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      drive_web_view_link TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_family_life_user_domain
+      ON family_life_records(user_email, domain, updated_at);
+
     CREATE TABLE IF NOT EXISTS assistant_memory_store (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
@@ -2848,6 +2864,7 @@ export interface UniversalSearchHit {
     | 'reminder'
     | 'drive_file'
     | 'media_library'
+    | 'family_life'
     | 'voice_memo'
     | 'memory_note';
   title: string;
@@ -3003,7 +3020,38 @@ export function searchUniversalSqlite(rawQuery: string, userEmail?: string): Uni
     })
   );
 
-  return hits.slice(0, 32);
+  // 8. Family Life Suite (Identity/Travel, Smart Kitchen, Kids School Hub, Longitudinal Health)
+  runSafe(
+    `SELECT id, domain, title, subtitle, member_name, due_or_expiry_date, updated_at
+     FROM family_life_records
+     WHERE (title LIKE ? OR subtitle LIKE ? OR member_name LIKE ? OR payload_json LIKE ?)${
+       email ? ' AND user_email = ?' : ''
+     }
+     ORDER BY updated_at DESC LIMIT 10`,
+    email ? [like, like, like, like, email] : [like, like, like, like],
+    (r) => {
+      const dom = String(r[1] || '');
+      const targetTab =
+        dom === 'identity_doc' || dom === 'trip_plan' || dom === 'offline_ticket'
+          ? 'identity-travel'
+          : dom === 'kitchen_recipe' || dom === 'grocery_item' || dom === 'meal_plan'
+          ? 'smart-kitchen'
+          : dom === 'homework_session' || dom === 'school_event' || dom === 'chore_habit' || dom === 'reward_item'
+          ? 'kids-school'
+          : 'health-records';
+      return {
+        id: `fl-${r[0]}`,
+        category: 'family_life',
+        title: String(r[2] || 'Family Record'),
+        subtitle: `${dom.replace(/_/g, ' ').toUpperCase()}${r[4] ? ` · ${r[4]}` : ''}${r[5] ? ` · ${r[5]}` : ''}`,
+        targetTab,
+        deepLink: { recordId: String(r[0]), domain: dom },
+        updatedAt: String(r[6] || ''),
+      };
+    }
+  );
+
+  return hits.slice(0, 36);
 }
 
 // -------------------------------------------------------------
@@ -7915,6 +7963,131 @@ export function getMediaLibraryAnalyticsFromSqlite(userEmail?: string): any {
     byType: emptyByType,
     recentAuditLogs,
   };
+}
+
+// =========================================================================
+// FAMILY LIFE SUITE PERSISTENCE (Identity/Travel, Smart Kitchen, Kids School, Longitudinal Health)
+// =========================================================================
+
+export interface FamilyLifeRow {
+  id: string;
+  userEmail: string;
+  domain: string;
+  title: string;
+  subtitle?: string;
+  memberName?: string;
+  dueOrExpiryDate?: string | null;
+  payload: any;
+  driveWebViewLink?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function getFamilyLifeRecordsFromSqlite(opts?: {
+  userEmail?: string;
+  domain?: string;
+  memberName?: string;
+}): FamilyLifeRow[] {
+  if (!db) return [];
+  try {
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts?.userEmail) {
+      where.push('user_email = ?');
+      params.push(opts.userEmail.toLowerCase().trim());
+    }
+    if (opts?.domain) {
+      where.push('domain = ?');
+      params.push(opts.domain);
+    }
+    if (opts?.memberName) {
+      where.push('member_name = ?');
+      params.push(opts.memberName);
+    }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+    const stmt = db.prepare(
+      `SELECT id, user_email, domain, title, subtitle, member_name, due_or_expiry_date, payload_json, drive_web_view_link, created_at, updated_at
+       FROM family_life_records ${whereSql} ORDER BY updated_at DESC LIMIT 400`
+    );
+    if (params.length > 0) stmt.bind(params);
+    const rows: FamilyLifeRow[] = [];
+    while (stmt.step()) {
+      const r = stmt.get();
+      rows.push({
+        id: String(r[0]),
+        userEmail: String(r[1]),
+        domain: String(r[2]),
+        title: String(r[3]),
+        subtitle: r[4] ? String(r[4]) : undefined,
+        memberName: r[5] ? String(r[5]) : undefined,
+        dueOrExpiryDate: r[6] ? String(r[6]) : null,
+        payload: parseJsonSafe<any>(r[7], {}),
+        driveWebViewLink: r[8] ? String(r[8]) : undefined,
+        createdAt: String(r[9] || ''),
+        updatedAt: String(r[10] || ''),
+      });
+    }
+    stmt.free();
+    return rows;
+  } catch (err) {
+    console.warn('[SQLite] getFamilyLifeRecordsFromSqlite error:', err);
+    return [];
+  }
+}
+
+export function upsertFamilyLifeRecordToSqlite(
+  rec: Partial<FamilyLifeRow> & { domain: string; title: string; payload: any }
+): FamilyLifeRow {
+  if (!db) throw new Error('Database not ready');
+  const now = new Date().toISOString();
+  const id = rec.id || `flr-${rec.domain}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+  const email = (rec.userEmail || 'chinna.tamil2000@gmail.com').toLowerCase().trim();
+  const createdAt = rec.createdAt || now;
+  const updatedAt = rec.updatedAt || now;
+
+  db.run(
+    `INSERT OR REPLACE INTO family_life_records
+      (id, user_email, domain, title, subtitle, member_name, due_or_expiry_date, payload_json, drive_web_view_link, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      email,
+      rec.domain,
+      rec.title,
+      rec.subtitle || null,
+      rec.memberName || null,
+      rec.dueOrExpiryDate || null,
+      JSON.stringify(rec.payload || {}),
+      rec.driveWebViewLink || null,
+      createdAt,
+      updatedAt,
+    ]
+  );
+  scheduleSave();
+  return {
+    id,
+    userEmail: email,
+    domain: rec.domain,
+    title: rec.title,
+    subtitle: rec.subtitle,
+    memberName: rec.memberName,
+    dueOrExpiryDate: rec.dueOrExpiryDate || null,
+    payload: rec.payload || {},
+    driveWebViewLink: rec.driveWebViewLink,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function deleteFamilyLifeRecordFromSqlite(id: string): boolean {
+  if (!db) return false;
+  try {
+    db.run('DELETE FROM family_life_records WHERE id = ?', [id]);
+    scheduleSave();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 

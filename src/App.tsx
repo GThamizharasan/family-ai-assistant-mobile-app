@@ -59,6 +59,10 @@ const WeatherForecastTab = lazyNamed(() => import('./components/tabs/WeatherFore
 const AdaptiveLearningTab = lazyNamed(() => import('./components/tabs/AdaptiveLearningTab'), 'AdaptiveLearningTab');
 const LanguageTutorTab = lazyNamed(() => import('./components/tabs/LanguageTutorTab'), 'LanguageTutorTab');
 const MediaLibraryTab = lazyNamed(() => import('./components/tabs/MediaLibraryTab'), 'MediaLibraryTab');
+const IdentityTravelVaultTab = lazyNamed(() => import('./components/tabs/IdentityTravelVaultTab'), 'IdentityTravelVaultTab');
+const SmartKitchenTab = lazyNamed(() => import('./components/tabs/SmartKitchenTab'), 'SmartKitchenTab');
+const KidsSchoolHubTab = lazyNamed(() => import('./components/tabs/KidsSchoolHubTab'), 'KidsSchoolHubTab');
+const FamilyHealthRecordsTab = lazyNamed(() => import('./components/tabs/FamilyHealthRecordsTab'), 'FamilyHealthRecordsTab');
 
 // Lazy-loaded Heavy Modals (loaded only when opened)
 const VoiceAssistantModal = lazyNamed(() => import('./components/VoiceAssistantModal'), 'VoiceAssistantModal');
@@ -71,6 +75,7 @@ const CustomGoogleMapModal = lazyNamed(() => import('./components/maps/CustomGoo
 const FeverTemperatureModal = lazyNamed(() => import('./components/health/FeverTemperatureModal'), 'FeverTemperatureModal');
 const GlobalUniversalSearchModal = lazyNamed(() => import('./components/GlobalUniversalSearchModal'), 'GlobalUniversalSearchModal');
 const SmartAiDocumentHubModal = lazyNamed(() => import('./components/SmartAiDocumentHubModal'), 'SmartAiDocumentHubModal');
+const AuroDailyBriefingModal = lazyNamed(() => import('./components/AuroDailyBriefingModal'), 'AuroDailyBriefingModal');
 
 const TabLoadingFallback: React.FC = () => (
   <div className="flex flex-col items-center justify-center py-20 gap-3 text-slate-300">
@@ -92,6 +97,7 @@ const AppContent: React.FC = () => {
   const [isOfflineSyncCenterOpen, setIsOfflineSyncCenterOpen] = useState(false);
   const [isUniversalSearchOpen, setIsUniversalSearchOpen] = useState(false);
   const [isSmartDocHubOpen, setIsSmartDocHubOpen] = useState(false);
+  const [isDailyBriefingOpen, setIsDailyBriefingOpen] = useState(false);
   const [smartDocInitialType, setSmartDocInitialType] = useState<
     'receipt_warranty' | 'prescription_lab'
   >('receipt_warranty');
@@ -113,14 +119,17 @@ const AppContent: React.FC = () => {
       setIsSmartDocHubOpen(true);
     };
     const onOpenSearchEvent = () => setIsUniversalSearchOpen(true);
+    const onOpenBriefingEvent = () => setIsDailyBriefingOpen(true);
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('aura_open_smart_doc_hub', onOpenSmartDocEvent);
     window.addEventListener('aura_open_universal_search', onOpenSearchEvent);
+    window.addEventListener('aura_open_daily_briefing', onOpenBriefingEvent);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('aura_open_smart_doc_hub', onOpenSmartDocEvent);
       window.removeEventListener('aura_open_universal_search', onOpenSearchEvent);
+      window.removeEventListener('aura_open_daily_briefing', onOpenBriefingEvent);
     };
   }, []);
   const [activeDueReminder, setActiveDueReminder] = useState<ClockReminder | null>(null);
@@ -298,6 +307,14 @@ const AppContent: React.FC = () => {
         return <LanguageTutorTab />;
       case 'media-library':
         return <MediaLibraryTab />;
+      case 'identity-travel':
+        return <IdentityTravelVaultTab />;
+      case 'smart-kitchen':
+        return <SmartKitchenTab />;
+      case 'kids-school':
+        return <KidsSchoolHubTab onNavigateTab={(tab: TabKey) => setCurrentTab(tab)} />;
+      case 'health-records':
+        return <FamilyHealthRecordsTab />;
       case 'weather':
         return (
           <WeatherForecastTab
@@ -534,6 +551,13 @@ const AppContent: React.FC = () => {
             isOpen={isSmartDocHubOpen}
             initialDocType={smartDocInitialType}
             onClose={() => setIsSmartDocHubOpen(false)}
+          />
+        )}
+
+        {isDailyBriefingOpen && (
+          <AuroDailyBriefingModal
+            isOpen={isDailyBriefingOpen}
+            onClose={() => setIsDailyBriefingOpen(false)}
           />
         )}
       </Suspense>

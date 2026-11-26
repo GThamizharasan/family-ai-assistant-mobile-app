@@ -2105,6 +2105,78 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
+    // 25a-3. Family Life Suite Voice Intents (Identity/Travel, Smart Kitchen, Kids School, Longitudinal Health, Daily Briefing)
+    if (
+      lower.includes('morning briefing') ||
+      lower.includes('evening briefing') ||
+      lower.includes('daily briefing') ||
+      lower.includes('காலை சுருக்கம்')
+    ) {
+      window.dispatchEvent(new CustomEvent('aura_open_daily_briefing'));
+      onClose();
+      return;
+    }
+    if (
+      lower.includes('passport') ||
+      lower.includes('visa') ||
+      lower.includes('expiry vault') ||
+      lower.includes('trip planner') ||
+      lower.includes('boarding pass')
+    ) {
+      executeVoiceNavigation(
+        'identity-travel',
+        undefined,
+        'Opening your Family Identity, Travel & Expiry Vault right now!',
+        'உங்கள் பாஸ்போர்ட் மற்றும் பயண பாதுகாப்புப் பெட்டகத்தைத் திறக்கிறேன்!'
+      );
+      return;
+    }
+    if (
+      lower.includes('smart kitchen') ||
+      lower.includes('grocery list') ||
+      lower.includes('meal plan') ||
+      lower.includes('fridge recipe') ||
+      lower.includes('சமையல்')
+    ) {
+      executeVoiceNavigation(
+        'smart-kitchen',
+        undefined,
+        'Opening Smart Kitchen, Shared Grocery List & Bilingual Meal Planner!',
+        'உங்கள் ஸ்மார்ட் சமையலறை மற்றும் உணவுத் திட்டத்தைத் திறக்கிறேன்!'
+      );
+      return;
+    }
+    if (
+      lower.includes('homework') ||
+      lower.includes('school diary') ||
+      lower.includes('exam timetable') ||
+      lower.includes('star reward') ||
+      lower.includes('வீட்டுப்பாடம்')
+    ) {
+      executeVoiceNavigation(
+        'kids-school',
+        undefined,
+        'Opening Kids Homework Coach, School Diary & Star Reward Bank!',
+        'குழந்தைகள் வீட்டுப்பாட வழிகாட்டி மற்றும் பள்ளி நாட்குறிப்பைத் திறக்கிறேன்!'
+      );
+      return;
+    }
+    if (
+      lower.includes('lab trend') ||
+      lower.includes('biomarker') ||
+      lower.includes('growth tracker') ||
+      lower.includes('vaccination') ||
+      lower.includes('doctor visit pack')
+    ) {
+      executeVoiceNavigation(
+        'health-records',
+        undefined,
+        'Opening Longitudinal Lab Trends, Pediatric Growth & Doctor Visit Pack!',
+        'குடும்ப மருத்துவப் பரிசோதனை போக்குகள் மற்றும் வளர்ச்சிப் பதிவேட்டைத் திறக்கிறேன்!'
+      );
+      return;
+    }
+
     // 25b. AI Adaptive Learning Engine & Smart Blackboard (All 7 Subjects)
     if (
       lower.includes('adaptive learning') ||

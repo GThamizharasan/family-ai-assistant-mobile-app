@@ -15,6 +15,7 @@ export interface UniversalSearchResultItem {
     | 'reminder'
     | 'drive_file'
     | 'media_library'
+    | 'family_life'
     | 'task'
     | 'finance'
     | 'family'
@@ -39,9 +40,41 @@ const APP_SHORTCUTS: UniversalSearchResultItem[] = [
     id: 'app-media-library',
     category: 'media_library',
     title: 'Centralized Family Media Library (1 TB Drive + Local SQLite)',
-    subtitle: 'Photos, Videos, Audio, PDFs, Docs & AI Content · Resumable Drive Upload + Offline SQLite',
+    subtitle: 'Photos, Videos, Audio, PDFs, Redact/PDF Studio, Memories Reel & PIN Lock',
     iconEmoji: '🗂️',
     targetTab: 'media-library',
+  },
+  {
+    id: 'app-identity-travel',
+    category: 'family_life',
+    title: 'Family Identity, Travel & Expiry Vault',
+    subtitle: 'Passport, Visa, NHS/Aadhaar, Insurance 90/30/7d Alerts, AI Trip & Offline Ticket Wallet',
+    iconEmoji: '🛂',
+    targetTab: 'identity-travel',
+  },
+  {
+    id: 'app-smart-kitchen',
+    category: 'family_life',
+    title: 'Smart Kitchen, Grocery & Bilingual Meal Planner (EN + தமிழ்)',
+    subtitle: 'Fridge Photo → Recipes, Voice Chef, Shared Grocery Auto-Restock & 7-Day Meal Grid',
+    iconEmoji: '🍲',
+    targetTab: 'smart-kitchen',
+  },
+  {
+    id: 'app-kids-school',
+    category: 'family_life',
+    title: 'Kids Homework Coach, School Diary & Star Reward Bank',
+    subtitle: 'Socratic Photo Homework Hints, Circular Scanner, Exam Countdowns & Daily Chores',
+    iconEmoji: '🎒',
+    targetTab: 'kids-school',
+  },
+  {
+    id: 'app-health-records',
+    category: 'family_life',
+    title: 'Longitudinal Lab Trends, Child Growth & Doctor Visit Pack',
+    subtitle: 'Biomarker Curves, WHO Percentiles, NHS/IAP Vaccines & Printable Emergency Medical Card',
+    iconEmoji: '📈',
+    targetTab: 'health-records',
   },
   {
     id: 'app-lang-tutor',
@@ -267,6 +300,7 @@ export async function runGlobalUniversalSearch(params: {
           reminder: '⏰',
           drive_file: '☁️',
           media_library: '🗂️',
+          family_life: '🏡',
           voice_memo: '🎙️',
           memory_note: '🔐',
         };
